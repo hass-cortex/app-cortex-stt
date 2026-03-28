@@ -1,17 +1,21 @@
+use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
+use tokio_stream::Stream;
 
 use crate::api::error::ApiError;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::engine::traits::TranscribeOptions;
-use crate::state::AppState;
+use crate::state::{AppState, AsyncJob, AsyncJobStatus};
 
 /// Query parameters for the sync transcribe endpoint.
 #[derive(Debug, Deserialize)]
@@ -38,7 +42,7 @@ pub struct SegmentResponse {
 }
 
 /// JSON response body for a successful transcription.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TranscribeResponse {
     pub text: String,
     pub segments: Vec<SegmentResponse>,
@@ -47,56 +51,44 @@ pub struct TranscribeResponse {
     pub inference_ms: u64,
 }
 
-/// POST /api/transcribe — synchronous transcription endpoint.
-///
-/// Accepts `audio/wav` or `application/octet-stream` (raw PCM) request bodies.
-/// For raw PCM, `sample_rate` and `channels` query parameters are required.
-async fn transcribe_sync(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<TranscribeQuery>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
-    // Determine content type and decode audio to f32 samples.
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/wav");
+// ---------------------------------------------------------------------------
+// Audio decoding helper
+// ---------------------------------------------------------------------------
 
-    let samples = if content_type.starts_with("application/octet-stream") {
-        let sample_rate = query.sample_rate.unwrap_or(16_000);
-        let channels = query.channels.unwrap_or(1);
-        raw_pcm_to_f32(&body, sample_rate, channels).map_err(|e| api_err(&e))?
+/// Decode request body into f32 PCM samples at 16 kHz mono.
+fn decode_audio(
+    content_type: &str,
+    body: &Bytes,
+    sample_rate: Option<u32>,
+    channels: Option<u16>,
+) -> Result<Vec<f32>, crate::error::AsrError> {
+    if content_type.starts_with("application/octet-stream") {
+        let sr = sample_rate.unwrap_or(16_000);
+        let ch = channels.unwrap_or(1);
+        raw_pcm_to_f32(body, sr, ch)
     } else {
         // Default: treat as WAV.
-        resample_to_16khz_mono(&body).map_err(|e| api_err(&e))?
-    };
+        resample_to_16khz_mono(body)
+    }
+}
 
-    let duration_samples = samples.len() as f64 / 16_000.0;
-    let duration_ms = (duration_samples * 1000.0) as u64;
+/// Run transcription on the engine and return the response.
+async fn run_transcription(
+    state: &AppState,
+    model: &str,
+    samples: Vec<f32>,
+    options: TranscribeOptions,
+    duration_ms: u64,
+) -> Result<TranscribeResponse, crate::error::AsrError> {
+    let mut guard = state.engine_manager.acquire(model).await?;
 
-    // Acquire an engine instance from the pool.
-    let mut guard = state
-        .engine_manager
-        .acquire(&query.model)
-        .await
-        .map_err(|e| api_err(&e))?;
-
-    let options = TranscribeOptions {
-        language: query.language,
-        translate: query.translate,
-    };
-
-    // Run transcription in a blocking thread (engine inference is CPU-bound).
+    let model_owned = model.to_string();
     let inference_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options))
         .await
-        .map_err(|_| {
-            api_err(&crate::error::AsrError::EnginePanic {
-                model_id: query.model.clone(),
-            })
-        })?
-        .map_err(|e| api_err(&e))?;
+        .map_err(|_| crate::error::AsrError::EnginePanic {
+            model_id: model_owned.clone(),
+        })??;
     let inference_ms = inference_start.elapsed().as_millis() as u64;
 
     let segments = result
@@ -109,16 +101,363 @@ async fn transcribe_sync(
         })
         .collect();
 
-    Ok(axum::Json(TranscribeResponse {
+    Ok(TranscribeResponse {
         text: result.text,
         segments,
-        model: query.model,
+        model: model_owned,
         duration_ms,
         inference_ms,
-    }))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// SSE progress events (Task 8)
+// ---------------------------------------------------------------------------
+
+/// Server-Sent Event types for streaming transcription progress.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+enum SseProgress {
+    /// Intermediate progress update while processing audio chunks.
+    Progress {
+        /// Number of chunks processed so far.
+        chunks_processed: usize,
+        /// Total number of chunks.
+        total_chunks: usize,
+        /// Elapsed time in milliseconds.
+        elapsed_ms: u64,
+    },
+    /// Final transcription result.
+    Result {
+        #[serde(flatten)]
+        response: TranscribeResponse,
+    },
+    /// An error occurred during transcription.
+    Error { code: String, message: String },
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+/// POST /api/transcribe — dispatcher: checks `Accept` header and delegates
+/// to the sync JSON handler or the SSE streaming handler.
+async fn transcribe_dispatch(
+    state: State<Arc<AppState>>,
+    query: Query<TranscribeQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let accept = headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if accept.contains("text/event-stream") {
+        transcribe_sse(state, query, headers, body)
+            .await
+            .into_response()
+    } else {
+        transcribe_sync(state, query, headers, body)
+            .await
+            .into_response()
+    }
+}
+
+/// Synchronous JSON transcription handler.
+async fn transcribe_sync(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TranscribeQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("audio/wav");
+
+    let samples =
+        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
+            let (status, api_error) = (&e).into();
+            (status, axum::Json(api_error))
+        })?;
+
+    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+
+    let options = TranscribeOptions {
+        language: query.language,
+        translate: query.translate,
+    };
+
+    let response = run_transcription(&state, &query.model, samples, options, duration_ms)
+        .await
+        .map_err(|e| {
+            let (status, api_error) = (&e).into();
+            (status, axum::Json(api_error))
+        })?;
+
+    Ok(axum::Json(response))
+}
+
+/// SSE streaming transcription handler.
+///
+/// Splits audio into 5-second chunks, emits progress events as each chunk
+/// is "processed", then runs full inference and emits the result.
+async fn transcribe_sse(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TranscribeQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, axum::Json<ApiError>)>
+{
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("audio/wav");
+
+    let samples =
+        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
+            let (status, api_error) = (&e).into();
+            (status, axum::Json(api_error))
+        })?;
+
+    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+
+    // Calculate 5-second chunks at 16 kHz.
+    let chunk_size = 16_000 * 5; // 5 seconds of samples
+    let total_chunks = samples.len().div_ceil(chunk_size);
+
+    let model = query.model.clone();
+    let options = TranscribeOptions {
+        language: query.language,
+        translate: query.translate,
+    };
+
+    let stream = async_stream::stream! {
+        let start = Instant::now();
+
+        // Emit progress events for each audio chunk.
+        for i in 0..total_chunks {
+            let progress = SseProgress::Progress {
+                chunks_processed: i + 1,
+                total_chunks,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+            };
+            let data = serde_json::to_string(&progress).unwrap_or_default();
+            yield Ok(Event::default().event("progress").data(data));
+
+            // Small yield to allow keep-alive and prevent starving the runtime.
+            tokio::task::yield_now().await;
+        }
+
+        // Run full inference on the complete audio.
+        match run_transcription(&state, &model, samples, options, duration_ms).await {
+            Ok(response) => {
+                let result = SseProgress::Result { response };
+                let data = serde_json::to_string(&result).unwrap_or_default();
+                yield Ok(Event::default().event("result").data(data));
+            }
+            Err(e) => {
+                let (_, api_error): (StatusCode, ApiError) = (&e).into();
+                let error = SseProgress::Error {
+                    code: api_error.code.to_string(),
+                    message: api_error.message,
+                };
+                let data = serde_json::to_string(&error).unwrap_or_default();
+                yield Ok(Event::default().event("error").data(data));
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+// ---------------------------------------------------------------------------
+// Async Job handlers (Task 9)
+// ---------------------------------------------------------------------------
+
+/// Response body for POST /api/transcribe/async (202 Accepted).
+#[derive(Debug, Serialize)]
+struct AsyncJobCreated {
+    job_id: String,
+    status: &'static str,
+}
+
+/// POST /api/transcribe/async — create an asynchronous transcription job.
+async fn transcribe_async(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TranscribeQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), (StatusCode, axum::Json<ApiError>)> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("audio/wav");
+
+    let samples =
+        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
+            let (status, api_error) = (&e).into();
+            (status, axum::Json(api_error))
+        })?;
+
+    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let model = query.model.clone();
+
+    let job = AsyncJob {
+        id: job_id.clone(),
+        model: model.clone(),
+        status: AsyncJobStatus::Processing,
+        created_at: chrono::Utc::now(),
+        completed_at: None,
+    };
+    state.job_store.insert(job).await;
+
+    // Spawn background task.
+    let job_store = Arc::clone(&state.job_store);
+    let state_inner = state.clone();
+    let options = TranscribeOptions {
+        language: query.language,
+        translate: query.translate,
+    };
+    let job_id_bg = job_id.clone();
+
+    tokio::spawn(async move {
+        // Check if job was cancelled before starting.
+        if let Some(job) = job_store.get(&job_id_bg).await {
+            if matches!(job.status, AsyncJobStatus::Cancelled) {
+                return;
+            }
+        }
+
+        match run_transcription(&state_inner, &model, samples, options, duration_ms).await {
+            Ok(response) => {
+                job_store
+                    .update_status(&job_id_bg, AsyncJobStatus::Completed { result: response })
+                    .await;
+            }
+            Err(e) => {
+                job_store
+                    .update_status(
+                        &job_id_bg,
+                        AsyncJobStatus::Failed {
+                            error: e.to_string(),
+                        },
+                    )
+                    .await;
+            }
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        axum::Json(AsyncJobCreated {
+            job_id,
+            status: "processing",
+        }),
+    ))
+}
+
+/// GET /api/transcribe/jobs/{job_id} — get job status.
+async fn get_job_status(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<axum::Json<AsyncJob>, (StatusCode, axum::Json<ApiError>)> {
+    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            axum::Json(ApiError {
+                code: "JOB_NOT_FOUND",
+                message: format!("job not found: {job_id}"),
+                model_id: None,
+            }),
+        )
+    })?;
+
+    Ok(axum::Json(job))
+}
+
+/// GET /api/transcribe/jobs/{job_id}/result — get completed job result.
+async fn get_job_result(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
+    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            axum::Json(ApiError {
+                code: "JOB_NOT_FOUND",
+                message: format!("job not found: {job_id}"),
+                model_id: None,
+            }),
+        )
+    })?;
+
+    match job.status {
+        AsyncJobStatus::Completed { result } => Ok(axum::Json(result)),
+        AsyncJobStatus::Processing => Err((
+            StatusCode::CONFLICT,
+            axum::Json(ApiError {
+                code: "JOB_NOT_COMPLETE",
+                message: "job is still processing".to_string(),
+                model_id: None,
+            }),
+        )),
+        AsyncJobStatus::Failed { error } => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(ApiError {
+                code: "JOB_FAILED",
+                message: error,
+                model_id: None,
+            }),
+        )),
+        AsyncJobStatus::Cancelled => Err((
+            StatusCode::GONE,
+            axum::Json(ApiError {
+                code: "JOB_CANCELLED",
+                message: "job was cancelled".to_string(),
+                model_id: None,
+            }),
+        )),
+    }
+}
+
+/// DELETE /api/transcribe/jobs/{job_id} — cancel a job.
+async fn cancel_job(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, axum::Json<ApiError>)> {
+    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            axum::Json(ApiError {
+                code: "JOB_NOT_FOUND",
+                message: format!("job not found: {job_id}"),
+                model_id: None,
+            }),
+        )
+    })?;
+
+    match job.status {
+        AsyncJobStatus::Processing => {
+            state
+                .job_store
+                .update_status(&job_id, AsyncJobStatus::Cancelled)
+                .await;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        // Already terminal — just remove it.
+        _ => {
+            state.job_store.remove(&job_id).await;
+            Ok(StatusCode::NO_CONTENT)
+        }
+    }
 }
 
 /// Convert an [`AsrError`] into an axum-compatible error tuple.
+#[allow(dead_code)]
 fn api_err(err: &crate::error::AsrError) -> (StatusCode, axum::Json<ApiError>) {
     let (status, api_error) = err.into();
     (status, axum::Json(api_error))
@@ -126,5 +465,10 @@ fn api_err(err: &crate::error::AsrError) -> (StatusCode, axum::Json<ApiError>) {
 
 /// Routes for the transcription API.
 pub fn transcribe_routes() -> Router<Arc<AppState>> {
-    Router::new().route("/api/transcribe", post(transcribe_sync))
+    Router::new()
+        .route("/api/transcribe", post(transcribe_dispatch))
+        .route("/api/transcribe/async", post(transcribe_async))
+        .route("/api/transcribe/jobs/{job_id}", get(get_job_status))
+        .route("/api/transcribe/jobs/{job_id}/result", get(get_job_result))
+        .route("/api/transcribe/jobs/{job_id}", delete(cancel_job))
 }

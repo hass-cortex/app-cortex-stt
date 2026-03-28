@@ -10,7 +10,7 @@ use wyoming_asr::api::system::system_routes;
 use wyoming_asr::db::database::Database;
 use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
 use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::AppState;
+use wyoming_asr::state::{AppState, JobStore};
 
 fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
@@ -22,6 +22,7 @@ fn create_test_state() -> Arc<AppState> {
         engine_manager,
         model_manager,
         db,
+        job_store: Arc::new(JobStore::new()),
         addon_mode: false,
         version: "0.0.0-test".to_string(),
     })

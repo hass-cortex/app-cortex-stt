@@ -12,7 +12,7 @@ use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
 use wyoming_asr::engine::traits::*;
 use wyoming_asr::error::AsrError;
 use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::AppState;
+use wyoming_asr::state::{AppState, JobStore};
 
 // ---------------------------------------------------------------------------
 // Mock engine
@@ -75,6 +75,7 @@ async fn create_test_state() -> Arc<AppState> {
         engine_manager,
         model_manager,
         db,
+        job_store: Arc::new(JobStore::new()),
         addon_mode: false,
         version: "0.0.0-test".to_string(),
     })
