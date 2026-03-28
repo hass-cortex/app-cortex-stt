@@ -66,6 +66,10 @@ pub struct AppConfig {
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     pub log_level: String,
+
+    /// Directory containing web UI static files (SPA)
+    #[arg(long, env = "STATIC_DIR")]
+    pub static_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -86,5 +90,29 @@ impl AppConfig {
     /// Resolved audio directory
     pub fn audio_dir(&self) -> PathBuf {
         self.data_dir.join("audio")
+    }
+
+    /// Resolved static file directory for the web UI.
+    ///
+    /// Priority: explicit `--static-dir` > `./web/dist` (dev) > `/app/web/dist` (Docker).
+    /// Returns `None` if no directory with an `index.html` is found.
+    pub fn static_dir(&self) -> Option<PathBuf> {
+        if let Some(ref dir) = self.static_dir {
+            if dir.join("index.html").exists() {
+                return Some(dir.clone());
+            }
+            tracing::warn!(?dir, "Configured static-dir does not contain index.html");
+            return None;
+        }
+
+        // Auto-detect common locations.
+        let candidates = ["./web/dist", "/app/web/dist"];
+        for candidate in candidates {
+            let path = PathBuf::from(candidate);
+            if path.join("index.html").exists() {
+                return Some(path);
+            }
+        }
+        None
     }
 }

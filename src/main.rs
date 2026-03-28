@@ -6,6 +6,7 @@ use axum::middleware;
 use clap::Parser;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
 use wyoming_asr::api::auth::auth_middleware;
 use wyoming_asr::api::engine::engine_routes;
@@ -108,11 +109,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth_middleware(req, next, db.clone(), addon_mode)
         }));
 
-    let app = Router::new()
+    let mut app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state)
         .layer(CorsLayer::permissive());
+
+    // Serve web UI static files with SPA fallback routing.
+    if let Some(web_dir) = config.static_dir() {
+        let index = web_dir.join("index.html");
+        let spa_fallback = ServeDir::new(&web_dir).not_found_service(ServeFile::new(index));
+        app = app.fallback_service(spa_fallback);
+        tracing::info!(?web_dir, "Serving web UI with SPA fallback");
+    } else {
+        tracing::info!("No web UI directory found; static file serving disabled");
+    }
 
     // Announce discovery readiness.
     announce_discovery(config.wyoming_port).await;

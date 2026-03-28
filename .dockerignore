@@ -1,0 +1,15 @@
+target/
+web/node_modules/
+web/dist/
+web/.vite/
+.git/
+.github/
+deploy/
+docs/
+tests/
+data/
+*.md
+!README.md
+deny.toml
+clippy.toml
+rustfmt.toml
