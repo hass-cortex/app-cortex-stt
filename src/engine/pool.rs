@@ -39,12 +39,25 @@ pub struct PoolGuard {
     _permit: OwnedSemaphorePermit,
 }
 
+impl std::fmt::Debug for PoolGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoolGuard")
+            .field("index", &self.index)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ModelPool {
     /// Create a new pool of `size` engine instances built by `factory`.
     ///
-    /// All instances are eagerly created during construction. Returns an
-    /// error if any factory invocation fails.
-    pub fn new(factory: EngineFactory, size: usize) -> Result<Self, AsrError> {
+    /// All instances are eagerly created during construction. The factory
+    /// is borrowed — the caller retains ownership so it can be reused
+    /// (e.g., to recreate the pool after eviction). Returns an error if
+    /// any factory invocation fails.
+    pub fn new(
+        factory: &dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError>,
+        size: usize,
+    ) -> Result<Self, AsrError> {
         let mut instances = Vec::with_capacity(size);
         for _ in 0..size {
             let engine = factory()?;
