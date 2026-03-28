@@ -29,6 +29,24 @@ pub enum AsrError {
     #[error("protocol error: {detail}")]
     ProtocolError { detail: String },
 
+    #[error("database error: {detail}")]
+    DatabaseError { detail: String },
+
+    #[error("download failed for model {model_id}: {detail}")]
+    DownloadFailed { model_id: String, detail: String },
+
+    #[error("authentication required")]
+    AuthRequired,
+
+    #[error("invalid API key")]
+    InvalidApiKey,
+
+    #[error("model already downloading: {model_id}")]
+    DownloadInProgress { model_id: String },
+
+    #[error("service unavailable: {detail}")]
+    ServiceUnavailable { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

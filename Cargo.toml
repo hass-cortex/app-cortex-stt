@@ -14,12 +14,24 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower = "0.5"
+rusqlite = { version = "0.35", features = ["bundled"] }
+rubato = "0.16"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+reqwest = { version = "0.12", features = ["stream"] }
+tokio-stream = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
 
 # STT engine (optional — tests use mock)
 transcribe-rs = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
 
 [features]
 default = []
