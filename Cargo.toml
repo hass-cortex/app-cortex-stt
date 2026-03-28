@@ -1,0 +1,33 @@
+[package]
+name = "wyoming-asr"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-engine speech-to-text service with Wyoming protocol for Home Assistant"
+license = "MIT"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+# STT engine (optional — tests use mock)
+transcribe-rs = { version = "0.3", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[features]
+default = []
+whisper = ["transcribe-rs", "transcribe-rs/whisper-cpp"]
+onnx = ["transcribe-rs", "transcribe-rs/onnx"]
+ort-cuda = ["transcribe-rs/ort-cuda"]
+vad-silero = ["transcribe-rs/vad-silero"]
+all-engines = ["whisper", "onnx", "vad-silero"]
+
+[profile.release]
+opt-level = 3
