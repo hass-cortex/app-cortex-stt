@@ -93,11 +93,13 @@ mod whisper {
     }
 
     #[tokio::test]
+    #[ignore] // >1GB model — may segfault on memory-constrained systems
     async fn whisper_large_v3_q5() {
         run_pipeline("whisper-large-v3-q5", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
+    #[ignore] // >1GB model — may segfault on memory-constrained systems
     async fn breeze_asr() {
         run_pipeline("breeze-asr", "zh.wav", "zh").await;
     }

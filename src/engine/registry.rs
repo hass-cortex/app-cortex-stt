@@ -72,7 +72,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             is_directory: false,
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q8_0.bin"
                 .to_string(),
-            sha256: "b80c392048e01e7e6fa14c29d07a07aa0e81e5e4e8306e6b30138a9471a1f533".to_string(),
+            sha256: "c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca".to_string(),
             archive_dir_name: String::new(),
             size_mb: 42,
             accuracy_score: 0.45,
