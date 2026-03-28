@@ -1,12 +1,18 @@
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{delete, get, post};
+use tokio_stream::Stream;
 
 use crate::api::error::ApiError;
+use crate::engine::registry::builtin_models;
+use crate::model::download::{DownloadConfig, download_model};
 use crate::state::AppState;
 
 /// GET /api/models — list all models with status.
@@ -49,9 +55,108 @@ async fn scan_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(custom)
 }
 
+/// POST /api/models/{model_id}/download — start downloading a model.
+async fn start_download(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+    // Check if already downloading.
+    if state.model_manager.is_downloading(&model_id).await {
+        let err = crate::error::AsrError::DownloadInProgress {
+            model_id: model_id.clone(),
+        };
+        let (status, api_err) = (&err).into();
+        return Err((status, axum::Json(api_err)));
+    }
+
+    // Find the model definition in the built-in registry.
+    let definition = builtin_models()
+        .into_iter()
+        .find(|d| d.id == model_id)
+        .ok_or_else(|| {
+            let err = crate::error::AsrError::ModelNotFound {
+                model_id: model_id.clone(),
+            };
+            let (status, api_err) = (&err).into();
+            (status, axum::Json(api_err))
+        })?;
+
+    let dest_path = state.model_manager.model_dir().join(&definition.filename);
+
+    // Start the background download.
+    download_model(
+        &definition.url,
+        dest_path,
+        &definition.sha256,
+        &model_id,
+        state.model_manager.clone(),
+        DownloadConfig::default(),
+    )
+    .map_err(|e| {
+        let (status, api_err) = (&e).into();
+        (status, axum::Json(api_err))
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "status": "started",
+            "model_id": model_id,
+        })),
+    ))
+}
+
+/// GET /api/models/{model_id}/download/progress — SSE stream of download progress.
+async fn download_progress(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, axum::Json<ApiError>)>
+{
+    // Verify the model exists.
+    if state.model_manager.get_model(&model_id).await.is_none() {
+        let err = crate::error::AsrError::ModelNotFound {
+            model_id: model_id.clone(),
+        };
+        let (status, api_err) = (&err).into();
+        return Err((status, axum::Json(api_err)));
+    }
+
+    let manager = state.model_manager.clone();
+    let id = model_id.clone();
+
+    let stream = async_stream::stream! {
+        loop {
+            let progress = manager.get_download_progress(&id).await;
+
+            match progress {
+                Some(p) => {
+                    let data = serde_json::to_string(&p).unwrap_or_default();
+                    yield Ok(Event::default().event("progress").data(data));
+                }
+                None => {
+                    // No active download — send a "done" event and close.
+                    yield Ok(Event::default().event("done").data(
+                        serde_json::json!({"model_id": id, "status": "complete"}).to_string()
+                    ));
+                    break;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    };
+
+    Ok(Sse::new(stream))
+}
+
 pub fn model_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/models", get(list_models))
         .route("/api/models/scan", post(scan_models))
         .route("/api/models/{model_id}", delete(delete_model))
+        .route("/api/models/{model_id}/download", post(start_download))
+        .route(
+            "/api/models/{model_id}/download/progress",
+            get(download_progress),
+        )
 }
