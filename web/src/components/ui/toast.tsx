@@ -1,0 +1,96 @@
+import { AlertCircle, CheckCircle, Info, X, XCircle } from "lucide-react";
+import {
+	type ReactNode,
+	createContext,
+	createElement,
+	useCallback,
+	useContext,
+	useMemo,
+	useState,
+} from "react";
+
+type ToastVariant = "success" | "error" | "warning" | "info";
+
+interface Toast {
+	id: string;
+	message: string;
+	variant: ToastVariant;
+}
+
+interface ToastContextValue {
+	toast: (message: string, variant?: ToastVariant) => void;
+}
+
+const ToastContext = createContext<ToastContextValue | null>(null);
+
+const icons: Record<ToastVariant, ReactNode> = {
+	success: createElement(CheckCircle, { size: 16, className: "text-success" }),
+	error: createElement(XCircle, { size: 16, className: "text-error" }),
+	warning: createElement(AlertCircle, { size: 16, className: "text-warning" }),
+	info: createElement(Info, { size: 16, className: "text-info" }),
+};
+
+const borderColors: Record<ToastVariant, string> = {
+	success: "border-l-success",
+	error: "border-l-error",
+	warning: "border-l-warning",
+	info: "border-l-info",
+};
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+	const [toasts, setToasts] = useState<Toast[]>([]);
+
+	const toast = useCallback((message: string, variant: ToastVariant = "info") => {
+		const id = crypto.randomUUID();
+		setToasts((prev) => [...prev, { id, message, variant }]);
+		setTimeout(() => {
+			setToasts((prev) => prev.filter((t) => t.id !== id));
+		}, 4000);
+	}, []);
+
+	const dismiss = useCallback((id: string) => {
+		setToasts((prev) => prev.filter((t) => t.id !== id));
+	}, []);
+
+	const value = useMemo(() => ({ toast }), [toast]);
+
+	return createElement(
+		ToastContext.Provider,
+		{ value },
+		children,
+		createElement(
+			"div",
+			{
+				className: "fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm",
+				"aria-live": "polite",
+			},
+			toasts.map((t) =>
+				createElement(
+					"div",
+					{
+						key: t.id,
+						className: `flex items-center gap-2.5 bg-surface-2 border border-border border-l-4 ${borderColors[t.variant]} rounded-lg px-3.5 py-2.5 shadow-lg`,
+					},
+					icons[t.variant],
+					createElement("p", { className: "flex-1 text-sm text-text-primary" }, t.message),
+					createElement(
+						"button",
+						{
+							type: "button",
+							onClick: () => dismiss(t.id),
+							className:
+								"p-0.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer",
+						},
+						createElement(X, { size: 14 }),
+					),
+				),
+			),
+		),
+	);
+}
+
+export function useToast(): ToastContextValue {
+	const ctx = useContext(ToastContext);
+	if (!ctx) throw new Error("useToast must be used within ToastProvider");
+	return ctx;
+}
