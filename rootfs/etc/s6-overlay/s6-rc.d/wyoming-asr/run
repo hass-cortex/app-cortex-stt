@@ -1,0 +1,65 @@
+#!/command/with-contenv bashio
+# vim: ft=bash
+# shellcheck shell=bash
+# ==============================================================================
+# Start wyoming-asr service
+# Reads HA app options and translates to CLI arguments
+# ==============================================================================
+declare -a flags=()
+
+# Required options
+default_model="$(bashio::config 'default_model')"
+language="$(bashio::config 'language')"
+
+flags+=("--addon")
+flags+=("--data-dir" "/data")
+flags+=("--static-dir" "/app/web/dist")
+flags+=("--default-model" "${default_model}")
+
+# Language (pass through to engine)
+if [ -n "${language}" ] && [ "${language}" != "null" ]; then
+    flags+=("--language" "${language}")
+fi
+
+# Initial prompt (Whisper only)
+if bashio::config.has_value 'initial_prompt'; then
+    flags+=("--initial-prompt" "$(bashio::config 'initial_prompt')")
+fi
+
+# GPU mode
+if bashio::config.true 'gpu'; then
+    flags+=("--gpu-mode" "cuda")
+else
+    flags+=("--gpu-mode" "cpu")
+fi
+
+# Pool size
+pool_size="$(bashio::config 'pool_size')"
+flags+=("--pool-size" "${pool_size}")
+
+# Max loaded models
+if bashio::config.has_value 'max_loaded_models'; then
+    flags+=("--max-loaded-models" "$(bashio::config 'max_loaded_models')")
+fi
+
+# Idle timeout
+if bashio::config.has_value 'idle_timeout'; then
+    flags+=("--idle-timeout" "$(bashio::config 'idle_timeout')")
+fi
+
+# Debug logging
+if bashio::config.true 'debug_logging'; then
+    flags+=("--log-level" "debug")
+fi
+
+# AVX check for x86_64
+if [ "$(uname -m)" = "x86_64" ] && ! grep -qw 'avx' /proc/cpuinfo; then
+    bashio::log.warning \
+        "CPU does not support AVX. Some models may run slower than expected."
+fi
+
+bashio::log.info "Starting wyoming-asr with model: ${default_model}"
+bashio::log.info "Flags: ${flags[*]}"
+
+# shellcheck disable=SC2068
+exec /app/wyoming-asr ${flags[@]}

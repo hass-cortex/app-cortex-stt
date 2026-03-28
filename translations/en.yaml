@@ -1,0 +1,48 @@
+---
+configuration:
+  default_model:
+    name: Default model
+    description: >-
+      Default speech-to-text model used for Wyoming connections. Available
+      models can be managed from the Admin UI.
+  language:
+    name: Language
+    description: >-
+      Default language for speech recognition. Use 'auto' for automatic
+      detection (slower). Set a specific language code for faster, more
+      accurate results.
+  initial_prompt:
+    name: Initial prompt
+    description: >-
+      Optional text hint to guide Whisper transcription. Useful for
+      domain-specific vocabulary or proper nouns that Whisper might
+      otherwise mis-transcribe.
+  gpu:
+    name: GPU acceleration
+    description: >-
+      Enable CUDA GPU acceleration. Requires an NVIDIA GPU with CUDA
+      support and the NVIDIA Container Toolkit installed on the host.
+  pool_size:
+    name: Pool size
+    description: >-
+      Number of concurrent model instances per loaded model. Increase for
+      higher throughput with multiple simultaneous speakers. Each instance
+      uses additional memory.
+  max_loaded_models:
+    name: Maximum loaded models
+    description: >-
+      Maximum number of models loaded in memory simultaneously. When
+      exceeded, the least recently used model is unloaded. Default is 3.
+  idle_timeout:
+    name: Idle timeout
+    description: >-
+      Seconds before an idle model is unloaded from memory. Set to 0 to
+      keep models loaded indefinitely. Default is 300 (5 minutes).
+  debug_logging:
+    name: Debug logging
+    description: >-
+      Enable detailed debug logging. Useful for troubleshooting but
+      produces verbose output.
+network:
+  10300/tcp: Wyoming Protocol
+  10400/tcp: Admin Web UI / HTTP API
