@@ -162,6 +162,44 @@ impl Database {
     }
 
     /// Delete an API key by id. Returns true if a row was deleted.
+    /// Ensure a specific raw API key exists in the database.
+    /// Used for pre-configured keys (--api-key / API_KEY env).
+    pub fn ensure_api_key(&self, name: &str, raw_key: &str) -> Result<(), AsrError> {
+        let key_hash = hash_key(raw_key);
+        let conn = self.conn()?;
+
+        // Check if this hash already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM api_keys WHERE key_hash = ?1",
+                params![key_hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if exists {
+            return Ok(());
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let last4 = if raw_key.len() >= 4 {
+            raw_key[raw_key.len() - 4..].to_string()
+        } else {
+            raw_key.to_string()
+        };
+
+        conn.execute(
+            "INSERT INTO api_keys (id, name, key_hash, last4) VALUES (?1, ?2, ?3, ?4)",
+            params![id, name, key_hash, last4],
+        )
+        .map_err(|e| AsrError::DatabaseError {
+            detail: format!("insert api key failed: {e}"),
+        })?;
+
+        Ok(())
+    }
+
     pub fn delete_api_key(&self, id: &str) -> Result<bool, AsrError> {
         let conn = self.conn()?;
         let deleted = conn

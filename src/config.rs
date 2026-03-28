@@ -70,6 +70,11 @@ pub struct AppConfig {
     /// Directory containing web UI static files (SPA)
     #[arg(long, env = "STATIC_DIR")]
     pub static_dir: Option<PathBuf>,
+
+    /// Pre-configured API key (created on startup if not already in DB).
+    /// Useful for development, testing, and CI. Skips the bootstrap dance.
+    #[arg(long, env = "API_KEY")]
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
