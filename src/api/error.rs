@@ -133,7 +133,9 @@ impl IntoResponse for ApiError {
         // Determine status code from the error code string.
         let status = match self.code {
             "AUTH_REQUIRED" | "INVALID_API_KEY" => StatusCode::UNAUTHORIZED,
-            "MODEL_NOT_FOUND" | "MODEL_FILE_NOT_FOUND" => StatusCode::NOT_FOUND,
+            "MODEL_NOT_FOUND" | "MODEL_FILE_NOT_FOUND" | "RECORD_NOT_FOUND" | "NO_AUDIO" => {
+                StatusCode::NOT_FOUND
+            }
             "INFERENCE_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
             "POOL_EXHAUSTED" => StatusCode::TOO_MANY_REQUESTS,
             "DOWNLOAD_IN_PROGRESS" => StatusCode::CONFLICT,

@@ -223,6 +223,51 @@ impl Database {
             })?;
         Ok(deleted)
     }
+
+    /// Get audio file paths for records older than the given number of days.
+    pub fn get_audio_paths_older_than_days(&self, days: i64) -> Result<Vec<String>, AsrError> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT audio_path FROM records
+                 WHERE audio_path IS NOT NULL AND timestamp < datetime('now', ?1)",
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let rows = stmt
+            .query_map(params![format!("-{days} days")], |row| row.get(0))
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            paths.push(row.map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?);
+        }
+        Ok(paths)
+    }
+
+    /// Count total records, optionally filtered by source.
+    pub fn count_records(&self, source: Option<TranscriptionSource>) -> Result<usize, AsrError> {
+        let conn = self.conn()?;
+        let count: i64 = if let Some(src) = source {
+            conn.query_row(
+                "SELECT COUNT(*) FROM records WHERE source = ?1",
+                params![src.as_str()],
+                |row| row.get(0),
+            )
+        } else {
+            conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+        }
+        .map_err(|e| AsrError::DatabaseError {
+            detail: e.to_string(),
+        })?;
+        Ok(count as usize)
+    }
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecord> {

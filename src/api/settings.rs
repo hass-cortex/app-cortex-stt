@@ -1,1 +1,60 @@
+use std::sync::Arc;
 
+use axum::Json;
+use axum::Router;
+use axum::extract::State;
+use axum::routing::{get, put};
+use serde::{Deserialize, Serialize};
+
+use crate::api::error::ApiError;
+use crate::state::AppState;
+
+/// Application settings exposed via the REST API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    pub default_model: String,
+    pub pool_size: usize,
+    pub max_loaded_models: usize,
+    pub idle_timeout_secs: u64,
+    pub transcription_timeout_secs: u64,
+    pub save_audio: bool,
+    pub audio_retention_days: u32,
+    pub record_retention_days: u32,
+    pub cors_allowed_origins: Vec<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            default_model: "whisper-small".into(),
+            pool_size: 1,
+            max_loaded_models: 3,
+            idle_timeout_secs: 300,
+            transcription_timeout_secs: 120,
+            save_audio: true,
+            audio_retention_days: 7,
+            record_retention_days: 30,
+            cors_allowed_origins: vec![],
+        }
+    }
+}
+
+async fn get_settings(State(_state): State<Arc<AppState>>) -> Json<Settings> {
+    // TODO: load from persisted config once settings storage is implemented.
+    Json(Settings::default())
+}
+
+async fn update_settings(
+    State(_state): State<Arc<AppState>>,
+    Json(settings): Json<Settings>,
+) -> Result<Json<Settings>, ApiError> {
+    // TODO: persist to config and apply changes at runtime.
+    // For now, acknowledge the update by echoing the settings back.
+    Ok(Json(settings))
+}
+
+pub fn settings_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/settings", get(get_settings))
+        .route("/api/settings", put(update_settings))
+}

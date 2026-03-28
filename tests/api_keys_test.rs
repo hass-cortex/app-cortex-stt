@@ -1,0 +1,126 @@
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
+use tower::ServiceExt;
+
+use wyoming_asr::api::keys::key_routes;
+use wyoming_asr::db::database::Database;
+use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
+use wyoming_asr::model::manager::ModelManager;
+use wyoming_asr::state::{AppState, JobStore};
+
+fn create_test_state() -> Arc<AppState> {
+    let engine_manager = EngineManager::new(EngineManagerConfig::default());
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let tmp = tempfile::tempdir().unwrap();
+    let model_manager = ModelManager::new(tmp.path().to_path_buf());
+
+    Arc::new(AppState {
+        engine_manager,
+        model_manager,
+        db,
+        job_store: Arc::new(JobStore::new()),
+        addon_mode: false,
+        version: "0.0.0-test".to_string(),
+    })
+}
+
+fn test_app(state: Arc<AppState>) -> Router {
+    Router::new().merge(key_routes()).with_state(state)
+}
+
+#[tokio::test]
+async fn test_create_api_key() {
+    let state = create_test_state();
+    let app = test_app(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/keys")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"name": "test-key"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["key"].is_string());
+    assert!(json["id"].is_string());
+    assert_eq!(json["name"], "test-key");
+    assert!(json["last4"].is_string());
+    assert!(json["created_at"].is_string());
+}
+
+#[tokio::test]
+async fn test_list_api_keys() {
+    let state = create_test_state();
+
+    // Create a key directly via the DB.
+    state.db.create_api_key("key-1").unwrap();
+
+    let app = test_app(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/keys")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let keys = json.as_array().unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0]["name"], "key-1");
+    // key_hash should NOT be in the response.
+    assert!(keys[0].get("key_hash").is_none());
+}
+
+#[tokio::test]
+async fn test_delete_api_key() {
+    let state = create_test_state();
+
+    let (record, _) = state.db.create_api_key("to-delete").unwrap();
+
+    let app = test_app(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(&format!("/api/keys/{}", record.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_create_key_returns_unique_keys() {
+    let state = create_test_state();
+
+    // Create two keys and verify they are distinct.
+    let (_, key1) = state.db.create_api_key("k1").unwrap();
+    let (_, key2) = state.db.create_api_key("k2").unwrap();
+
+    assert_ne!(key1, key2);
+
+    let keys = state.db.list_api_keys().unwrap();
+    assert_eq!(keys.len(), 2);
+}
