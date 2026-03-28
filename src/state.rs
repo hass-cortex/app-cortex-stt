@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use crate::config::AppConfig;
+use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 
-/// Shared application state accessible across the server.
+/// Shared application state accessible across the HTTP server.
+#[derive(Clone)]
 pub struct AppState {
-    pub config: AppConfig,
     pub engine_manager: Arc<EngineManager>,
+    pub db: Arc<Database>,
+    pub addon_mode: bool,
+    pub version: String,
 }
