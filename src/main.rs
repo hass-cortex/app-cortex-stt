@@ -84,70 +84,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn background idle model watcher.
     engine_manager.spawn_idle_watcher();
 
-    // Register engine factories for downloaded models.
-    #[cfg(feature = "whisper")]
-    {
-        use wyoming_asr::engine::registry::EngineType;
-        use wyoming_asr::engine::whisper_bridge::whisper_factory;
-        use wyoming_asr::model::types::ModelStatus;
-
-        let models = model_manager.list_models().await;
-        let mut registered = 0u32;
-        for model in &models {
-            if model.engine_type == EngineType::Whisper
-                && matches!(model.status, ModelStatus::Downloaded | ModelStatus::Custom)
-            {
-                let model_path = model_manager.model_dir().join(&model.filename);
-                if model_path.exists() {
-                    tracing::info!(model_id = %model.id, ?model_path, "Registering Whisper engine");
-                    engine_manager
-                        .register(&model.id, whisper_factory(model_path))
-                        .await;
-                    registered += 1;
-                }
-            }
-        }
-        tracing::info!(registered, "Whisper engine factories registered");
-    }
-
-    // Register ONNX engine factories for downloaded models.
-    #[cfg(feature = "onnx")]
-    {
-        use transcribe_rs::onnx::Quantization;
-        use wyoming_asr::engine::onnx_bridge::onnx_factory;
-        use wyoming_asr::engine::registry::EngineType;
-        use wyoming_asr::model::types::ModelStatus;
-
-        let models = model_manager.list_models().await;
-        let mut registered = 0u32;
-        for model in &models {
-            if !matches!(
-                model.engine_type,
-                EngineType::Parakeet
-                    | EngineType::SenseVoice
-                    | EngineType::GigaAM
-                    | EngineType::Moonshine
-                    | EngineType::Canary
-            ) {
-                continue;
-            }
-            if !matches!(model.status, ModelStatus::Downloaded | ModelStatus::Custom) {
-                continue;
-            }
-            let model_path = model_manager.model_dir().join(&model.filename);
-            if model_path.exists() {
-                tracing::info!(model_id = %model.id, ?model_path, "Registering ONNX engine");
-                engine_manager
-                    .register(
-                        &model.id,
-                        onnx_factory(model_path, model.engine_type.clone(), Quantization::Int8),
-                    )
-                    .await;
-                registered += 1;
-            }
-        }
-        tracing::info!(registered, "ONNX engine factories registered");
-    }
+    // Register engine factories for downloaded registry models.
+    let model_dir_path = config.model_dir();
+    wyoming_asr::engine::register::register_downloaded_models(&engine_manager, &model_dir_path)
+        .await;
 
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::new());
