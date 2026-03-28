@@ -6,8 +6,9 @@ Multi-engine STT service with Wyoming protocol for Home Assistant.
 
 ```bash
 cargo build                    # No engines (for development/testing)
-cargo build --features whisper # With Whisper engine
-cargo build --features all-engines # All engines
+cargo build --features whisper # With Whisper engine (whisper.cpp)
+cargo build --features onnx   # With ONNX engines (parakeet, sense-voice, etc.)
+cargo build --features all-engines # All engines + VAD
 cargo test                     # Run all tests (no real models needed)
 cargo fmt --check              # Check formatting
 cargo clippy -- -D warnings    # Lint
