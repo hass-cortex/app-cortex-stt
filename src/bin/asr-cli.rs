@@ -8,13 +8,12 @@
 //!   asr-cli test-all <wav-dir>                # Test all downloaded models
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 
 use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::registry::{EngineType, builtin_models};
+use wyoming_asr::engine::registry::builtin_models;
 use wyoming_asr::model::download::{DownloadConfig, download_model, validate_download_url};
 use wyoming_asr::model::manager::ModelManager;
 use wyoming_asr::model::types::ModelStatus;
@@ -106,8 +105,8 @@ async fn cmd_list(manager: &ModelManager) -> Result<(), Box<dyn std::error::Erro
     let models = manager.list_models().await;
 
     println!(
-        "{:<25} {:<12} {:<12} {:<8} {}",
-        "ID", "Engine", "Status", "Size", "Languages"
+        "{:<25} {:<12} {:<12} {:<8} Languages",
+        "ID", "Engine", "Status", "Size"
     );
     println!("{}", "-".repeat(80));
 
@@ -304,33 +303,7 @@ async fn cmd_transcribe(
     println!("Loading model '{model_id}' ({engine_type:?})...");
     let load_start = Instant::now();
 
-    match engine_type {
-        #[cfg(feature = "whisper")]
-        EngineType::Whisper => {
-            let factory = wyoming_asr::engine::whisper_bridge::whisper_factory(model_path);
-            engine_manager.register(model_id, factory).await;
-        }
-        #[cfg(feature = "onnx")]
-        EngineType::SenseVoice
-        | EngineType::Parakeet
-        | EngineType::GigaAM
-        | EngineType::Moonshine
-        | EngineType::Canary => {
-            let factory = wyoming_asr::engine::onnx_bridge::onnx_factory(
-                model_path,
-                engine_type.clone(),
-                transcribe_rs::onnx::Quantization::Int8,
-            );
-            engine_manager.register(model_id, factory).await;
-        }
-        _ => {
-            return Err(format!(
-                "Engine type {engine_type:?} not compiled in this build. \
-                 Use --features whisper or --features onnx"
-            )
-            .into());
-        }
-    }
+    register_engine(&engine_manager, model_id, model_path, &engine_type).await?;
 
     // Transcribe
     let options = wyoming_asr::engine::traits::TranscribeOptions {
@@ -442,6 +415,55 @@ fn find_test_audio(wav_dir: &Path, languages: &[String]) -> Option<PathBuf> {
                 .unwrap_or(false)
         })
         .map(|e| e.path())
+}
+
+/// Register an engine factory for the given model, dispatching on engine type.
+///
+/// Feature-gated: requires `whisper` for Whisper models and `onnx` for all
+/// ONNX-based engines (Parakeet, SenseVoice, GigaAM, Moonshine, Canary).
+#[allow(
+    unused_variables,
+    unused_imports,
+    unreachable_code,
+    unreachable_patterns
+)]
+async fn register_engine(
+    engine_manager: &EngineManager,
+    model_id: &str,
+    model_path: PathBuf,
+    engine_type: &wyoming_asr::engine::registry::EngineType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use wyoming_asr::engine::registry::EngineType;
+
+    match engine_type {
+        #[cfg(feature = "whisper")]
+        EngineType::Whisper => {
+            let factory = wyoming_asr::engine::whisper_bridge::whisper_factory(model_path);
+            engine_manager.register(model_id, factory).await;
+        }
+        #[cfg(feature = "onnx")]
+        EngineType::SenseVoice
+        | EngineType::Parakeet
+        | EngineType::GigaAM
+        | EngineType::Moonshine
+        | EngineType::Canary => {
+            let factory = wyoming_asr::engine::onnx_bridge::onnx_factory(
+                model_path,
+                engine_type.clone(),
+                transcribe_rs::onnx::Quantization::Int8,
+            );
+            engine_manager.register(model_id, factory).await;
+        }
+        _ => {
+            return Err(format!(
+                "Engine type {engine_type:?} not compiled in this build. \
+                 Use --features whisper or --features onnx"
+            )
+            .into());
+        }
+    }
+
+    Ok(())
 }
 
 async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
