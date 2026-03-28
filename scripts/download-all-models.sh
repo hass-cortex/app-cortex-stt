@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Download all registry models for integration testing.
-# Run once, models are cached in data/models/.
 set -euo pipefail
-
 cd "$(dirname "$0")/.."
+
 MODEL_DIR="${MODEL_DIR:-./data/models}"
 mkdir -p "${MODEL_DIR}"
 
@@ -12,13 +11,30 @@ cargo build --features "whisper onnx" --bin asr-cli --release 2>&1 | tail -1
 CLI="./target/release/asr-cli"
 
 echo ""
-echo "=== Downloading all models ==="
-# Get list of model IDs from registry
-ALL_IDS=$(${CLI} --model-dir "${MODEL_DIR}" list 2>/dev/null | awk 'NR>2 {print $1}')
+echo "=== Downloading each model ==="
 
-for id in ${ALL_IDS}; do
-  ${CLI} --model-dir "${MODEL_DIR}" download "${id}" 2>&1 | grep -v "^$" || true
+# Hardcoded list matching builtin_models() in registry.rs
+MODELS=(
+  whisper-tiny-int8
+  whisper-small
+  whisper-medium-q4
+  whisper-large-v3-turbo
+  whisper-large-v3-q5
+  breeze-asr
+  parakeet-v2-int8
+  parakeet-v3-int8
+  moonshine-base
+  sense-voice-int8
+  gigaam-v3-int8
+  canary-180m-flash
+  canary-1b-v2
+)
+
+for id in "${MODELS[@]}"; do
+  echo "--- ${id} ---"
+  ${CLI} --model-dir "${MODEL_DIR}" download "${id}" 2>&1 || echo "  FAILED: ${id}"
+  echo ""
 done
 
-echo ""
+echo "=== Final Status ==="
 ${CLI} --model-dir "${MODEL_DIR}" list 2>/dev/null

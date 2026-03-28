@@ -62,6 +62,15 @@ enum Command {
 
     /// Verify all model download URLs are reachable (HEAD request)
     VerifyUrls,
+
+    /// Download all registry models, verifying each stage
+    DownloadAll,
+
+    /// Verify each downloaded model: file exists → correct structure → can load → can transcribe
+    Verify {
+        /// Optional: only verify this model
+        model_id: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -98,6 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmd_test_all(&wav_dir, &model_manager, &cli.model_dir).await
         }
         Command::VerifyUrls => cmd_verify_urls().await,
+        Command::DownloadAll => cmd_download_all(&model_manager).await,
+        Command::Verify { model_id } => cmd_verify(model_id.as_deref(), &cli.model_dir).await,
     }
 }
 
@@ -512,6 +523,136 @@ async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    Ok(())
+}
+
+async fn cmd_download_all(manager: &ModelManager) -> Result<(), Box<dyn std::error::Error>> {
+    let models = builtin_models();
+    let mut ok = 0u32;
+    let mut fail = 0u32;
+
+    for def in &models {
+        println!("--- {} ---", def.id);
+        match cmd_download(&def.id, manager).await {
+            Ok(_) => ok += 1,
+            Err(e) => {
+                println!("  ✗ FAILED: {e}");
+                fail += 1;
+            }
+        }
+        println!();
+    }
+
+    println!(
+        "=== Download Summary: {ok} ok, {fail} failed, {} total ===",
+        models.len()
+    );
+    if fail > 0 {
+        Err(format!("{fail} downloads failed").into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Staged verification for each model:
+///   Stage 1: File/directory exists on disk
+///   Stage 2: Correct structure (ONNX: has model*.onnx; Whisper: .bin > 1MB)
+///   Stage 3: Engine factory loads successfully
+///   Stage 4: Can transcribe 1 second of silence
+async fn cmd_verify(
+    model_id_filter: Option<&str>,
+    model_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let models = builtin_models();
+    let targets: Vec<_> = match model_id_filter {
+        Some(id) => models.iter().filter(|m| m.id == id).collect(),
+        None => models.iter().collect(),
+    };
+
+    if targets.is_empty() {
+        return Err("No matching models found".into());
+    }
+
+    let mut pass_count = 0usize;
+
+    for def in &targets {
+        let model_path = model_dir.join(&def.filename);
+        print!("{:<25} ", def.id);
+
+        // Stage 1: File exists
+        if !model_path.exists() {
+            println!("⏭ not downloaded");
+            continue;
+        }
+
+        // Stage 2: Structure check
+        let structure_ok = if def.is_directory {
+            std::fs::read_dir(&model_path)
+                .map(|entries| {
+                    entries.filter_map(|e| e.ok()).any(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        name.contains("model") && name.ends_with(".onnx")
+                    })
+                })
+                .unwrap_or(false)
+        } else {
+            std::fs::metadata(&model_path)
+                .map(|m| m.len() > 1_000_000)
+                .unwrap_or(false)
+        };
+
+        if !structure_ok {
+            println!("✗ bad structure (missing model files)");
+            continue;
+        }
+
+        // Stage 3: Engine loads
+        let engine_manager = EngineManager::new(EngineManagerConfig {
+            pool_size: 1,
+            max_loaded_models: 1,
+            idle_timeout: Duration::from_secs(0),
+            acquire_timeout: Duration::from_secs(300),
+            idle_check_interval: Duration::from_secs(60),
+        });
+
+        if let Err(e) =
+            register_engine(&engine_manager, &def.id, model_path, &def.engine_type).await
+        {
+            println!("✗ register failed: {e}");
+            continue;
+        }
+
+        let guard = match engine_manager.acquire(&def.id).await {
+            Ok(g) => g,
+            Err(e) => {
+                println!("✗ load failed: {e}");
+                continue;
+            }
+        };
+        drop(guard);
+
+        // Stage 4: Transcribe silence
+        let silence = vec![0.0f32; 16000];
+        let opts = wyoming_asr::engine::traits::TranscribeOptions::default();
+        match engine_manager.acquire(&def.id).await {
+            Ok(mut g) => match g.transcribe(&silence, &opts) {
+                Ok(r) => {
+                    println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
+                    pass_count += 1;
+                }
+                Err(e) => println!("✗ transcribe failed: {e}"),
+            },
+            Err(e) => println!("✗ acquire failed: {e}"),
+        }
+    }
+
+    println!("\n{pass_count}/{} models verified", targets.len());
+    let downloaded = targets
+        .iter()
+        .filter(|d| model_dir.join(&d.filename).exists())
+        .count();
+    println!("{downloaded}/{} models downloaded", targets.len());
 
     Ok(())
 }

@@ -169,6 +169,43 @@ async fn download_task(
         detail: format!("HTTP request failed: {e}"),
     })?;
 
+    // Handle 416 Range Not Satisfiable — .part file is already complete.
+    // Delete it and retry without Range header.
+    if response.status().as_u16() == 416 && existing_bytes > 0 {
+        warn!(
+            model_id = %model_id,
+            "416 Range Not Satisfiable — .part file likely complete, retrying fresh"
+        );
+        drop(response);
+        let _ = fs::remove_file(&part_path).await;
+        // Retry without Range
+        let response2 = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| AsrError::DownloadFailed {
+                model_id: model_id.to_string(),
+                detail: format!("HTTP retry failed: {e}"),
+            })?;
+        if !response2.status().is_success() {
+            return Err(AsrError::DownloadFailed {
+                model_id: model_id.to_string(),
+                detail: format!("HTTP {}", response2.status()),
+            });
+        }
+        // Re-assign and continue with fresh download
+        return Box::pin(download_task(
+            url,
+            dest_path,
+            expected_sha256,
+            model_id,
+            model_manager,
+            config,
+            tx,
+        ))
+        .await;
+    }
+
     if !response.status().is_success() && response.status().as_u16() != 206 {
         return Err(AsrError::DownloadFailed {
             model_id: model_id.to_string(),
