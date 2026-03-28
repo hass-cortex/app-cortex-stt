@@ -27,7 +27,24 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // 2. Bearer token authentication
+    // 2. Bootstrap: allow POST /api/keys when no keys exist yet
+    if req.method() == axum::http::Method::POST && req.uri().path() == "/api/keys" {
+        let db_check = Arc::clone(&db);
+        let has_keys = tokio::task::spawn_blocking(move || {
+            db_check
+                .list_api_keys()
+                .map(|keys| !keys.is_empty())
+                .unwrap_or(true)
+        })
+        .await
+        .unwrap_or(true);
+
+        if !has_keys {
+            return next.run(req).await;
+        }
+    }
+
+    // 3. Bearer token authentication
     if let Some(auth_value) = req.headers().get("authorization") {
         if let Ok(auth_str) = auth_value.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -53,6 +70,6 @@ pub async fn auth_middleware(
         }
     }
 
-    // 3. No valid credentials
+    // 4. No valid credentials
     ApiError::auth_required().into_response()
 }

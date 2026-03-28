@@ -117,9 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Serve web UI static files with SPA fallback routing.
     if let Some(web_dir) = config.static_dir() {
-        let index = web_dir.join("index.html");
-        let spa_fallback = ServeDir::new(&web_dir).not_found_service(ServeFile::new(index));
-        app = app.fallback_service(spa_fallback);
+        let index_path = web_dir.join("index.html");
+        let serve_dir = ServeDir::new(&web_dir).not_found_service(ServeFile::new(&index_path));
+        // Wrap in a fallback that also falls back to index.html for SPA routes
+        app = app.fallback_service(serve_dir.fallback(ServeFile::new(&index_path)));
         tracing::info!(?web_dir, "Serving web UI with SPA fallback");
     } else {
         tracing::info!("No web UI directory found; static file serving disabled");
