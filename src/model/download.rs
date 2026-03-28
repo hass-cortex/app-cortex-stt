@@ -15,7 +15,7 @@ use crate::model::manager::ModelManager;
 use crate::model::types::DownloadProgress;
 
 /// Hosts allowed for model downloads.
-pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co", "github.com"];
+pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co", "github.com", "blob.handy.computer"];
 
 /// Configuration for the download pipeline.
 pub struct DownloadConfig {
@@ -257,8 +257,79 @@ async fn download_task(
         info!(model_id = %model_id, "SHA-256 verified");
     }
 
-    // Rename .part file to final destination.
-    fs::rename(&part_path, dest_path).await?;
+    // Handle archive extraction or simple rename.
+    let url_lower = url.to_lowercase();
+    let is_tar_gz = url_lower.ends_with(".tar.gz") || url_lower.ends_with(".tgz");
+    let is_tar_bz2 = url_lower.ends_with(".tar.bz2") || url_lower.ends_with(".tbz2");
+
+    if is_tar_gz || is_tar_bz2 {
+        info!(model_id = %model_id, "extracting archive");
+        let parent = dest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let part_path_owned = part_path.clone();
+        let dest_path_owned = dest_path.to_path_buf();
+        let model_id_owned = model_id.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), AsrError> {
+            use std::io::BufReader;
+            let file = std::fs::File::open(&part_path_owned)?;
+
+            let tmp_dir = parent.join(format!(".tmp-extract-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&tmp_dir)?;
+
+            // Extract based on compression format
+            if is_tar_gz {
+                let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
+                let mut archive = tar::Archive::new(decoder);
+                archive
+                    .unpack(&tmp_dir)
+                    .map_err(|e| AsrError::DownloadFailed {
+                        model_id: model_id_owned.clone(),
+                        detail: format!("tar.gz extraction failed: {e}"),
+                    })?;
+            } else {
+                let decoder = bzip2::read::BzDecoder::new(BufReader::new(file));
+                let mut archive = tar::Archive::new(decoder);
+                archive
+                    .unpack(&tmp_dir)
+                    .map_err(|e| AsrError::DownloadFailed {
+                        model_id: model_id_owned.clone(),
+                        detail: format!("tar.bz2 extraction failed: {e}"),
+                    })?;
+            }
+
+            // Find extracted contents — if single top-level dir, use it; otherwise use tmp_dir
+            let entries: Vec<_> = std::fs::read_dir(&tmp_dir)
+                .map_err(AsrError::Io)?
+                .filter_map(|e| e.ok())
+                .collect();
+
+            let source_dir = if entries.len() == 1 && entries[0].path().is_dir() {
+                entries[0].path()
+            } else {
+                tmp_dir.clone()
+            };
+
+            // Rename to final destination (atomic swap)
+            if dest_path_owned.exists() {
+                std::fs::remove_dir_all(&dest_path_owned)?;
+            }
+            std::fs::rename(&source_dir, &dest_path_owned)?;
+
+            // Clean up
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            let _ = std::fs::remove_file(&part_path_owned);
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| AsrError::DownloadFailed {
+            model_id: model_id.to_string(),
+            detail: format!("extraction task failed: {e}"),
+        })??;
+    } else {
+        // Simple file — just rename .part to final destination.
+        fs::rename(&part_path, dest_path).await?;
+    }
 
     info!(model_id = %model_id, path = %dest_path.display(), "model download complete");
     Ok(())

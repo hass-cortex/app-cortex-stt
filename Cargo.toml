@@ -27,6 +27,9 @@ tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 async-stream = "0.3"
 url = "2"
+flate2 = "1"
+tar = "0.4"
+bzip2 = "0.5"
 
 # STT engine (optional — tests use mock)
 transcribe-rs = { version = "0.3", optional = true }
