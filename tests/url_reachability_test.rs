@@ -1,7 +1,7 @@
 //! URL reachability tests — makes HEAD requests, no downloads.
 //! Skips entirely if network is unavailable.
 
-use wyoming_asr::engine::registry::builtin_models;
+use cortex_stt_server::engine::registry::builtin_models;
 
 #[tokio::test]
 async fn all_registry_urls_are_reachable() {

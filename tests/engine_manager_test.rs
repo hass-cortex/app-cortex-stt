@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::traits::*;
-use wyoming_asr::error::AsrError;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::engine::traits::*;
+use cortex_stt_server::error::AsrError;
 
 struct MockEngine;
 

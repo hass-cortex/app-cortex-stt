@@ -11,23 +11,13 @@ use super::error::ApiError;
 /// Authentication middleware for the HTTP API.
 ///
 /// Logic:
-/// 1. If `addon_mode` is true and the request has an `X-Ingress-Path` header,
-///    allow the request through (HA Ingress bypass).
+/// 1. If this is the bootstrap request (POST /api/keys with no keys in DB),
+///    allow it through.
 /// 2. If an `Authorization: Bearer <token>` header is present, verify the token
 ///    against the database.
 /// 3. Otherwise, reject with 401.
-pub async fn auth_middleware(
-    req: Request,
-    next: Next,
-    db: Arc<Database>,
-    addon_mode: bool,
-) -> Response {
-    // 1. Ingress bypass in addon mode
-    if addon_mode && req.headers().contains_key("x-ingress-path") {
-        return next.run(req).await;
-    }
-
-    // 2. Bootstrap: allow POST /api/keys when no keys exist yet
+pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Response {
+    // 1. Bootstrap: allow POST /api/keys when no keys exist yet
     if req.method() == axum::http::Method::POST && req.uri().path() == "/api/keys" {
         let db_check = Arc::clone(&db);
         let has_keys = tokio::task::spawn_blocking(move || {
@@ -44,7 +34,7 @@ pub async fn auth_middleware(
         }
     }
 
-    // 3. Bearer token authentication
+    // 2. Bearer token authentication
     if let Some(auth_value) = req.headers().get("authorization") {
         if let Ok(auth_str) = auth_value.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -70,6 +60,6 @@ pub async fn auth_middleware(
         }
     }
 
-    // 4. No valid credentials
+    // 3. No valid credentials
     ApiError::auth_required().into_response()
 }

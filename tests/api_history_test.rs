@@ -5,12 +5,12 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use wyoming_asr::api::history::history_routes;
-use wyoming_asr::db::database::Database;
-use wyoming_asr::db::records::{CreateRecord, TranscriptionSource};
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::{AppState, JobStore};
+use cortex_stt_server::api::history::history_routes;
+use cortex_stt_server::db::database::Database;
+use cortex_stt_server::db::records::{CreateRecord, TranscriptionSource};
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::model::manager::ModelManager;
+use cortex_stt_server::state::{AppState, JobStore};
 
 fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
@@ -25,7 +25,6 @@ fn create_test_state() -> Arc<AppState> {
         job_store: Arc::new(JobStore::new()),
         data_dir: tmp.path().to_path_buf(),
         default_model: "whisper-small".to_string(),
-        addon_mode: false,
         version: "0.0.0-test".to_string(),
         started_at: std::time::Instant::now(),
     })

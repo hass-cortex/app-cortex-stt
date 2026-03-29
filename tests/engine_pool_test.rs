@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use wyoming_asr::engine::manager::SharedEngineFactory;
-use wyoming_asr::engine::pool::ModelPool;
-use wyoming_asr::engine::traits::*;
-use wyoming_asr::error::AsrError;
+use cortex_stt_server::engine::manager::SharedEngineFactory;
+use cortex_stt_server::engine::pool::ModelPool;
+use cortex_stt_server::engine::traits::*;
+use cortex_stt_server::error::AsrError;
 
 struct MockEngine {
     name: String,

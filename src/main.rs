@@ -3,28 +3,26 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::middleware;
+use cortex_stt_server::api::auth::auth_middleware;
+use cortex_stt_server::api::engine::engine_routes;
+use cortex_stt_server::api::health::health_routes;
+use cortex_stt_server::api::history::history_routes;
+use cortex_stt_server::api::keys::key_routes;
+use cortex_stt_server::api::metrics::metrics_routes;
+use cortex_stt_server::api::models::model_routes;
+use cortex_stt_server::api::settings::settings_routes;
+use cortex_stt_server::api::system::system_routes;
+use cortex_stt_server::api::transcribe::transcribe_routes;
+use cortex_stt_server::cleanup::spawn_retention_cleanup;
+use cortex_stt_server::config::AppConfig;
+use cortex_stt_server::db::database::Database;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::model::manager::ModelManager;
+use cortex_stt_server::state::{AppState, JobStore};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
-use wyoming_asr::api::auth::auth_middleware;
-use wyoming_asr::api::engine::engine_routes;
-use wyoming_asr::api::health::health_routes;
-use wyoming_asr::api::history::history_routes;
-use wyoming_asr::api::keys::key_routes;
-use wyoming_asr::api::metrics::metrics_routes;
-use wyoming_asr::api::models::model_routes;
-use wyoming_asr::api::settings::settings_routes;
-use wyoming_asr::api::system::system_routes;
-use wyoming_asr::api::transcribe::transcribe_routes;
-use wyoming_asr::cleanup::spawn_retention_cleanup;
-use wyoming_asr::config::AppConfig;
-use wyoming_asr::db::database::Database;
-use wyoming_asr::discovery::announce_discovery;
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::{AppState, JobStore};
-use wyoming_asr::wyoming::server::run_wyoming_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,11 +38,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
-        wyoming_port = config.wyoming_port,
         http_port = config.http_port,
         default_model = %config.default_model,
-        addon_mode = config.addon,
-        "Starting wyoming-asr"
+        "Starting cortex-stt-server"
     );
 
     // Create data directories.
@@ -99,8 +95,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register engine factories for downloaded registry models.
     let model_dir_path = config.model_dir();
-    wyoming_asr::engine::register::register_downloaded_models(&engine_manager, &model_dir_path)
-        .await;
+    cortex_stt_server::engine::register::register_downloaded_models(
+        &engine_manager,
+        &model_dir_path,
+    )
+    .await;
 
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::new());
@@ -112,8 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: db.clone(),
         job_store,
         data_dir: config.data_dir.clone(),
-        default_model: default_model.clone(),
-        addon_mode: config.addon,
+        default_model,
         version: env!("CARGO_PKG_VERSION").to_string(),
         started_at: std::time::Instant::now(),
     });
@@ -122,7 +120,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _cleanup_handle = spawn_retention_cleanup(db.clone(), config.data_dir.clone());
 
     // Build Axum router.
-    let addon_mode = config.addon;
 
     // Public routes (no auth required).
     let public_routes = Router::new().merge(health_routes());
@@ -138,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(settings_routes())
         .merge(metrics_routes())
         .layer(middleware::from_fn(move |req, next| {
-            auth_middleware(req, next, db.clone(), addon_mode)
+            auth_middleware(req, next, db.clone())
         }));
 
     let mut app = Router::new()
@@ -158,31 +155,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("No web UI directory found; static file serving disabled");
     }
 
-    // Announce discovery readiness.
-    announce_discovery(config.wyoming_port).await;
-
     // Bind HTTP listener.
     let http_addr = format!("{}:{}", config.http_host, config.http_port);
     let http_listener = TcpListener::bind(&http_addr).await?;
     tracing::info!("HTTP server listening on {http_addr}");
 
-    // Run both servers concurrently. If either exits, shut down.
-    tokio::select! {
-        result = run_wyoming_server(
-            &config.wyoming_host,
-            config.wyoming_port,
-            default_model,
-            Duration::from_secs(config.transcription_timeout_secs),
-            engine_manager,
-        ) => {
-            tracing::error!("Wyoming server exited unexpectedly");
-            result?;
-        }
-        result = axum::serve(http_listener, app) => {
-            tracing::error!("HTTP server exited unexpectedly");
-            result?;
-        }
-    }
+    // Run HTTP server.
+    axum::serve(http_listener, app).await?;
 
     Ok(())
 }

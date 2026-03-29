@@ -6,13 +6,13 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use wyoming_asr::api::transcribe::transcribe_routes;
-use wyoming_asr::db::database::Database;
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::traits::*;
-use wyoming_asr::error::AsrError;
-use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::{AppState, JobStore};
+use cortex_stt_server::api::transcribe::transcribe_routes;
+use cortex_stt_server::db::database::Database;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::engine::traits::*;
+use cortex_stt_server::error::AsrError;
+use cortex_stt_server::model::manager::ModelManager;
+use cortex_stt_server::state::{AppState, JobStore};
 
 // ---------------------------------------------------------------------------
 // Mock engine
@@ -78,7 +78,6 @@ async fn create_test_state() -> Arc<AppState> {
         job_store: Arc::new(JobStore::new()),
         data_dir: tmp.path().to_path_buf(),
         default_model: "whisper-small".to_string(),
-        addon_mode: false,
         version: "0.0.0-test".to_string(),
         started_at: std::time::Instant::now(),
     })

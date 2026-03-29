@@ -1,5 +1,5 @@
-use wyoming_asr::db::database::Database;
-use wyoming_asr::db::records::{CreateRecord, ListRecordsFilter, TranscriptionSource};
+use cortex_stt_server::db::database::Database;
+use cortex_stt_server::db::records::{CreateRecord, ListRecordsFilter, TranscriptionSource};
 
 fn sample_record() -> CreateRecord {
     CreateRecord {

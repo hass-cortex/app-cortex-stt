@@ -11,9 +11,9 @@ mod test_helpers;
 use std::time::Duration;
 use test_helpers::{audio_dir, load_audio, model_dir};
 
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::register::register_downloaded_models;
-use wyoming_asr::engine::traits::TranscribeOptions;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::engine::register::register_downloaded_models;
+use cortex_stt_server::engine::traits::TranscribeOptions;
 
 /// Create EngineManager, run auto-registration from registry, then transcribe.
 async fn run_pipeline(model_id: &str, audio_file: &str, lang: &str) {

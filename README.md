@@ -1,19 +1,16 @@
-# Wyoming ASR
+# Cortex STT Server
 
-Multi-engine speech-to-text service with [Wyoming protocol](https://github.com/rhasspy/wyoming) for Home Assistant.
-
-Powered by [transcribe-rs](https://github.com/thewh1teagle/transcribe-rs), supporting Whisper, Parakeet, SenseVoice, GigaAM, Moonshine, and Canary engines.
+Multi-engine speech-to-text HTTP service powered by [transcribe-rs](https://github.com/thewh1teagle/transcribe-rs), supporting Whisper, Parakeet, SenseVoice, GigaAM, Moonshine, and Canary engines.
 
 ## Features
 
 - **Multi-engine support** - Multiple STT engines via transcribe-rs, each with different strengths
 - **Model pooling** - Concurrent transcription with configurable pool size per model
 - **Lazy loading** - Models load on first use, with LRU eviction and idle unloading
-- **Wyoming protocol** - Native integration with Home Assistant voice pipelines
 - **HTTP API** - REST API for transcription with sync, SSE streaming, and async job modes
 - **Web Admin UI** - Model management, engine control, transcription history, and API key management
 - **GPU acceleration** - CUDA support for faster inference
-- **Four deployment modes** - Bare metal, Docker, Home Assistant App, Proxmox LXC
+- **Three deployment modes** - Bare metal, Docker, Proxmox LXC
 
 ## Supported Models
 
@@ -23,8 +20,8 @@ Powered by [transcribe-rs](https://github.com/thewh1teagle/transcribe-rs), suppo
 | whisper-small | Whisper | 466 MB | 18 | Good balance of accuracy and speed |
 | whisper-medium-q4 | Whisper | 492 MB | 18 | Q4_1 quantized, good accuracy/size tradeoff |
 | whisper-large-v3-turbo | Whisper | 1.6 GB | 18 | Distilled large-v3, best practical Whisper model |
-| whisper-large-v3-q5 | Whisper | 1.1 GB | 18 | ⚠️ Segfaults — see Known Limitations |
-| breeze-asr | Whisper | 1.1 GB | 18 | ⚠️ Segfaults — see Known Limitations |
+| whisper-large-v3-q5 | Whisper | 1.1 GB | 18 | Segfaults — see Known Limitations |
+| breeze-asr | Whisper | 1.1 GB | 18 | Segfaults — see Known Limitations |
 | parakeet-v2-int8 | Parakeet | 473 MB | en | NVIDIA, fast English-only, requires AVX |
 | parakeet-v3-int8 | Parakeet | 478 MB | 17 | NVIDIA, fast multilingual, requires AVX |
 | sense-voice-int8 | SenseVoice | 160 MB | zh,en,ja,ko,yue | FunAudioLLM, CJK + Cantonese, requires AVX |
@@ -37,38 +34,25 @@ Custom models (Whisper GGML `.bin` files and ONNX directories) can be added by p
 
 ## Quick Start
 
-### Home Assistant App
-
-1. Add the repository to Home Assistant:
-   **Settings > Apps > App Store > Repositories** and add:
-   ```
-   https://github.com/hass-cortex/wyoming-asr
-   ```
-2. Install **Wyoming ASR** from the app store
-3. Configure the default model and start the app
-4. Wyoming ASR will be auto-discovered by Home Assistant for use in voice pipelines
-
 ### Docker
 
 ```bash
 docker run -d \
-  --name wyoming-asr \
-  -p 10300:10300 \
+  --name cortex-stt-server \
   -p 10400:10400 \
-  -v wyoming-asr-data:/data \
-  ghcr.io/hass-cortex/wyoming-asr:latest-cpu
+  -v cortex-stt-data:/data \
+  ghcr.io/hass-cortex/cortex-stt-server:latest-cpu
 ```
 
 With CUDA GPU:
 
 ```bash
 docker run -d \
-  --name wyoming-asr \
+  --name cortex-stt-server \
   --gpus all \
-  -p 10300:10300 \
   -p 10400:10400 \
-  -v wyoming-asr-data:/data \
-  ghcr.io/hass-cortex/wyoming-asr:latest-cuda
+  -v cortex-stt-data:/data \
+  ghcr.io/hass-cortex/cortex-stt-server:latest-cuda
 ```
 
 ### Docker Compose
@@ -83,26 +67,26 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cuda.yml up
 
 ### Bare Metal
 
-Download the binary from [Releases](https://github.com/hass-cortex/wyoming-asr/releases):
+Download the binary from [Releases](https://github.com/hass-cortex/cortex-stt-server/releases):
 
 ```bash
 # Download and install
-curl -fsSL -o /usr/local/bin/wyoming-asr \
-  https://github.com/hass-cortex/wyoming-asr/releases/latest/download/wyoming-asr-x86_64-unknown-linux-gnu
-chmod +x /usr/local/bin/wyoming-asr
+curl -fsSL -o /usr/local/bin/cortex-stt-server \
+  https://github.com/hass-cortex/cortex-stt-server/releases/latest/download/cortex-stt-server-x86_64-unknown-linux-gnu
+chmod +x /usr/local/bin/cortex-stt-server
 
 # Run
-wyoming-asr --default-model whisper-small
+cortex-stt-server --default-model whisper-small
 
 # Or install as systemd service
-sudo cp deploy/wyoming-asr.service /etc/systemd/system/
-sudo systemctl enable --now wyoming-asr
+sudo cp deploy/cortex-stt-server.service /etc/systemd/system/
+sudo systemctl enable --now cortex-stt-server
 ```
 
 ### Proxmox LXC
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hass-cortex/wyoming-asr/main/deploy/lxc/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hass-cortex/cortex-stt-server/main/deploy/lxc/setup.sh | bash
 ```
 
 See [deploy/lxc/gpu-passthrough.md](deploy/lxc/gpu-passthrough.md) for GPU passthrough instructions.
@@ -113,17 +97,14 @@ See [deploy/lxc/gpu-passthrough.md](deploy/lxc/gpu-passthrough.md) for GPU passt
 
 | Argument | Env Var | Default | Description |
 |----------|---------|---------|-------------|
-| `--wyoming-host` | `WYOMING_HOST` | `0.0.0.0` | Wyoming TCP bind address |
-| `--wyoming-port` | `WYOMING_PORT` | `10300` | Wyoming TCP port |
 | `--http-host` | `HTTP_HOST` | `0.0.0.0` | HTTP server bind address |
 | `--http-port` | `HTTP_PORT` | `10400` | HTTP server port |
 | `--data-dir` | `DATA_DIR` | `./data` | Data directory |
-| `--default-model` | `DEFAULT_MODEL` | `whisper-small` | Default model for Wyoming |
+| `--default-model` | `DEFAULT_MODEL` | `whisper-small` | Default model |
 | `--pool-size` | `POOL_SIZE` | `1` | Instances per model |
 | `--max-loaded-models` | `MAX_LOADED_MODELS` | `3` | Max concurrent models in memory |
 | `--idle-timeout` | `IDLE_TIMEOUT` | `300` | Seconds before idle model unload |
 | `--gpu-mode` | `GPU_MODE` | `auto` | GPU mode: `auto`, `cuda`, `cpu` |
-| `--addon` | `ADDON_MODE` | `false` | HA App mode |
 
 ### Configuration Priority
 
@@ -133,7 +114,7 @@ CLI args > Environment variables > config.toml > config.json (runtime) > default
 
 ## Admin Web UI
 
-Access the web admin interface at `http://<host>:10400` (or via HA sidebar in app mode).
+Access the web admin interface at `http://<host>:10400`.
 
 Features:
 - **Dashboard** - Hardware info, pool status, queue depth, metrics
@@ -142,14 +123,6 @@ Features:
 - **History** - Transcription records with audio playback and segment timeline
 - **API Keys** - Generate and manage keys for HTTP API access
 - **Settings** - Retention policy, CORS, rate limiting
-
-## Home Assistant Integration
-
-Wyoming ASR integrates with Home Assistant via the [Wyoming protocol](https://www.home-assistant.io/integrations/wyoming/). When running as an app, it is auto-discovered. For standalone deployments, add the Wyoming integration manually:
-
-**Settings > Devices & Services > Add Integration > Wyoming Protocol** and enter:
-- Host: `<wyoming-asr-ip>`
-- Port: `10300`
 
 ## Known Limitations
 

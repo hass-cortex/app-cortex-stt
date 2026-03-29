@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use wyoming_asr::model::download::{compute_sha256, validate_download_url};
+use cortex_stt_server::model::download::{compute_sha256, validate_download_url};
 
 #[test]
 fn test_validate_url_allows_huggingface() {

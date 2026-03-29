@@ -1,4 +1,4 @@
-//! CLI tool for testing wyoming-asr model download and transcription pipeline.
+//! CLI tool for testing cortex-stt-server model download and transcription pipeline.
 //!
 //! Usage:
 //!   asr-cli list                              # List available models
@@ -12,14 +12,14 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::registry::builtin_models;
-use wyoming_asr::model::download::{DownloadConfig, download_model, validate_download_url};
-use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::model::types::ModelStatus;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::engine::registry::builtin_models;
+use cortex_stt_server::model::download::{DownloadConfig, download_model, validate_download_url};
+use cortex_stt_server::model::manager::ModelManager;
+use cortex_stt_server::model::types::ModelStatus;
 
 #[derive(Parser)]
-#[command(name = "asr-cli", about = "Test tool for wyoming-asr models")]
+#[command(name = "asr-cli", about = "Test tool for cortex-stt-server models")]
 struct Cli {
     /// Model storage directory
     #[arg(long, env = "MODEL_DIR", default_value = "./data/models")]
@@ -269,7 +269,7 @@ async fn cmd_transcribe(
 
     // Read and parse WAV
     let wav_data = std::fs::read(wav_file)?;
-    let samples = wyoming_asr::audio::resample::resample_to_16khz_mono(&wav_data)?;
+    let samples = cortex_stt_server::audio::resample::resample_to_16khz_mono(&wav_data)?;
     let duration_secs = samples.len() as f32 / 16000.0;
     println!(
         "Audio: {:.2}s, {} samples (16kHz mono)",
@@ -318,7 +318,7 @@ async fn cmd_transcribe(
     register_engine(&engine_manager, model_id, model_path, &engine_type).await?;
 
     // Transcribe
-    let options = wyoming_asr::engine::traits::TranscribeOptions {
+    let options = cortex_stt_server::engine::traits::TranscribeOptions {
         language: language.map(String::from),
         translate: false,
     };
@@ -443,14 +443,14 @@ async fn register_engine(
     engine_manager: &EngineManager,
     model_id: &str,
     model_path: PathBuf,
-    engine_type: &wyoming_asr::engine::registry::EngineType,
+    engine_type: &cortex_stt_server::engine::registry::EngineType,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use wyoming_asr::engine::registry::EngineType;
+    use cortex_stt_server::engine::registry::EngineType;
 
     match engine_type {
         #[cfg(feature = "whisper")]
         EngineType::Whisper => {
-            let factory = wyoming_asr::engine::whisper_bridge::whisper_factory(model_path);
+            let factory = cortex_stt_server::engine::whisper_bridge::whisper_factory(model_path);
             engine_manager.register(model_id, factory).await;
         }
         #[cfg(feature = "onnx")]
@@ -459,7 +459,7 @@ async fn register_engine(
         | EngineType::GigaAM
         | EngineType::Moonshine
         | EngineType::Canary => {
-            let factory = wyoming_asr::engine::onnx_bridge::onnx_factory(
+            let factory = cortex_stt_server::engine::onnx_bridge::onnx_factory(
                 model_path,
                 engine_type.clone(),
                 transcribe_rs::onnx::Quantization::Int8,
@@ -635,7 +635,7 @@ async fn cmd_verify(
 
         // Stage 4: Transcribe silence
         let silence = vec![0.0f32; 16000];
-        let opts = wyoming_asr::engine::traits::TranscribeOptions::default();
+        let opts = cortex_stt_server::engine::traits::TranscribeOptions::default();
         match engine_manager.acquire(&def.id).await {
             Ok(mut g) => match g.transcribe(&silence, &opts) {
                 Ok(r) => {

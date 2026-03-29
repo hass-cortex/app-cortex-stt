@@ -1,9 +1,17 @@
 [package]
-name = "wyoming-asr"
+name = "cortex-stt-server"
 version = "0.1.0"
 edition = "2024"
-description = "Multi-engine speech-to-text service with Wyoming protocol for Home Assistant"
+description = "Multi-engine speech-to-text HTTP service powered by transcribe-rs"
 license = "MIT"
+
+[[bin]]
+name = "cortex-stt-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "asr-cli"
+path = "src/bin/asr-cli.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -35,9 +43,6 @@ toml = "0.8"
 # STT engine (optional — tests use mock)
 transcribe-rs = { version = "0.3", optional = true }
 
-# Zeroconf/mDNS discovery (optional)
-mdns-sd = { version = "0.12", optional = true }
-hostname = { version = "0.4", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -50,7 +55,6 @@ whisper-cuda = ["whisper", "transcribe-rs/whisper-cuda"]
 onnx = ["transcribe-rs", "transcribe-rs/onnx"]
 ort-cuda = ["onnx", "transcribe-rs/ort-cuda"]
 vad-silero = ["transcribe-rs/vad-silero"]
-zeroconf = ["mdns-sd", "hostname"]
 all-engines = ["whisper", "onnx", "vad-silero"]
 all-engines-cuda = ["whisper-cuda", "ort-cuda", "vad-silero"]
 

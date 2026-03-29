@@ -1,6 +1,6 @@
-# wyoming-asr
+# cortex-stt-server
 
-Multi-engine STT service with Wyoming protocol for Home Assistant.
+Multi-engine STT HTTP service powered by transcribe-rs.
 
 ## Build & Test
 
@@ -16,8 +16,8 @@ cargo clippy -- -D warnings    # Lint
 
 ## Architecture
 
-- `src/wyoming/` — Wyoming protocol TCP server (event I/O, handler state machine)
 - `src/engine/` — Model pool, engine manager, model registry
+- `src/api/` — HTTP API routes (transcribe, models, engine, health, etc.)
 - `src/config.rs` — CLI + env config parsing
 - `src/state.rs` — Shared application state
 

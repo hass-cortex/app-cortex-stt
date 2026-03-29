@@ -5,21 +5,13 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "wyoming-asr",
-    about = "Multi-engine STT service with Wyoming protocol"
+    name = "cortex-stt-server",
+    about = "Multi-engine STT HTTP service powered by transcribe-rs"
 )]
 pub struct AppConfig {
     /// Path to config file (TOML)
     #[arg(long, env = "CONFIG_FILE")]
     pub config_file: Option<PathBuf>,
-
-    /// Wyoming TCP server host
-    #[arg(long, env = "WYOMING_HOST", default_value = "0.0.0.0")]
-    pub wyoming_host: String,
-
-    /// Wyoming TCP server port
-    #[arg(long, env = "WYOMING_PORT", default_value_t = 10300)]
-    pub wyoming_port: u16,
 
     /// HTTP server host
     #[arg(long, env = "HTTP_HOST", default_value = "0.0.0.0")]
@@ -37,7 +29,7 @@ pub struct AppConfig {
     #[arg(long, env = "MODEL_DIR")]
     pub model_dir: Option<PathBuf>,
 
-    /// Default model ID for Wyoming connections
+    /// Default model ID
     #[arg(long, env = "DEFAULT_MODEL", default_value = "whisper-small")]
     pub default_model: String,
 
@@ -65,10 +57,6 @@ pub struct AppConfig {
     #[arg(long, env = "GPU_MODE", default_value = "auto")]
     pub gpu_mode: GpuMode,
 
-    /// Run in HA Addon mode
-    #[arg(long, env = "ADDON_MODE")]
-    pub addon: bool,
-
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     pub log_level: String,
@@ -95,8 +83,6 @@ pub enum GpuMode {
 /// clap parses CLI args. This gives us: CLI > ENV > config.toml > defaults.
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {
-    pub wyoming_host: Option<String>,
-    pub wyoming_port: Option<u16>,
     pub http_host: Option<String>,
     pub http_port: Option<u16>,
     pub data_dir: Option<PathBuf>,
@@ -108,7 +94,6 @@ pub struct FileConfig {
     pub transcription_timeout_secs: Option<u64>,
     pub pool_acquire_timeout_secs: Option<u64>,
     pub gpu_mode: Option<String>,
-    pub addon: Option<bool>,
     pub log_level: Option<String>,
     pub static_dir: Option<PathBuf>,
     pub api_key: Option<String>,
@@ -127,12 +112,6 @@ impl FileConfig {
             }
         }
 
-        if let Some(ref v) = self.wyoming_host {
-            set_if_unset("WYOMING_HOST", v);
-        }
-        if let Some(v) = self.wyoming_port {
-            set_if_unset("WYOMING_PORT", &v.to_string());
-        }
         if let Some(ref v) = self.http_host {
             set_if_unset("HTTP_HOST", v);
         }
@@ -166,11 +145,6 @@ impl FileConfig {
         if let Some(ref v) = self.gpu_mode {
             set_if_unset("GPU_MODE", v);
         }
-        if let Some(v) = self.addon {
-            if v {
-                set_if_unset("ADDON_MODE", "true");
-            }
-        }
         if let Some(ref v) = self.log_level {
             set_if_unset("RUST_LOG", v);
         }
@@ -184,11 +158,7 @@ impl FileConfig {
 }
 
 /// Default config file search paths, in order of priority.
-const CONFIG_SEARCH_PATHS: &[&str] = &[
-    "./config.toml",
-    "/etc/wyoming-asr/config.toml",
-    "/config/config.toml", // HA addon convention
-];
+const CONFIG_SEARCH_PATHS: &[&str] = &["./config.toml", "/etc/cortex-stt/config.toml"];
 
 impl AppConfig {
     /// Load configuration with priority: CLI > ENV > config.toml > defaults.
@@ -304,23 +274,22 @@ mod tests {
     #[test]
     fn file_config_deserializes_partial_toml() {
         let toml_str = r#"
-            wyoming_port = 10301
+            http_port = 10401
             default_model = "whisper-tiny-int8"
             log_level = "debug"
         "#;
         let fc: FileConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(fc.wyoming_port, Some(10301));
+        assert_eq!(fc.http_port, Some(10401));
         assert_eq!(fc.default_model.as_deref(), Some("whisper-tiny-int8"));
         assert_eq!(fc.log_level.as_deref(), Some("debug"));
-        assert!(fc.wyoming_host.is_none());
-        assert!(fc.http_port.is_none());
+        assert!(fc.http_host.is_none());
     }
 
     #[test]
     fn file_config_deserializes_empty_toml() {
         let fc: FileConfig = toml::from_str("").unwrap();
-        assert!(fc.wyoming_host.is_none());
-        assert!(fc.wyoming_port.is_none());
+        assert!(fc.http_host.is_none());
+        assert!(fc.http_port.is_none());
     }
 
     #[test]

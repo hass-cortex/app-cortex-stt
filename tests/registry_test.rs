@@ -1,7 +1,7 @@
 //! Registry consistency tests — always run, no models or network needed.
 
-use wyoming_asr::engine::registry::builtin_models;
-use wyoming_asr::model::download::validate_download_url;
+use cortex_stt_server::engine::registry::builtin_models;
+use cortex_stt_server::model::download::validate_download_url;
 
 #[test]
 fn all_model_ids_are_unique() {

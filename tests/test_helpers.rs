@@ -15,7 +15,7 @@ pub fn audio_dir() -> PathBuf {
 /// Read a WAV file and resample to 16kHz mono f32 samples.
 pub fn load_audio(path: &Path) -> Vec<f32> {
     let wav_data = std::fs::read(path).expect("failed to read WAV file");
-    wyoming_asr::audio::resample::resample_to_16khz_mono(&wav_data)
+    cortex_stt_server::audio::resample::resample_to_16khz_mono(&wav_data)
         .expect("failed to resample audio")
 }
 

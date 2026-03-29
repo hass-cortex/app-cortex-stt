@@ -1,4 +1,4 @@
-use wyoming_asr::audio::resample::{parse_wav_header, resample_to_16khz_mono};
+use cortex_stt_server::audio::resample::{parse_wav_header, resample_to_16khz_mono};
 
 // ---------------------------------------------------------------------------
 // Helper functions

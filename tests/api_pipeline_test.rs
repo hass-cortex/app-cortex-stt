@@ -13,16 +13,16 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+use cortex_stt_server::api::engine::engine_routes;
+use cortex_stt_server::api::history::history_routes;
+use cortex_stt_server::api::models::model_routes;
+use cortex_stt_server::api::transcribe::transcribe_routes;
+use cortex_stt_server::db::database::Database;
+use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt_server::engine::register::register_downloaded_models;
+use cortex_stt_server::model::manager::ModelManager;
+use cortex_stt_server::state::{AppState, JobStore};
 use test_helpers::{audio_dir, model_dir};
-use wyoming_asr::api::engine::engine_routes;
-use wyoming_asr::api::history::history_routes;
-use wyoming_asr::api::models::model_routes;
-use wyoming_asr::api::transcribe::transcribe_routes;
-use wyoming_asr::db::database::Database;
-use wyoming_asr::engine::manager::{EngineManager, EngineManagerConfig};
-use wyoming_asr::engine::register::register_downloaded_models;
-use wyoming_asr::model::manager::ModelManager;
-use wyoming_asr::state::{AppState, JobStore};
 
 /// Build a test app with real engines registered from downloaded models.
 async fn build_test_app() -> (Router, Arc<AppState>) {
@@ -55,7 +55,6 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         job_store: Arc::new(JobStore::new()),
         data_dir,
         default_model: "whisper-small".to_string(),
-        addon_mode: false,
         version: "0.0.0-test".to_string(),
         started_at: std::time::Instant::now(),
     });
