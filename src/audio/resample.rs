@@ -128,7 +128,7 @@ pub fn raw_pcm_to_f32(
     sample_rate: u32,
     channels: u16,
 ) -> Result<Vec<f32>, AsrError> {
-    // Assume 16-bit PCM for raw streams (Wyoming protocol default)
+    // Assume 16-bit PCM for raw streams (common default for speech audio)
     let samples = pcm_bytes_to_f32(pcm_bytes, 16)?;
 
     let mono = if channels > 1 {

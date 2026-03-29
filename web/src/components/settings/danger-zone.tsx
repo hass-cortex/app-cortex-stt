@@ -15,7 +15,7 @@ export function DangerZone() {
 		cleanupMutation.mutate(undefined, {
 			onSuccess: (data) =>
 				toast(
-					`Cleanup complete: ${data.deleted_records} records, ${data.deleted_audio} audio files deleted`,
+					`Cleanup complete: ${data.deleted_records} records, ${data.deleted_audio_files} audio files deleted`,
 					"success",
 				),
 			onError: (err) => toast(`Cleanup failed: ${err.message}`, "error"),

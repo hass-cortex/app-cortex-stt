@@ -46,7 +46,7 @@ export function KeyList({ onGenerate }: KeyListProps) {
 		<Card>
 			<CardHeader
 				title="API Keys"
-				description="Keys authenticate HTTP API requests. Wyoming protocol does not use API keys."
+				description="Keys authenticate HTTP API requests."
 				action={
 					<Button size="sm" icon={<Plus size={14} />} onClick={onGenerate}>
 						Generate Key

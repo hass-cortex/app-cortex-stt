@@ -25,6 +25,6 @@ export function deleteHistoryRecord(id: string): Promise<void> {
 }
 
 /** Run manual retention cleanup */
-export function cleanupHistory(): Promise<{ deleted_records: number; deleted_audio: number }> {
-	return post<{ deleted_records: number; deleted_audio: number }>("/api/history/cleanup");
+export function cleanupHistory(): Promise<{ deleted_records: number; deleted_audio_files: number }> {
+	return post<{ deleted_records: number; deleted_audio_files: number }>("/api/history/cleanup");
 }

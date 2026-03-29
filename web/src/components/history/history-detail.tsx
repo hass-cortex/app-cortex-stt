@@ -14,7 +14,7 @@ import { SegmentTimeline } from "./segment-timeline";
 function formatSource(source: string): string {
 	switch (source) {
 		case "wyoming":
-			return "Wyoming";
+			return "External";
 		case "http_api":
 			return "HTTP API";
 		default:

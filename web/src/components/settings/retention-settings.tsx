@@ -11,7 +11,7 @@ import { useState } from "react";
 const policyOptions = [
 	{ value: "Days", label: "Days" },
 	{ value: "Count", label: "Record count" },
-	{ value: "DiskLimit", label: "Disk limit (MB)" },
+	{ value: "DiskLimitMb", label: "Disk limit (MB)" },
 	{ value: "Unlimited", label: "Unlimited" },
 ];
 

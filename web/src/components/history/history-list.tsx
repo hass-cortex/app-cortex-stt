@@ -11,7 +11,7 @@ import { useState } from "react";
 
 const sourceOptions = [
 	{ value: "", label: "All sources" },
-	{ value: "wyoming", label: "Wyoming" },
+	{ value: "wyoming", label: "External" },
 	{ value: "http_api", label: "HTTP API" },
 ];
 
@@ -25,7 +25,7 @@ const errorOptions = [
 function formatSource(source: string): string {
 	switch (source) {
 		case "wyoming":
-			return "Wyoming";
+			return "External";
 		case "http_api":
 			return "HTTP API";
 		default:

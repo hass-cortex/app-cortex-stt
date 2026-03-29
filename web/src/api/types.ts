@@ -129,11 +129,13 @@ export interface GeneratedKey {
 	id: string;
 	name: string;
 	key: string;
+	last4: string;
+	created_at: string;
 }
 
 // --- Settings ---
 
-export type RetentionPolicyType = "Count" | "Days" | "DiskLimit" | "Unlimited";
+export type RetentionPolicyType = "Count" | "Days" | "DiskLimitMb" | "Unlimited";
 
 export interface RetentionPolicy {
 	type: RetentionPolicyType;

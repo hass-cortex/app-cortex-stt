@@ -1,5 +1,5 @@
 {
-	"name": "wyoming-asr-web",
+	"name": "cortex-stt-web",
 	"private": true,
 	"version": "0.1.0",
 	"type": "module",

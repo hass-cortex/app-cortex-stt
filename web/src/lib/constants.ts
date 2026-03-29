@@ -41,10 +41,10 @@ export const queryKeys = {
 } as const;
 
 /** Sidebar collapse state localStorage key */
-export const SIDEBAR_COLLAPSED_KEY = "wyoming-asr-sidebar-collapsed";
+export const SIDEBAR_COLLAPSED_KEY = "cortex-stt-sidebar-collapsed";
 
 /** Theme preference localStorage key */
-export const THEME_KEY = "wyoming-asr-theme";
+export const THEME_KEY = "cortex-stt-theme";
 
 /** Default polling intervals (ms) */
 export const POLL_INTERVALS = {

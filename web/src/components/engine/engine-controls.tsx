@@ -59,7 +59,7 @@ export function EngineControls({ defaultModel }: EngineControlsProps) {
 				<div className="space-y-2">
 					<span className="text-sm font-medium text-text-secondary">Default Model</span>
 					<p className="text-xs text-text-muted">
-						Used for all Wyoming connections and HTTP requests without explicit model parameter.
+						Used for HTTP requests without an explicit model parameter.
 					</p>
 					<div className="flex items-center gap-2">
 						<Select
