@@ -36,6 +36,8 @@ pub struct ModelDefinition {
     pub supported_languages: Vec<String>,
     pub requires_cuda: bool,
     pub requires_avx: bool,
+    /// Known to crash (e.g. whisper.cpp segfault). Skipped during registration.
+    pub disabled: bool,
 }
 
 /// Whisper multilingual language list (representative subset).
@@ -80,6 +82,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: false,
         },
         ModelDefinition {
             id: "whisper-small".to_string(),
@@ -99,6 +102,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: false,
         },
         ModelDefinition {
             id: "whisper-medium-q4".to_string(),
@@ -117,6 +121,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: false,
         },
         ModelDefinition {
             id: "whisper-large-v3-turbo".to_string(),
@@ -134,6 +139,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: false,
         },
         ModelDefinition {
             id: "whisper-large-v3-q5".to_string(),
@@ -152,6 +158,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: true,
         },
         ModelDefinition {
             id: "breeze-asr".to_string(),
@@ -171,6 +178,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(WHISPER_LANGUAGES),
             requires_cuda: false,
             requires_avx: false,
+            disabled: true,
         },
         // ── Parakeet models ─────────────────────────────────────────────
         ModelDefinition {
@@ -190,6 +198,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(&["en"]),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         ModelDefinition {
             id: "parakeet-v3-int8".to_string(),
@@ -208,6 +217,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(PARAKEET_V3_LANGUAGES),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         // ── Moonshine models ────────────────────────────────────────────
         ModelDefinition {
@@ -226,6 +236,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(&["en"]),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         // ── SenseVoice models ───────────────────────────────────────────
         ModelDefinition {
@@ -245,6 +256,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(&["zh", "en", "ja", "ko", "yue"]),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         // ── GigaAM models ──────────────────────────────────────────────
         ModelDefinition {
@@ -264,6 +276,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(&["ru", "en"]),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         // ── Canary models ──────────────────────────────────────────────
         ModelDefinition {
@@ -283,6 +296,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(CANARY_LANGUAGES),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
         ModelDefinition {
             id: "canary-1b-v2".to_string(),
@@ -300,6 +314,7 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             supported_languages: langs(CANARY_LANGUAGES),
             requires_cuda: false,
             requires_avx: true,
+            disabled: false,
         },
     ]
 }

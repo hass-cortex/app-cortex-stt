@@ -22,6 +22,10 @@ pub async fn register_downloaded_models(engine_manager: &EngineManager, model_di
     let mut registered = 0u32;
 
     for def in builtin_models() {
+        if def.disabled {
+            info!(model_id = %def.id, "Skipping disabled model");
+            continue;
+        }
         let model_path = model_dir.join(&def.filename);
         if !model_path.exists() {
             continue;
