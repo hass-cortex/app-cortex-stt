@@ -13,7 +13,12 @@ export function useSettings() {
 export function useUpdateSettings() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (settings: Partial<AppSettings>) => updateSettings(settings),
+		mutationFn: async (partial: Partial<AppSettings>) => {
+			// Server requires full Settings object — merge partial into current
+			const current = queryClient.getQueryData<AppSettings>(queryKeys.settings.all);
+			const merged = { ...current, ...partial } as AppSettings;
+			return updateSettings(merged);
+		},
 		onSuccess: (data) => {
 			queryClient.setQueryData(queryKeys.settings.all, data);
 		},
