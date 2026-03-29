@@ -1,13 +1,17 @@
-import type { HistoryFilters, TranscriptionRecord } from "@/api/types";
+import type { HistoryFilters, TranscriptionRecord, TranscriptionSegment } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { useHistoryList } from "@/hooks/use-history";
-import { formatDuration, formatRelativeTime } from "@/lib/format";
-import { AlertCircle, ChevronRight, History, Mic } from "lucide-react";
+import { useToast } from "@/components/ui/toast";
+import { useDeleteHistoryRecord, useHistoryList } from "@/hooks/use-history";
+import { formatDuration, formatRelativeTime, formatTimestamp } from "@/lib/format";
+import { AlertCircle, ChevronDown, ChevronRight, History, Mic, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { AudioPlayer } from "./audio-player";
+import { SegmentTimeline } from "./segment-timeline";
 
 const sourceOptions = [
 	{ value: "", label: "All sources" },
@@ -33,12 +37,19 @@ function formatSource(source: string): string {
 	}
 }
 
-interface HistoryListProps {
-	onSelectRecord: (id: string) => void;
+/** Parse segments_json string into TranscriptionSegment array */
+function parseSegments(segmentsJson: string | null): TranscriptionSegment[] {
+	if (!segmentsJson) return [];
+	try {
+		return JSON.parse(segmentsJson) as TranscriptionSegment[];
+	} catch {
+		return [];
+	}
 }
 
-export function HistoryList({ onSelectRecord }: HistoryListProps) {
+export function HistoryList() {
 	const [filters, setFilters] = useState<HistoryFilters>({ limit: 50 });
+	const [expandedId, setExpandedId] = useState<string | null>(null);
 	const { data, isLoading, error } = useHistoryList(filters);
 
 	const updateFilter = (key: keyof HistoryFilters, value: string) => {
@@ -47,6 +58,10 @@ export function HistoryList({ onSelectRecord }: HistoryListProps) {
 			[key]: value === "" ? undefined : value,
 			offset: 0,
 		}));
+	};
+
+	const toggleExpand = (id: string) => {
+		setExpandedId((prev) => (prev === id ? null : id));
 	};
 
 	if (error) {
@@ -103,7 +118,8 @@ export function HistoryList({ onSelectRecord }: HistoryListProps) {
 						<HistoryRow
 							key={record.id}
 							record={record}
-							onClick={() => onSelectRecord(record.id)}
+							isExpanded={expandedId === record.id}
+							onToggle={() => toggleExpand(record.id)}
 						/>
 					))}
 				</div>
@@ -114,44 +130,138 @@ export function HistoryList({ onSelectRecord }: HistoryListProps) {
 
 function HistoryRow({
 	record,
-	onClick,
+	isExpanded,
+	onToggle,
 }: {
 	record: TranscriptionRecord;
-	onClick: () => void;
+	isExpanded: boolean;
+	onToggle: () => void;
 }) {
 	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-surface-2 transition-colors text-left cursor-pointer border border-transparent hover:border-border"
+		<div
+			className={`rounded-lg border transition-colors ${
+				isExpanded ? "border-border bg-surface-1" : "border-transparent hover:border-border hover:bg-surface-2"
+			}`}
 		>
-			<div className="p-1.5 rounded-lg bg-surface-3 shrink-0">
-				{record.has_error ? (
-					<AlertCircle size={16} className="text-error" />
-				) : (
-					<Mic size={16} className="text-accent" />
-				)}
-			</div>
+			{/* Summary row */}
+			<button
+				type="button"
+				onClick={onToggle}
+				className="w-full flex items-center gap-3 p-3 text-left cursor-pointer"
+			>
+				<div className="p-1.5 rounded-lg bg-surface-3 shrink-0">
+					{record.has_error ? (
+						<AlertCircle size={16} className="text-error" />
+					) : (
+						<Mic size={16} className="text-accent" />
+					)}
+				</div>
 
-			<div className="flex-1 min-w-0">
-				<p className="text-sm text-text-primary truncate">
-					{record.text || <span className="text-text-muted italic">Empty</span>}
-				</p>
-				<div className="flex items-center gap-2 mt-0.5">
-					<span className="text-xs text-text-muted">{formatRelativeTime(record.timestamp)}</span>
-					<Badge variant={record.source === "wyoming" ? "info" : "accent"}>
-						{formatSource(record.source)}
-					</Badge>
-					<span className="text-xs text-text-muted">{record.model_id}</span>
+				<div className="flex-1 min-w-0">
+					<p className="text-sm text-text-primary truncate">
+						{record.text || <span className="text-text-muted italic">Empty</span>}
+					</p>
+					<div className="flex items-center gap-2 mt-0.5">
+						<span className="text-xs text-text-muted">{formatRelativeTime(record.timestamp)}</span>
+						<Badge variant={record.source === "wyoming" ? "info" : "accent"}>
+							{formatSource(record.source)}
+						</Badge>
+						<span className="text-xs text-text-muted">{record.model_id}</span>
+					</div>
+				</div>
+
+				<div className="text-right shrink-0 hidden sm:block">
+					<p className="text-xs text-text-secondary">{formatDuration(record.audio_duration_ms)}</p>
+					<p className="text-xs text-text-muted">{formatDuration(record.inference_ms)} inference</p>
+				</div>
+
+				{isExpanded ? (
+					<ChevronDown size={16} className="text-text-muted shrink-0" />
+				) : (
+					<ChevronRight size={16} className="text-text-muted shrink-0" />
+				)}
+			</button>
+
+			{/* Expanded detail */}
+			{isExpanded && <ExpandedDetail record={record} />}
+		</div>
+	);
+}
+
+function ExpandedDetail({ record }: { record: TranscriptionRecord }) {
+	const deleteMutation = useDeleteHistoryRecord();
+	const { toast } = useToast();
+
+	const segments = parseSegments(record.segments_json);
+	const hasAudio = !!record.audio_path;
+
+	const handleDelete = () => {
+		if (!window.confirm("Delete this transcription record?")) return;
+		deleteMutation.mutate(record.id, {
+			onSuccess: () => toast("Record deleted", "success"),
+			onError: (err) => toast(`Failed: ${err.message}`, "error"),
+		});
+	};
+
+	return (
+		<div className="px-3 pb-3 space-y-3 border-t border-border">
+			{/* Metadata grid */}
+			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 text-xs">
+				<div>
+					<span className="text-text-muted">Timestamp</span>
+					<p className="text-text-primary">{formatTimestamp(record.timestamp)}</p>
+				</div>
+				<div>
+					<span className="text-text-muted">Audio Duration</span>
+					<p className="text-text-primary">{formatDuration(record.audio_duration_ms)}</p>
+				</div>
+				<div>
+					<span className="text-text-muted">Inference Time</span>
+					<p className="text-text-primary">{formatDuration(record.inference_ms)}</p>
+				</div>
+				<div>
+					<span className="text-text-muted">RTF</span>
+					<p className="text-text-primary">
+						{record.audio_duration_ms > 0
+							? (record.inference_ms / record.audio_duration_ms).toFixed(2)
+							: "N/A"}
+						x
+					</p>
 				</div>
 			</div>
 
-			<div className="text-right shrink-0 hidden sm:block">
-				<p className="text-xs text-text-secondary">{formatDuration(record.audio_duration_ms)}</p>
-				<p className="text-xs text-text-muted">{formatDuration(record.inference_ms)} inference</p>
+			{/* Error message */}
+			{record.has_error && record.error_message && (
+				<div className="p-3 bg-error/10 border border-error/30 rounded-lg">
+					<p className="text-sm text-error">{record.error_message}</p>
+				</div>
+			)}
+
+			{/* Transcript text */}
+			<div className="p-3 bg-surface-3 rounded-lg">
+				<p className="text-sm text-text-primary whitespace-pre-wrap">
+					{record.text || <span className="text-text-muted italic">Empty transcript</span>}
+				</p>
 			</div>
 
-			<ChevronRight size={16} className="text-text-muted shrink-0" />
-		</button>
+			{/* Audio player */}
+			{hasAudio && <AudioPlayer recordId={record.id} durationMs={record.audio_duration_ms} />}
+
+			{/* Segments */}
+			<SegmentTimeline segments={segments} totalDurationMs={record.audio_duration_ms} />
+
+			{/* Delete button */}
+			<div className="flex justify-end">
+				<Button
+					variant="danger"
+					size="sm"
+					icon={<Trash2 size={14} />}
+					onClick={handleDelete}
+					loading={deleteMutation.isPending}
+				>
+					Delete
+				</Button>
+			</div>
+		</div>
 	);
 }
