@@ -141,10 +141,33 @@ impl EngineManager {
                 })?;
             let factory_ref = Arc::clone(factory);
             drop(factories);
-            ModelPool::new(&*factory_ref, self.config.pool_size)?
+            ModelPool::new(&factory_ref, self.config.pool_size)?
         };
 
         info!(model_id = %model_id, pool_size = self.config.pool_size, "model loaded");
+
+        // Warmup: run a dummy inference to warm caches.
+        {
+            let warmup_pool = pool.clone();
+            let warmup_timeout = self.config.acquire_timeout;
+            match warmup_pool.acquire(warmup_timeout).await {
+                Ok(mut guard) => {
+                    let warmup_samples = vec![0.0f32; 16000]; // 1 second of silence
+                    let warmup_options = crate::engine::traits::TranscribeOptions {
+                        language: None,
+                        translate: false,
+                    };
+                    let _ = tokio::task::spawn_blocking(move || {
+                        guard.transcribe(&warmup_samples, &warmup_options)
+                    })
+                    .await;
+                    info!(model_id = %model_id, "model warmup complete");
+                }
+                Err(e) => {
+                    warn!(model_id = %model_id, error = %e, "model warmup skipped: failed to acquire engine");
+                }
+            }
+        }
 
         let mut pools = self.pools.write().await;
         pools.insert(

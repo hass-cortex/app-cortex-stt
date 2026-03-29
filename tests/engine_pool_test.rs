@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use wyoming_asr::engine::manager::SharedEngineFactory;
 use wyoming_asr::engine::pool::ModelPool;
 use wyoming_asr::engine::traits::*;
 use wyoming_asr::error::AsrError;
@@ -31,15 +32,15 @@ impl SpeechEngine for MockEngine {
     }
 }
 
-fn mock_factory(name: &str) -> EngineFactory {
+fn mock_factory(name: &str) -> SharedEngineFactory {
     let name = name.to_string();
-    Box::new(move || Ok(Box::new(MockEngine { name: name.clone() }) as Box<dyn SpeechEngine>))
+    Arc::new(move || Ok(Box::new(MockEngine { name: name.clone() }) as Box<dyn SpeechEngine>))
 }
 
 #[tokio::test]
 async fn test_pool_acquire_and_transcribe() {
     let factory = mock_factory("test");
-    let pool = ModelPool::new(&*factory, 1).unwrap();
+    let pool = ModelPool::new(&factory, 1).unwrap();
     let mut guard = pool.acquire(Duration::from_secs(5)).await.unwrap();
     let result = guard
         .transcribe(&[0.0; 16000], &TranscribeOptions::default())
@@ -50,7 +51,7 @@ async fn test_pool_acquire_and_transcribe() {
 #[tokio::test]
 async fn test_pool_concurrent_access_queues() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&*factory, 1).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 1).unwrap());
     let call_count = Arc::new(AtomicU32::new(0));
     let count2 = call_count.clone();
 
@@ -74,7 +75,7 @@ async fn test_pool_concurrent_access_queues() {
 #[tokio::test]
 async fn test_pool_acquire_timeout() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&*factory, 1).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 1).unwrap());
     let _guard = pool.acquire(Duration::from_secs(5)).await.unwrap();
 
     let pool2 = pool.clone();
@@ -90,7 +91,7 @@ async fn test_pool_acquire_timeout() {
 #[tokio::test]
 async fn test_pool_size_two() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&*factory, 2).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 2).unwrap());
     let _guard1 = pool.acquire(Duration::from_secs(5)).await.unwrap();
     let _guard2 = pool.acquire(Duration::from_secs(5)).await.unwrap();
 }

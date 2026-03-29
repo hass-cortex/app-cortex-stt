@@ -1,8 +1,11 @@
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::warn;
 
+use crate::engine::manager::SharedEngineFactory;
 use crate::engine::traits::*;
 use crate::error::AsrError;
 
@@ -23,6 +26,8 @@ struct ModelPoolInner {
     /// while the pool is alive — we never take ownership permanently.
     instances: Vec<Mutex<Option<Box<dyn SpeechEngine>>>>,
     semaphore: Arc<Semaphore>,
+    /// Factory used to rebuild engine instances after a panic.
+    factory: SharedEngineFactory,
 }
 
 /// RAII guard granting exclusive access to one pooled engine instance.
@@ -54,10 +59,7 @@ impl ModelPool {
     /// is borrowed — the caller retains ownership so it can be reused
     /// (e.g., to recreate the pool after eviction). Returns an error if
     /// any factory invocation fails.
-    pub fn new(
-        factory: &dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError>,
-        size: usize,
-    ) -> Result<Self, AsrError> {
+    pub fn new(factory: &SharedEngineFactory, size: usize) -> Result<Self, AsrError> {
         let mut instances = Vec::with_capacity(size);
         for _ in 0..size {
             let engine = factory()?;
@@ -68,6 +70,7 @@ impl ModelPool {
             inner: Arc::new(ModelPoolInner {
                 instances,
                 semaphore: Arc::new(Semaphore::new(size)),
+                factory: Arc::clone(factory),
             }),
         })
     }
@@ -112,6 +115,10 @@ impl ModelPool {
 
 impl PoolGuard {
     /// Run transcription on the pooled engine instance.
+    ///
+    /// If the engine panics during inference, the instance is discarded and
+    /// rebuilt using the pool's factory. The caller receives
+    /// [`AsrError::EnginePanic`].
     pub fn transcribe(
         &mut self,
         samples: &[f32],
@@ -123,6 +130,28 @@ impl PoolGuard {
         let engine = lock.as_mut().ok_or(AsrError::ModelNotLoaded {
             model_id: "unknown".to_string(),
         })?;
-        engine.transcribe(samples, options)
+
+        let result =
+            std::panic::catch_unwind(AssertUnwindSafe(|| engine.transcribe(samples, options)));
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => {
+                warn!("engine panicked, rebuilding instance");
+
+                // Discard the panicked engine and attempt to rebuild.
+                *lock = match (self.pool.factory)() {
+                    Ok(new_engine) => Some(new_engine),
+                    Err(rebuild_err) => {
+                        warn!(error = %rebuild_err, "failed to rebuild engine after panic");
+                        None
+                    }
+                };
+
+                Err(AsrError::EnginePanic {
+                    model_id: "unknown".to_string(),
+                })
+            }
+        }
     }
 }
