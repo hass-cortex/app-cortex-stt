@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// A single Wyoming protocol event with optional JSON data and binary payload.
@@ -14,12 +14,25 @@ pub struct WyomingEvent {
 struct EventHeader {
     #[serde(rename = "type")]
     event_type: String,
-    #[serde(default)]
+    /// Wyoming protocol version. Accepts both integer (v1) and semver string ("1.7.2").
+    #[serde(default, deserialize_with = "deserialize_version")]
     version: u32,
     #[serde(default, skip_serializing_if = "is_zero")]
     data_length: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     payload_length: usize,
+}
+
+fn deserialize_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => Ok(n.as_u64().unwrap_or(1) as u32),
+        serde_json::Value::String(s) => {
+            // Parse major version from semver like "1.7.2"
+            Ok(s.split('.').next().and_then(|v| v.parse().ok()).unwrap_or(1))
+        }
+        _ => Ok(1),
+    }
 }
 
 fn is_zero(v: &usize) -> bool {
