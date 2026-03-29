@@ -52,9 +52,12 @@ export function ModelCard({ model }: ModelCardProps) {
 			</div>
 
 			{/* Languages */}
-			<p className="text-xs text-text-muted mb-3">
+			<p
+				className="text-xs text-text-muted mb-3 cursor-default"
+				title={model.supported_languages.join(", ")}
+			>
 				{model.supported_languages.length > 5
-					? `${model.supported_languages.length} languages`
+					? `${model.supported_languages.length} languages: ${model.supported_languages.slice(0, 5).join(", ")}…`
 					: model.supported_languages.join(", ")}
 			</p>
 
