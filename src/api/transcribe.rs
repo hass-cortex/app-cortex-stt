@@ -74,6 +74,12 @@ fn decode_audio(
     }
 }
 
+/// Normalize a BCP-47 locale (e.g. "zh-TW") to a base language code ("zh").
+/// Engines like SenseVoice only accept base codes.
+fn normalize_language(lang: Option<String>) -> Option<String> {
+    lang.map(|l| l.split(['-', '_']).next().unwrap_or(&l).to_string())
+}
+
 /// Run transcription on the engine and return the response.
 async fn run_transcription(
     state: &AppState,
@@ -245,7 +251,7 @@ async fn transcribe_sync(
     let language = query.language.clone();
 
     let options = TranscribeOptions {
-        language: query.language,
+        language: normalize_language(query.language),
         translate: query.translate,
     };
 
@@ -301,7 +307,7 @@ async fn transcribe_sse(
     let model = query.model.clone();
     let language = query.language.clone();
     let options = TranscribeOptions {
-        language: query.language,
+        language: normalize_language(query.language),
         translate: query.translate,
     };
 
@@ -404,7 +410,7 @@ async fn transcribe_async(
     let job_store = Arc::clone(&state.job_store);
     let state_inner = state.clone();
     let options = TranscribeOptions {
-        language: query.language,
+        language: normalize_language(query.language),
         translate: query.translate,
     };
     let job_id_bg = job_id.clone();
