@@ -39,17 +39,39 @@ impl Default for Settings {
     }
 }
 
-async fn get_settings(State(_state): State<Arc<AppState>>) -> Json<Settings> {
-    // TODO: load from persisted config once settings storage is implemented.
-    Json(Settings::default())
+async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Settings>, ApiError> {
+    let db = state.db.clone();
+    let settings = tokio::task::spawn_blocking(move || db.load_settings())
+        .await
+        .map_err(|e| ApiError {
+            code: "INTERNAL_ERROR",
+            message: format!("task join error: {e}"),
+            model_id: None,
+        })?
+        .map_err(|e| {
+            let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
+            api_err
+        })?;
+    Ok(Json(settings))
 }
 
 async fn update_settings(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(settings): Json<Settings>,
 ) -> Result<Json<Settings>, ApiError> {
-    // TODO: persist to config and apply changes at runtime.
-    // For now, acknowledge the update by echoing the settings back.
+    let db = state.db.clone();
+    let s = settings.clone();
+    tokio::task::spawn_blocking(move || db.save_settings(&s))
+        .await
+        .map_err(|e| ApiError {
+            code: "INTERNAL_ERROR",
+            message: format!("task join error: {e}"),
+            model_id: None,
+        })?
+        .map_err(|e| {
+            let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
+            api_err
+        })?;
     Ok(Json(settings))
 }
 

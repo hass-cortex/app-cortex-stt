@@ -70,6 +70,11 @@ impl Database {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 last_used_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             ",
         )
         .map_err(|e| AsrError::DatabaseError {
