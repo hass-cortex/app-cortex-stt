@@ -10,7 +10,9 @@ use crate::engine::registry::builtin_models;
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
 use crate::wyoming::event::{read_event, write_event};
-use crate::wyoming::types::{AsrModel, AsrProgram, AudioStart, Info, Transcribe, Transcript};
+use crate::wyoming::types::{
+    AsrModel, AsrProgram, Attribution, AudioStart, Info, Transcribe, Transcript,
+};
 
 pub struct ConnectionHandler {
     engine_manager: Arc<EngineManager>,
@@ -113,9 +115,9 @@ impl ConnectionHandler {
     }
 
     async fn build_info(&self) -> Info {
-        let registry: HashMap<String, Vec<String>> = builtin_models()
+        let registry_defs: HashMap<String, _> = builtin_models()
             .into_iter()
-            .map(|def| (def.id, def.supported_languages))
+            .map(|def| (def.id.clone(), def))
             .collect();
 
         let registered_ids = self.engine_manager.registered_models().await;
@@ -123,11 +125,20 @@ impl ConnectionHandler {
         let models: Vec<AsrModel> = registered_ids
             .into_iter()
             .map(|id| {
-                let languages = registry.get(&id).cloned().unwrap_or_default();
+                let (description, languages) = registry_defs
+                    .get(&id)
+                    .map(|d| (d.description.clone(), d.supported_languages.clone()))
+                    .unwrap_or_default();
                 AsrModel {
                     name: id,
+                    description,
                     installed: true,
+                    attribution: Attribution {
+                        name: "transcribe-rs".to_string(),
+                        url: "https://github.com/thewh1teagle/transcribe-rs".to_string(),
+                    },
                     languages,
+                    version: None,
                 }
             })
             .collect();
@@ -135,7 +146,13 @@ impl ConnectionHandler {
         Info {
             asr: vec![AsrProgram {
                 name: "wyoming-asr".to_string(),
+                description: "Multi-engine speech-to-text powered by transcribe-rs".to_string(),
                 installed: true,
+                attribution: Attribution {
+                    name: "hass-cortex".to_string(),
+                    url: "https://github.com/hass-cortex/wyoming-asr".to_string(),
+                },
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
                 models,
             }],
         }

@@ -11,17 +11,33 @@ pub fn describe_event() -> WyomingEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attribution {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsrModel {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub installed: bool,
+    pub attribution: Attribution,
     #[serde(default)]
     pub languages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsrProgram {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub installed: bool,
+    pub attribution: Attribution,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     #[serde(default)]
     pub models: Vec<AsrModel>,
 }
