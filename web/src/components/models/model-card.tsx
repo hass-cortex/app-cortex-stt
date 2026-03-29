@@ -2,6 +2,7 @@ import type { ModelInfo } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useToast } from "@/components/ui/toast";
 import { useDeleteModel, useDownloadModel } from "@/hooks/use-models";
 import { formatMB } from "@/lib/format";
 import { Download, Trash2 } from "lucide-react";
@@ -13,6 +14,7 @@ interface ModelCardProps {
 }
 
 export function ModelCard({ model }: ModelCardProps) {
+	const { toast } = useToast();
 	const downloadMutation = useDownloadModel();
 	const deleteMutation = useDeleteModel();
 
@@ -74,7 +76,12 @@ export function ModelCard({ model }: ModelCardProps) {
 					<Button
 						size="sm"
 						icon={<Download size={14} />}
-						onClick={() => downloadMutation.mutate(model.id)}
+						onClick={() =>
+							downloadMutation.mutate(model.id, {
+								onSuccess: () => toast(`Downloading ${model.name}...`, "success"),
+								onError: (err) => toast(`Download failed: ${err.message}`, "error"),
+							})
+						}
 						loading={downloadMutation.isPending}
 					>
 						Download

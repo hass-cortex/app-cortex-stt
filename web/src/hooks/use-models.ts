@@ -15,6 +15,10 @@ export function useModels() {
 	return useQuery({
 		queryKey: queryKeys.models.list(),
 		queryFn: listModels,
+		refetchInterval: (query) => {
+			const data = query.state.data;
+			return data?.some((m) => m.status === "downloading") ? 2000 : false;
+		},
 	});
 }
 
