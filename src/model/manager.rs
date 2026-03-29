@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::info;
+use tokio::task::JoinHandle;
+use tracing::{info, warn};
 
 use crate::engine::registry::{EngineType, builtin_models};
 use crate::error::AsrError;
@@ -18,6 +19,8 @@ pub struct ModelManager {
     model_dir: PathBuf,
     /// Active download progress, keyed by model ID.
     downloads: RwLock<HashMap<String, DownloadProgress>>,
+    /// Handles for active download tasks, used for cancellation.
+    download_handles: RwLock<HashMap<String, JoinHandle<()>>>,
 }
 
 impl ModelManager {
@@ -26,6 +29,7 @@ impl ModelManager {
         Arc::new(Self {
             model_dir,
             downloads: RwLock::new(HashMap::new()),
+            download_handles: RwLock::new(HashMap::new()),
         })
     }
 
@@ -215,6 +219,74 @@ impl ModelManager {
     /// Check whether a model is currently being downloaded.
     pub async fn is_downloading(&self, model_id: &str) -> bool {
         self.downloads.read().await.contains_key(model_id)
+    }
+
+    // --- Download handle tracking (for cancellation) ---
+
+    /// Store the task handle for a running download.
+    pub async fn set_download_handle(&self, model_id: String, handle: JoinHandle<()>) {
+        self.download_handles.write().await.insert(model_id, handle);
+    }
+
+    /// Remove and return the task handle for a download.
+    async fn take_download_handle(&self, model_id: &str) -> Option<JoinHandle<()>> {
+        self.download_handles.write().await.remove(model_id)
+    }
+
+    /// Cancel an in-progress download by aborting its task and cleaning up
+    /// the `.part` file. Returns `Ok(())` if the download was cancelled, or
+    /// an error if the model is not currently downloading.
+    pub async fn cancel_download(&self, model_id: &str) -> Result<(), AsrError> {
+        // Abort the background task.
+        let handle = self.take_download_handle(model_id).await;
+        if handle.is_none() && !self.is_downloading(model_id).await {
+            return Err(AsrError::ModelNotFound {
+                model_id: model_id.to_string(),
+            });
+        }
+
+        if let Some(h) = handle {
+            h.abort();
+        }
+
+        // Remove progress tracking.
+        self.remove_download_progress(model_id).await;
+
+        // Clean up .part files on disk.
+        self.cleanup_part_files(model_id).await;
+
+        info!(model_id = %model_id, "download cancelled");
+        Ok(())
+    }
+
+    /// Remove any `.part` files associated with a model download.
+    async fn cleanup_part_files(&self, model_id: &str) {
+        // Find the expected filename from the built-in registry.
+        let filename = builtin_models()
+            .into_iter()
+            .find(|d| d.id == model_id)
+            .map(|d| d.filename);
+
+        if let Some(filename) = filename {
+            let base_path = self.model_dir.join(&filename);
+            let part_path = base_path.with_extension(
+                base_path
+                    .extension()
+                    .map(|e| format!("{}.part", e.to_string_lossy()))
+                    .unwrap_or_else(|| "part".to_string()),
+            );
+
+            if tokio::fs::try_exists(&part_path).await.unwrap_or(false) {
+                if let Err(e) = tokio::fs::remove_file(&part_path).await {
+                    warn!(
+                        model_id = %model_id,
+                        path = %part_path.display(),
+                        error = %e,
+                        "failed to remove .part file during cancellation"
+                    );
+                }
+            }
+        }
     }
 }
 

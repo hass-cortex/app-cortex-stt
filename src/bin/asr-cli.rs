@@ -199,7 +199,7 @@ async fn cmd_download(
     let dest_path = manager.model_dir().join(&def.filename);
     let manager_arc = ModelManager::new(manager.model_dir().to_path_buf());
 
-    let mut rx = download_model(
+    let handle = download_model(
         &def.url,
         dest_path.clone(),
         &def.sha256,
@@ -210,6 +210,7 @@ async fn cmd_download(
             ..Default::default()
         },
     )?;
+    let mut rx = handle.progress_rx;
 
     // Poll progress
     loop {

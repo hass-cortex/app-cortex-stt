@@ -69,10 +69,18 @@ pub async fn compute_sha256(path: &Path) -> Result<String, AsrError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Result of starting a model download.
+pub struct DownloadHandle {
+    /// Watch receiver for polling progress updates.
+    pub progress_rx: watch::Receiver<DownloadProgress>,
+    /// Handle to the background download task (can be used for cancellation).
+    pub task_handle: tokio::task::JoinHandle<()>,
+}
+
 /// Start downloading a model file in a background task.
 ///
-/// Returns a `watch::Receiver` that the caller can poll for progress updates.
-/// The background task:
+/// Returns a [`DownloadHandle`] containing a progress watch receiver and
+/// the spawned task handle. The background task:
 /// 1. Resumes from a partial `.part` file if one exists (HTTP Range header).
 /// 2. Streams the response body in chunks, updating progress via the watch channel.
 /// 3. Verifies SHA-256 on completion (if `expected_sha256` is non-empty and config allows).
@@ -84,7 +92,7 @@ pub fn download_model(
     model_id: &str,
     model_manager: Arc<ModelManager>,
     config: DownloadConfig,
-) -> Result<watch::Receiver<DownloadProgress>, AsrError> {
+) -> Result<DownloadHandle, AsrError> {
     if !validate_download_url(url) {
         return Err(AsrError::DownloadFailed {
             model_id: model_id.to_string(),
@@ -105,7 +113,7 @@ pub fn download_model(
     let expected_sha256 = expected_sha256.to_string();
     let model_id = model_id.to_string();
 
-    tokio::spawn(async move {
+    let task_handle = tokio::spawn(async move {
         let result = download_task(
             &url,
             &dest_path,
@@ -125,7 +133,10 @@ pub fn download_model(
         model_manager.remove_download_progress(&model_id).await;
     });
 
-    Ok(rx)
+    Ok(DownloadHandle {
+        progress_rx: rx,
+        task_handle,
+    })
 }
 
 /// The actual download logic, separated for readability.

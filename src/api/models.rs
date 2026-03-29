@@ -84,7 +84,7 @@ async fn start_download(
     let dest_path = state.model_manager.model_dir().join(&definition.filename);
 
     // Start the background download.
-    download_model(
+    let handle = download_model(
         &definition.url,
         dest_path,
         &definition.sha256,
@@ -96,6 +96,12 @@ async fn start_download(
         let (status, api_err) = (&e).into();
         (status, axum::Json(api_err))
     })?;
+
+    // Store the task handle for cancellation support.
+    state
+        .model_manager
+        .set_download_handle(model_id.clone(), handle.task_handle)
+        .await;
 
     Ok((
         StatusCode::OK,
@@ -149,12 +155,35 @@ async fn download_progress(
     Ok(Sse::new(stream))
 }
 
+/// DELETE /api/models/{model_id}/download — cancel an in-progress download.
+async fn cancel_download_handler(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+    state
+        .model_manager
+        .cancel_download(&model_id)
+        .await
+        .map_err(|e| {
+            let (status, api_err) = (&e).into();
+            (status, axum::Json(api_err))
+        })?;
+
+    Ok(axum::Json(serde_json::json!({
+        "status": "cancelled",
+        "model_id": model_id,
+    })))
+}
+
 pub fn model_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/models", get(list_models))
         .route("/api/models/scan", post(scan_models))
         .route("/api/models/{model_id}", delete(delete_model))
-        .route("/api/models/{model_id}/download", post(start_download))
+        .route(
+            "/api/models/{model_id}/download",
+            post(start_download).delete(cancel_download_handler),
+        )
         .route(
             "/api/models/{model_id}/download/progress",
             get(download_progress),
