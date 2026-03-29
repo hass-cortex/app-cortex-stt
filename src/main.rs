@@ -104,6 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::new());
 
+    // Create broadcast channel for live history SSE updates.
+    let (history_tx, _) = tokio::sync::broadcast::channel(100);
+
     // Build shared application state.
     let state = Arc::new(AppState {
         engine_manager: engine_manager.clone(),
@@ -114,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_model,
         version: env!("CARGO_PKG_VERSION").to_string(),
         started_at: std::time::Instant::now(),
+        history_tx,
     });
 
     // Spawn background retention cleanup (hourly).

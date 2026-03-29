@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
@@ -93,4 +93,6 @@ pub struct AppState {
     pub default_model: String,
     pub version: String,
     pub started_at: Instant,
+    /// Broadcast channel for notifying SSE clients of new history records.
+    pub history_tx: broadcast::Sender<()>,
 }

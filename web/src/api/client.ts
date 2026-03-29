@@ -111,18 +111,21 @@ export async function del<T = void>(path: string): Promise<T> {
 	return handleResponse<T>(response);
 }
 
-/** Subscribe to SSE stream. Returns a cleanup function. */
+/** Subscribe to SSE stream. Returns a cleanup function.
+ *  When `eventName` is provided, listens for named events via `addEventListener`;
+ *  otherwise listens for unnamed events via `onmessage`. */
 export function subscribeSSE(
 	path: string,
 	onMessage: (data: unknown) => void,
 	onError?: (error: Event) => void,
+	eventName?: string,
 ): () => void {
 	const base = `${getBaseUrl()}${path}`;
 	const key = getApiKey();
 	const url = key ? `${base}${base.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}` : base;
 	const eventSource = new EventSource(url);
 
-	eventSource.onmessage = (event) => {
+	const handler = (event: MessageEvent) => {
 		try {
 			const data = JSON.parse(event.data);
 			onMessage(data);
@@ -130,6 +133,12 @@ export function subscribeSSE(
 			// Ignore unparseable messages
 		}
 	};
+
+	if (eventName) {
+		eventSource.addEventListener(eventName, handler);
+	} else {
+		eventSource.onmessage = handler;
+	}
 
 	eventSource.onerror = (event) => {
 		onError?.(event);

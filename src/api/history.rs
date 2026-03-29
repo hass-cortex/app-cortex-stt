@@ -1,12 +1,16 @@
+use std::convert::Infallible;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use tokio_stream::Stream;
 
 use crate::api::error::ApiError;
 use crate::db::records::{ListRecordsFilter, TranscriptionRecord, TranscriptionSource};
@@ -164,9 +168,32 @@ async fn cleanup_history(
     })))
 }
 
+/// SSE endpoint that emits a `new_record` event whenever a transcription is
+/// saved to history. Clients use this to trigger a refetch instead of polling.
+async fn history_live(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.history_tx.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(()) => {
+                    yield Ok(Event::default().event("new_record").data("{}"));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(30)))
+}
+
 pub fn history_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/history", get(list_history))
+        .route("/api/history/live", get(history_live))
         .route("/api/history/cleanup", post(cleanup_history))
         .route("/api/history/{record_id}", get(get_history_record))
         .route("/api/history/{record_id}/audio", get(get_history_audio))

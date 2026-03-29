@@ -171,6 +171,9 @@ async fn save_to_history(
 
     if let Err(e) = state.db.insert_record(&record).await {
         tracing::warn!(error = %e, "Failed to insert transcription record");
+    } else {
+        // Notify SSE subscribers of new history record.
+        let _ = state.history_tx.send(());
     }
 }
 
