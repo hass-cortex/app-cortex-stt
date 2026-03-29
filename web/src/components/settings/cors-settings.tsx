@@ -11,7 +11,7 @@ export function CorsSettings() {
 	const updateMutation = useUpdateSettings();
 	const { toast } = useToast();
 
-	const [origins, setOrigins] = useState<string[]>(settings?.cors_origins ?? []);
+	const [origins, setOrigins] = useState<string[]>(settings?.cors_allowed_origins ?? []);
 	const [newOrigin, setNewOrigin] = useState("");
 
 	const addOrigin = () => {
@@ -27,7 +27,7 @@ export function CorsSettings() {
 
 	const handleSave = () => {
 		updateMutation.mutate(
-			{ cors_origins: origins },
+			{ cors_allowed_origins: origins },
 			{
 				onSuccess: () => toast("CORS settings saved", "success"),
 				onError: (err) => toast(`Failed: ${err.message}`, "error"),

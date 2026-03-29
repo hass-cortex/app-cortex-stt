@@ -3,7 +3,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useSystemInfo } from "@/hooks/use-system";
 import { formatMB } from "@/lib/format";
-import { Cpu, MemoryStick, Monitor } from "lucide-react";
+import { Cpu, MemoryStick } from "lucide-react";
 
 export function HardwareCard() {
 	const { data, isLoading } = useSystemInfo();
@@ -21,8 +21,9 @@ export function HardwareCard() {
 
 	if (!data) return null;
 
-	const ramUsed = data.ram_total_mb - data.ram_available_mb;
-	const ramPercent = Math.round((ramUsed / data.ram_total_mb) * 100);
+	const ramUsed = data.total_memory_mb - data.available_memory_mb;
+	const ramPercent =
+		data.total_memory_mb > 0 ? Math.round((ramUsed / data.total_memory_mb) * 100) : 0;
 
 	return (
 		<Card>
@@ -31,8 +32,10 @@ export function HardwareCard() {
 				<div className="flex items-center gap-3">
 					<Cpu size={16} className="text-text-muted shrink-0" />
 					<div className="min-w-0">
-						<p className="text-sm text-text-primary truncate">{data.cpu}</p>
-						<p className="text-xs text-text-muted">{data.cpu_cores} cores</p>
+						<p className="text-sm text-text-primary">{data.cpu_count} CPU cores</p>
+						<p className="text-xs text-text-muted">
+							{data.os} / {data.arch}
+						</p>
 					</div>
 				</div>
 
@@ -40,25 +43,9 @@ export function HardwareCard() {
 					<MemoryStick size={16} className="text-text-muted shrink-0" />
 					<div className="min-w-0">
 						<p className="text-sm text-text-primary">
-							{formatMB(ramUsed)} / {formatMB(data.ram_total_mb)}
+							{formatMB(ramUsed)} / {formatMB(data.total_memory_mb)}
 						</p>
 						<p className="text-xs text-text-muted">{ramPercent}% used</p>
-					</div>
-				</div>
-
-				<div className="flex items-center gap-3">
-					<Monitor size={16} className="text-text-muted shrink-0" />
-					<div className="min-w-0">
-						{data.gpu ? (
-							<>
-								<p className="text-sm text-text-primary truncate">{data.gpu}</p>
-								{data.gpu_memory_mb && (
-									<p className="text-xs text-text-muted">{formatMB(data.gpu_memory_mb)}</p>
-								)}
-							</>
-						) : (
-							<p className="text-sm text-text-muted">No GPU detected</p>
-						)}
 					</div>
 				</div>
 
@@ -66,8 +53,11 @@ export function HardwareCard() {
 					<Badge variant={data.has_avx ? "success" : "default"}>
 						AVX {data.has_avx ? "Yes" : "No"}
 					</Badge>
-					<Badge variant={data.has_cuda ? "success" : "default"}>
-						CUDA {data.has_cuda ? (data.cuda_version ?? "Yes") : "No"}
+					<Badge variant={data.has_avx2 ? "success" : "default"}>
+						AVX2 {data.has_avx2 ? "Yes" : "No"}
+					</Badge>
+					<Badge variant={data.cuda_available ? "success" : "default"}>
+						CUDA {data.cuda_available ? "Yes" : "No"}
 					</Badge>
 				</div>
 			</div>

@@ -14,19 +14,15 @@ export function TimeoutSettings() {
 	const [transcriptionTimeout, setTranscriptionTimeout] = useState(
 		String(settings?.transcription_timeout_secs ?? 120),
 	);
-	const [modelLoadTimeout, setModelLoadTimeout] = useState(
-		String(settings?.model_load_timeout_secs ?? 300),
-	);
-	const [poolAcquireTimeout, setPoolAcquireTimeout] = useState(
-		String(settings?.pool_acquire_timeout_secs ?? 60),
+	const [idleTimeout, setIdleTimeout] = useState(
+		String(settings?.idle_timeout_secs ?? 300),
 	);
 
 	const handleSave = () => {
 		updateMutation.mutate(
 			{
 				transcription_timeout_secs: Number.parseInt(transcriptionTimeout, 10),
-				model_load_timeout_secs: Number.parseInt(modelLoadTimeout, 10),
-				pool_acquire_timeout_secs: Number.parseInt(poolAcquireTimeout, 10),
+				idle_timeout_secs: Number.parseInt(idleTimeout, 10),
 			},
 			{
 				onSuccess: () => toast("Timeout settings saved", "success"),
@@ -48,20 +44,12 @@ export function TimeoutSettings() {
 					onChange={(e) => setTranscriptionTimeout(e.target.value)}
 				/>
 				<Input
-					label="Model load timeout (seconds)"
+					label="Idle model timeout (seconds)"
 					type="number"
 					min="30"
-					max="1800"
-					value={modelLoadTimeout}
-					onChange={(e) => setModelLoadTimeout(e.target.value)}
-				/>
-				<Input
-					label="Pool acquire timeout (seconds)"
-					type="number"
-					min="5"
-					max="300"
-					value={poolAcquireTimeout}
-					onChange={(e) => setPoolAcquireTimeout(e.target.value)}
+					max="3600"
+					value={idleTimeout}
+					onChange={(e) => setIdleTimeout(e.target.value)}
 				/>
 				<Button icon={<Save size={14} />} onClick={handleSave} loading={updateMutation.isPending}>
 					Save Timeouts

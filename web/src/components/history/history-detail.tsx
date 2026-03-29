@@ -1,3 +1,4 @@
+import type { TranscriptionSegment } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -8,6 +9,28 @@ import { formatDuration, formatTimestamp } from "@/lib/format";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import { AudioPlayer } from "./audio-player";
 import { SegmentTimeline } from "./segment-timeline";
+
+/** Format source label for display */
+function formatSource(source: string): string {
+	switch (source) {
+		case "wyoming":
+			return "Wyoming";
+		case "http_api":
+			return "HTTP API";
+		default:
+			return source;
+	}
+}
+
+/** Parse segments_json string into TranscriptionSegment array */
+function parseSegments(segmentsJson: string | null): TranscriptionSegment[] {
+	if (!segmentsJson) return [];
+	try {
+		return JSON.parse(segmentsJson) as TranscriptionSegment[];
+	} catch {
+		return [];
+	}
+}
 
 interface HistoryDetailProps {
 	recordId: string;
@@ -40,6 +63,9 @@ export function HistoryDetail({ recordId, onBack }: HistoryDetailProps) {
 		});
 	};
 
+	const segments = parseSegments(record.segments_json);
+	const hasAudio = !!record.audio_path;
+
 	return (
 		<div className="space-y-4">
 			<div className="flex items-center gap-3">
@@ -66,7 +92,9 @@ export function HistoryDetail({ recordId, onBack }: HistoryDetailProps) {
 
 				{/* Metadata */}
 				<div className="flex flex-wrap gap-2 mb-4">
-					<Badge variant={record.source === "Wyoming" ? "info" : "accent"}>{record.source}</Badge>
+					<Badge variant={record.source === "wyoming" ? "info" : "accent"}>
+						{formatSource(record.source)}
+					</Badge>
 					<Badge>{record.model_id}</Badge>
 					{record.language && <Badge>{record.language}</Badge>}
 					{record.has_error && <Badge variant="error">Error</Badge>}
@@ -111,14 +139,14 @@ export function HistoryDetail({ recordId, onBack }: HistoryDetailProps) {
 				</div>
 
 				{/* Audio player */}
-				{record.has_audio && (
+				{hasAudio && (
 					<div className="mb-4">
 						<AudioPlayer recordId={record.id} durationMs={record.audio_duration_ms} />
 					</div>
 				)}
 
 				{/* Segments */}
-				<SegmentTimeline segments={record.segments} totalDurationMs={record.audio_duration_ms} />
+				<SegmentTimeline segments={segments} totalDurationMs={record.audio_duration_ms} />
 			</Card>
 		</div>
 	);

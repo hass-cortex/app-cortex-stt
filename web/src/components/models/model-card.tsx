@@ -29,7 +29,6 @@ export function ModelCard({ model }: ModelCardProps) {
 					<div className="flex items-center gap-2">
 						<h3 className="text-sm font-semibold text-text-primary truncate">{model.name}</h3>
 						{model.is_recommended && <Badge variant="accent">Recommended</Badge>}
-						{model.is_custom && <Badge variant="info">Custom</Badge>}
 					</div>
 					<p className="text-xs text-text-muted mt-0.5">{model.description}</p>
 				</div>

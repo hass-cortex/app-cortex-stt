@@ -4,7 +4,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useKeys, useRevokeKey } from "@/hooks/use-keys";
-import { formatNumber, formatRelativeTime, formatTimestamp } from "@/lib/format";
+import { formatRelativeTime, formatTimestamp } from "@/lib/format";
 import { Key, Plus, Trash2 } from "lucide-react";
 
 interface KeyListProps {
@@ -82,9 +82,6 @@ export function KeyList({ onGenerate }: KeyListProps) {
 								<th className="text-left py-2 px-3 text-xs font-medium text-text-muted uppercase hidden md:table-cell">
 									Last Used
 								</th>
-								<th className="text-right py-2 px-3 text-xs font-medium text-text-muted uppercase hidden md:table-cell">
-									Requests
-								</th>
 								<th className="text-right py-2 px-3 text-xs font-medium text-text-muted uppercase">
 									Actions
 								</th>
@@ -102,9 +99,6 @@ export function KeyList({ onGenerate }: KeyListProps) {
 									</td>
 									<td className="py-2.5 px-3 text-text-muted hidden md:table-cell">
 										{key.last_used_at ? formatRelativeTime(key.last_used_at) : "Never"}
-									</td>
-									<td className="py-2.5 px-3 text-right text-text-secondary hidden md:table-cell">
-										{formatNumber(key.request_count)}
 									</td>
 									<td className="py-2.5 px-3 text-right">
 										<Button

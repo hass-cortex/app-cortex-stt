@@ -1,13 +1,15 @@
 import { EngineControls } from "@/components/engine/engine-controls";
-import { PoolStatus } from "@/components/engine/pool-status";
+import { LoadedModels } from "@/components/engine/pool-status";
 import { TimeoutSettings } from "@/components/engine/timeout-settings";
 import { Spinner } from "@/components/ui/spinner";
 import { useEngineStatus } from "@/hooks/use-engine";
+import { useSettings } from "@/hooks/use-settings";
 
 export function EnginePage() {
-	const { data: engine, isLoading } = useEngineStatus();
+	const { data: engine, isLoading: engineLoading } = useEngineStatus();
+	const { data: settings, isLoading: settingsLoading } = useSettings();
 
-	if (isLoading) {
+	if (engineLoading || settingsLoading) {
 		return (
 			<div className="flex justify-center py-16">
 				<Spinner size="lg" />
@@ -26,10 +28,10 @@ export function EnginePage() {
 
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 				<div className="space-y-4">
-					<EngineControls defaultModel={engine?.default_model ?? ""} />
+					<EngineControls defaultModel={settings?.default_model ?? ""} />
 					<TimeoutSettings />
 				</div>
-				<PoolStatus pools={engine?.loaded_pools ?? []} />
+				<LoadedModels models={engine?.loaded_models ?? []} />
 			</div>
 		</div>
 	);

@@ -1,15 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { useEngineStatus } from "@/hooks/use-engine";
 import { useHealth } from "@/hooks/use-system";
 import { Layers } from "lucide-react";
 
 export function QueueCard() {
-	const { data: engine, isLoading: engineLoading } = useEngineStatus();
-	const { data: health, isLoading: healthLoading } = useHealth();
+	const { data: health, isLoading } = useHealth();
 
-	if (engineLoading || healthLoading) {
+	if (isLoading) {
 		return (
 			<Card>
 				<CardHeader title="Status" />
@@ -27,15 +25,15 @@ export function QueueCard() {
 		<Card>
 			<CardHeader
 				title="Status"
-				action={health && <Badge variant={statusVariant}>{health.status}</Badge>}
+				action={health && <Badge variant={statusVariant}>{health.status ?? "unknown"}</Badge>}
 			/>
 			<div className="space-y-3">
 				<div className="flex items-center gap-3">
 					<Layers size={16} className="text-text-muted shrink-0" />
 					<div>
-						<p className="text-sm text-text-primary">Queue depth: {engine?.queue_depth ?? 0}</p>
-						<p className="text-xs text-text-muted">
-							{engine?.queue_depth === 0 ? "No pending requests" : "Requests waiting for pool"}
+						<p className="text-sm text-text-primary">
+							{health?.loaded_models ?? 0} model{(health?.loaded_models ?? 0) !== 1 ? "s" : ""}{" "}
+							loaded
 						</p>
 					</div>
 				</div>

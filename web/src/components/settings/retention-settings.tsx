@@ -9,10 +9,10 @@ import { Save } from "lucide-react";
 import { useState } from "react";
 
 const policyOptions = [
-	{ value: "days", label: "Days" },
-	{ value: "count", label: "Record count" },
-	{ value: "disk_limit", label: "Disk limit (MB)" },
-	{ value: "unlimited", label: "Unlimited" },
+	{ value: "Days", label: "Days" },
+	{ value: "Count", label: "Record count" },
+	{ value: "DiskLimit", label: "Disk limit (MB)" },
+	{ value: "Unlimited", label: "Unlimited" },
 ];
 
 interface RetentionRowProps {
@@ -37,7 +37,7 @@ function RetentionRow({ label, policy, onChange }: RetentionRowProps) {
 					}
 					className="w-40"
 				/>
-				{policy.type !== "unlimited" && (
+				{policy.type !== "Unlimited" && (
 					<Input
 						type="number"
 						min="1"
@@ -63,10 +63,10 @@ export function RetentionSettings() {
 
 	const [saveAudio, setSaveAudio] = useState(settings?.save_audio ?? true);
 	const [audioRetention, setAudioRetention] = useState<RetentionPolicy>(
-		settings?.audio_retention ?? { type: "days", value: 7 },
+		settings?.audio_retention ?? { type: "Days", value: 7 },
 	);
 	const [recordRetention, setRecordRetention] = useState<RetentionPolicy>(
-		settings?.record_retention ?? { type: "days", value: 30 },
+		settings?.record_retention ?? { type: "Days", value: 30 },
 	);
 
 	const handleSave = () => {

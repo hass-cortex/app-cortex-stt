@@ -1,6 +1,5 @@
 import type { HistoryFilters, TranscriptionRecord } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -12,8 +11,8 @@ import { useState } from "react";
 
 const sourceOptions = [
 	{ value: "", label: "All sources" },
-	{ value: "Wyoming", label: "Wyoming" },
-	{ value: "HttpApi", label: "HTTP API" },
+	{ value: "wyoming", label: "Wyoming" },
+	{ value: "http_api", label: "HTTP API" },
 ];
 
 const errorOptions = [
@@ -21,6 +20,18 @@ const errorOptions = [
 	{ value: "true", label: "Errors only" },
 	{ value: "false", label: "Successful only" },
 ];
+
+/** Format source label for display */
+function formatSource(source: string): string {
+	switch (source) {
+		case "wyoming":
+			return "Wyoming";
+		case "http_api":
+			return "HTTP API";
+		default:
+			return source;
+	}
+}
 
 interface HistoryListProps {
 	onSelectRecord: (id: string) => void;
@@ -47,6 +58,8 @@ export function HistoryList({ onSelectRecord }: HistoryListProps) {
 			/>
 		);
 	}
+
+	const records = data ?? [];
 
 	return (
 		<div className="space-y-4">
@@ -78,62 +91,22 @@ export function HistoryList({ onSelectRecord }: HistoryListProps) {
 				<div className="flex justify-center py-16">
 					<Spinner size="lg" />
 				</div>
-			) : !data || data.items.length === 0 ? (
+			) : records.length === 0 ? (
 				<EmptyState
 					icon={<History size={40} />}
 					title="No transcriptions yet"
 					description="Transcription records will appear here after processing audio."
 				/>
 			) : (
-				<>
-					<div className="space-y-1">
-						{data.items.map((record) => (
-							<HistoryRow
-								key={record.id}
-								record={record}
-								onClick={() => onSelectRecord(record.id)}
-							/>
-						))}
-					</div>
-
-					{/* Pagination */}
-					{data.total > (filters.limit ?? 50) && (
-						<div className="flex items-center justify-between pt-2">
-							<span className="text-xs text-text-muted">
-								Showing {(filters.offset ?? 0) + 1}-
-								{Math.min((filters.offset ?? 0) + data.items.length, data.total)} of {data.total}
-							</span>
-							<div className="flex gap-2">
-								<Button
-									variant="secondary"
-									size="sm"
-									disabled={(filters.offset ?? 0) === 0}
-									onClick={() =>
-										setFilters((prev) => ({
-											...prev,
-											offset: Math.max(0, (prev.offset ?? 0) - (prev.limit ?? 50)),
-										}))
-									}
-								>
-									Previous
-								</Button>
-								<Button
-									variant="secondary"
-									size="sm"
-									disabled={(filters.offset ?? 0) + data.items.length >= data.total}
-									onClick={() =>
-										setFilters((prev) => ({
-											...prev,
-											offset: (prev.offset ?? 0) + (prev.limit ?? 50),
-										}))
-									}
-								>
-									Next
-								</Button>
-							</div>
-						</div>
-					)}
-				</>
+				<div className="space-y-1">
+					{records.map((record) => (
+						<HistoryRow
+							key={record.id}
+							record={record}
+							onClick={() => onSelectRecord(record.id)}
+						/>
+					))}
+				</div>
 			)}
 		</div>
 	);
@@ -166,7 +139,9 @@ function HistoryRow({
 				</p>
 				<div className="flex items-center gap-2 mt-0.5">
 					<span className="text-xs text-text-muted">{formatRelativeTime(record.timestamp)}</span>
-					<Badge variant={record.source === "Wyoming" ? "info" : "accent"}>{record.source}</Badge>
+					<Badge variant={record.source === "wyoming" ? "info" : "accent"}>
+						{formatSource(record.source)}
+					</Badge>
 					<span className="text-xs text-text-muted">{record.model_id}</span>
 				</div>
 			</div>
