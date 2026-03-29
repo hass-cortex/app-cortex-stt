@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 import { useUnloadModel } from "@/hooks/use-engine";
 import { Power, PowerOff } from "lucide-react";
 
@@ -11,6 +12,7 @@ interface LoadedModelsProps {
 
 export function LoadedModels({ models }: LoadedModelsProps) {
 	const unloadMutation = useUnloadModel();
+	const { toast } = useToast();
 
 	if (models.length === 0) {
 		return (
@@ -42,7 +44,12 @@ export function LoadedModels({ models }: LoadedModelsProps) {
 								size="sm"
 								variant="ghost"
 								icon={<PowerOff size={14} />}
-								onClick={() => unloadMutation.mutate(modelId)}
+								onClick={() =>
+									unloadMutation.mutate(modelId, {
+										onSuccess: () => toast(`${modelId} unloaded`, "success"),
+										onError: (err) => toast(`Unload failed: ${err.message}`, "error"),
+									})
+								}
 								loading={unloadMutation.isPending}
 								title="Unload model"
 							/>

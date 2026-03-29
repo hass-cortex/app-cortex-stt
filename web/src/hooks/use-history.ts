@@ -7,6 +7,7 @@ export function useHistoryList(filters?: HistoryFilters) {
 	return useQuery({
 		queryKey: queryKeys.history.list(filters as Record<string, string> | undefined),
 		queryFn: () => listHistory(filters),
+		refetchInterval: 5000,
 	});
 }
 

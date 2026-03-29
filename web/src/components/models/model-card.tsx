@@ -94,7 +94,10 @@ export function ModelCard({ model }: ModelCardProps) {
 						icon={<Trash2 size={14} />}
 						onClick={() => {
 							if (window.confirm(`Delete ${model.name}? This cannot be undone.`)) {
-								deleteMutation.mutate(model.id);
+								deleteMutation.mutate(model.id, {
+									onSuccess: () => toast(`${model.name} deleted`, "success"),
+									onError: (err) => toast(`Delete failed: ${err.message}`, "error"),
+								});
 							}
 						}}
 						loading={deleteMutation.isPending}

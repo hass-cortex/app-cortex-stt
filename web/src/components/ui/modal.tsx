@@ -40,7 +40,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
 	return (
 		<dialog
 			ref={dialogRef}
-			className="bg-surface-2 border border-border rounded-xl shadow-2xl backdrop:bg-black/60 p-0 max-w-md w-full"
+			className="fixed inset-0 z-50 flex items-center justify-center bg-transparent backdrop:bg-black/60 p-0 m-0 w-full h-full max-w-none max-h-none"
 			onClick={(e) => {
 				if (e.target === dialogRef.current) onClose();
 			}}
@@ -48,7 +48,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
 				if (e.key === "Escape") onClose();
 			}}
 		>
-			<div className="p-5">
+			<div className="bg-surface-2 border border-border rounded-xl shadow-2xl max-w-md w-full p-5">
 				<div className="flex items-center justify-between mb-4">
 					<h2 className="text-lg font-semibold text-text-primary">{title}</h2>
 					<button
