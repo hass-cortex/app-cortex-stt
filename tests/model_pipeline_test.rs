@@ -93,13 +93,13 @@ mod whisper {
     }
 
     #[tokio::test]
-    #[ignore] // >1GB model — may segfault on memory-constrained systems
+    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5 quantization on CPU
     async fn whisper_large_v3_q5() {
         run_pipeline("whisper-large-v3-q5", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
-    #[ignore] // >1GB model — may segfault on memory-constrained systems
+    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5_K quantization on CPU
     async fn breeze_asr() {
         run_pipeline("breeze-asr", "zh.wav", "zh").await;
     }
