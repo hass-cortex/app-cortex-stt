@@ -10,9 +10,7 @@ use super::error::ApiError;
 
 /// Verify an API key against the database.
 async fn verify_key(db: &Database, token: &str) -> bool {
-    tracing::debug!("verify_key: about to call db.verify_api_key");
     let result = db.verify_api_key(token).await;
-    tracing::debug!("verify_key: db call returned");
     result.ok().flatten().is_some()
 }
 
