@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router";
+import { AuthGate } from "./components/auth-gate";
 import { AppLayout } from "./components/layout/app-layout";
 import { ToastProvider } from "./components/ui/toast";
 import { ROUTES } from "./lib/constants";
@@ -26,18 +27,20 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<ToastProvider>
-					<BrowserRouter>
-						<Routes>
-							<Route element={<AppLayout />}>
-								<Route index element={<DashboardPage />} />
-								<Route path={ROUTES.MODELS} element={<ModelsPage />} />
-								<Route path={ROUTES.ENGINE} element={<EnginePage />} />
-								<Route path={ROUTES.HISTORY} element={<HistoryPage />} />
-								<Route path={ROUTES.KEYS} element={<KeysPage />} />
-								<Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
-							</Route>
-						</Routes>
-					</BrowserRouter>
+					<AuthGate>
+						<BrowserRouter>
+							<Routes>
+								<Route element={<AppLayout />}>
+									<Route index element={<DashboardPage />} />
+									<Route path={ROUTES.MODELS} element={<ModelsPage />} />
+									<Route path={ROUTES.ENGINE} element={<EnginePage />} />
+									<Route path={ROUTES.HISTORY} element={<HistoryPage />} />
+									<Route path={ROUTES.KEYS} element={<KeysPage />} />
+									<Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
+								</Route>
+							</Routes>
+						</BrowserRouter>
+					</AuthGate>
 				</ToastProvider>
 			</ThemeProvider>
 		</QueryClientProvider>

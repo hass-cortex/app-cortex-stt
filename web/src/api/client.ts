@@ -1,6 +1,6 @@
 import type { ApiError } from "./types";
 
-const API_KEY_STORAGE_KEY = "wyoming-asr-api-key";
+const API_KEY_STORAGE_KEY = "cortex-stt-api-key";
 
 export class ApiClientError extends Error {
 	constructor(
