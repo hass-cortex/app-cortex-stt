@@ -14,6 +14,7 @@ export function formatMB(mb: number): string {
 
 /** Format milliseconds to human readable duration */
 export function formatDuration(ms: number): string {
+	if (ms == null) return "—";
 	if (ms < 1000) return `${Math.round(ms)}ms`;
 	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
 	const minutes = Math.floor(ms / 60_000);
@@ -30,6 +31,7 @@ export function formatAudioTime(seconds: number): string {
 
 /** Format ISO timestamp to locale string */
 export function formatTimestamp(iso: string): string {
+	if (!iso) return "—";
 	return new Date(iso).toLocaleString();
 }
 
@@ -51,5 +53,6 @@ export function formatScore(score: number): string {
 
 /** Format a number with locale-aware thousands separators */
 export function formatNumber(n: number): string {
+	if (n == null) return "—";
 	return n.toLocaleString();
 }
