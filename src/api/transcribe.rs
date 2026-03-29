@@ -14,6 +14,8 @@ use tokio_stream::Stream;
 
 use crate::api::error::ApiError;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
+use crate::audio::wav_writer::write_wav;
+use crate::db::records::{CreateRecord, TranscriptionSource};
 use crate::engine::traits::TranscribeOptions;
 use crate::state::{AppState, AsyncJob, AsyncJobStatus};
 
@@ -110,6 +112,47 @@ async fn run_transcription(
     })
 }
 
+/// Save transcription result to history (audio file + DB record).
+///
+/// Best-effort: logs warnings on failure but never propagates errors
+/// to the caller so the transcription response is unaffected.
+async fn save_to_history(
+    state: &AppState,
+    source: TranscriptionSource,
+    model: &str,
+    language: &Option<String>,
+    samples: &[f32],
+    response: &TranscribeResponse,
+) {
+    let record_id = uuid::Uuid::new_v4().to_string();
+    let audio_dir = state.data_dir.join("audio");
+    let audio_filename = format!("{record_id}.wav");
+    let audio_path = audio_dir.join(&audio_filename);
+
+    if let Err(e) = write_wav(&audio_path, samples).await {
+        tracing::warn!(error = %e, "Failed to save audio file");
+    }
+
+    let segments_json = serde_json::to_string(&response.segments).unwrap_or_default();
+
+    let record = CreateRecord {
+        source,
+        language: language.clone(),
+        model_id: model.to_string(),
+        audio_duration_ms: response.duration_ms as i64,
+        inference_ms: response.inference_ms as i64,
+        text: response.text.clone(),
+        segments_json,
+        audio_path: Some(audio_filename),
+        has_error: false,
+        error_message: None,
+    };
+
+    if let Err(e) = state.db.insert_record(&record) {
+        tracing::warn!(error = %e, "Failed to insert transcription record");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SSE progress events (Task 8)
 // ---------------------------------------------------------------------------
@@ -184,17 +227,31 @@ async fn transcribe_sync(
 
     let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
 
+    let model = query.model.clone();
+    let language = query.language.clone();
+
     let options = TranscribeOptions {
         language: query.language,
         translate: query.translate,
     };
 
-    let response = run_transcription(&state, &query.model, samples, options, duration_ms)
+    let samples_copy = samples.clone();
+    let response = run_transcription(&state, &model, samples, options, duration_ms)
         .await
         .map_err(|e| {
             let (status, api_error) = (&e).into();
             (status, axum::Json(api_error))
         })?;
+
+    save_to_history(
+        &state,
+        TranscriptionSource::HttpApi,
+        &model,
+        &language,
+        &samples_copy,
+        &response,
+    )
+    .await;
 
     Ok(axum::Json(response))
 }
@@ -228,10 +285,13 @@ async fn transcribe_sse(
     let total_chunks = samples.len().div_ceil(chunk_size);
 
     let model = query.model.clone();
+    let language = query.language.clone();
     let options = TranscribeOptions {
         language: query.language,
         translate: query.translate,
     };
+
+    let samples_copy = samples.clone();
 
     let stream = async_stream::stream! {
         let start = Instant::now();
@@ -253,6 +313,16 @@ async fn transcribe_sse(
         // Run full inference on the complete audio.
         match run_transcription(&state, &model, samples, options, duration_ms).await {
             Ok(response) => {
+                save_to_history(
+                    &state,
+                    TranscriptionSource::HttpApi,
+                    &model,
+                    &language,
+                    &samples_copy,
+                    &response,
+                )
+                .await;
+
                 let result = SseProgress::Result { response };
                 let data = serde_json::to_string(&result).unwrap_or_default();
                 yield Ok(Event::default().event("result").data(data));
@@ -305,6 +375,7 @@ async fn transcribe_async(
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let model = query.model.clone();
+    let language = query.language.clone();
 
     let job = AsyncJob {
         id: job_id.clone(),
@@ -324,6 +395,8 @@ async fn transcribe_async(
     };
     let job_id_bg = job_id.clone();
 
+    let samples_copy = samples.clone();
+
     tokio::spawn(async move {
         // Check if job was cancelled before starting.
         if let Some(job) = job_store.get(&job_id_bg).await {
@@ -334,6 +407,16 @@ async fn transcribe_async(
 
         match run_transcription(&state_inner, &model, samples, options, duration_ms).await {
             Ok(response) => {
+                save_to_history(
+                    &state_inner,
+                    TranscriptionSource::HttpApi,
+                    &model,
+                    &language,
+                    &samples_copy,
+                    &response,
+                )
+                .await;
+
                 job_store
                     .update_status(&job_id_bg, AsyncJobStatus::Completed { result: response })
                     .await;

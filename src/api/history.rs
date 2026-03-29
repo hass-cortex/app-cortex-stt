@@ -84,11 +84,13 @@ async fn get_history_audio(
             model_id: None,
         })?;
 
-    let audio_path = record.audio_path.ok_or_else(|| ApiError {
+    let audio_filename = record.audio_path.ok_or_else(|| ApiError {
         code: "NO_AUDIO",
         message: "no audio stored for this record".into(),
         model_id: None,
     })?;
+
+    let audio_path = state.data_dir.join("audio").join(&audio_filename);
 
     let data = tokio::fs::read(&audio_path).await.map_err(|e| ApiError {
         code: "INTERNAL_ERROR",
@@ -105,7 +107,8 @@ async fn delete_history_record(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get record to find audio path for cleanup.
     if let Ok(Some(record)) = state.db.get_record(&record_id) {
-        if let Some(audio_path) = &record.audio_path {
+        if let Some(audio_filename) = &record.audio_path {
+            let audio_path = state.data_dir.join("audio").join(audio_filename);
             let _ = tokio::fs::remove_file(audio_path).await;
         }
     }
@@ -130,7 +133,7 @@ async fn cleanup_history(
     let days = req.retention_days.unwrap_or(30);
 
     // Delete audio files first.
-    let audio_paths = state
+    let audio_filenames = state
         .db
         .get_audio_paths_older_than_days(days)
         .map_err(|e| {
@@ -138,8 +141,9 @@ async fn cleanup_history(
             api_err
         })?;
 
-    for path in &audio_paths {
-        let _ = tokio::fs::remove_file(path).await;
+    let audio_dir = state.data_dir.join("audio");
+    for filename in &audio_filenames {
+        let _ = tokio::fs::remove_file(audio_dir.join(filename)).await;
     }
 
     let deleted = state
@@ -152,7 +156,7 @@ async fn cleanup_history(
 
     Ok(Json(serde_json::json!({
         "deleted_records": deleted,
-        "deleted_audio_files": audio_paths.len(),
+        "deleted_audio_files": audio_filenames.len(),
     })))
 }
 

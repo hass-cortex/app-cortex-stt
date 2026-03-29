@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_manager,
         db: db.clone(),
         job_store,
+        data_dir: config.data_dir.clone(),
         addon_mode: config.addon,
         version: env!("CARGO_PKG_VERSION").to_string(),
     });

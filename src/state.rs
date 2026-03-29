@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -87,6 +88,7 @@ pub struct AppState {
     pub model_manager: Arc<ModelManager>,
     pub db: Arc<Database>,
     pub job_store: Arc<JobStore>,
+    pub data_dir: PathBuf,
     pub addon_mode: bool,
     pub version: String,
 }
