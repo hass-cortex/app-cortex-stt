@@ -54,6 +54,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         db,
         job_store: Arc::new(JobStore::new()),
         data_dir,
+        default_model: "whisper-small".to_string(),
         addon_mode: false,
         version: "0.0.0-test".to_string(),
     });

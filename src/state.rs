@@ -89,6 +89,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub job_store: Arc<JobStore>,
     pub data_dir: PathBuf,
+    pub default_model: String,
     pub addon_mode: bool,
     pub version: String,
 }

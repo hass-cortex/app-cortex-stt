@@ -60,6 +60,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::open(&db_path)?);
     tracing::info!(?db_path, "Database opened");
 
+    // Resolve default model: DB override takes precedence over CLI/env config.
+    let default_model = match db.get_default_model() {
+        Ok(Some(persisted)) => {
+            tracing::info!(model = %persisted, "Using persisted default model");
+            persisted
+        }
+        Ok(None) => config.default_model.clone(),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to read persisted default model, using config");
+            config.default_model.clone()
+        }
+    };
+
     // Ensure pre-configured API key exists.
     if let Some(ref api_key) = config.api_key {
         if db.verify_api_key(api_key)?.is_none() {
@@ -99,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: db.clone(),
         job_store,
         data_dir: config.data_dir.clone(),
+        default_model: default_model.clone(),
         addon_mode: config.addon,
         version: env!("CARGO_PKG_VERSION").to_string(),
     });
@@ -153,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         result = run_wyoming_server(
             &config.wyoming_host,
             config.wyoming_port,
-            config.default_model.clone(),
+            default_model,
             Duration::from_secs(config.transcription_timeout_secs),
             engine_manager,
         ) => {

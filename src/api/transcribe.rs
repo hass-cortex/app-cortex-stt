@@ -116,6 +116,9 @@ async fn run_transcription(
 ///
 /// Best-effort: logs warnings on failure but never propagates errors
 /// to the caller so the transcription response is unaffected.
+///
+/// When the `save_audio` setting is disabled, the DB record is still
+/// created but no WAV file is written to disk.
 async fn save_to_history(
     state: &AppState,
     source: TranscriptionSource,
@@ -124,14 +127,25 @@ async fn save_to_history(
     samples: &[f32],
     response: &TranscribeResponse,
 ) {
-    let record_id = uuid::Uuid::new_v4().to_string();
-    let audio_dir = state.data_dir.join("audio");
-    let audio_filename = format!("{record_id}.wav");
-    let audio_path = audio_dir.join(&audio_filename);
+    let save_audio = state
+        .db
+        .load_settings()
+        .map(|s| s.save_audio)
+        .unwrap_or(true);
 
-    if let Err(e) = write_wav(&audio_path, samples).await {
-        tracing::warn!(error = %e, "Failed to save audio file");
-    }
+    let record_id = uuid::Uuid::new_v4().to_string();
+    let audio_path_str = if save_audio {
+        let audio_dir = state.data_dir.join("audio");
+        let audio_filename = format!("{record_id}.wav");
+        let audio_path = audio_dir.join(&audio_filename);
+
+        if let Err(e) = write_wav(&audio_path, samples).await {
+            tracing::warn!(error = %e, "Failed to save audio file");
+        }
+        Some(audio_filename)
+    } else {
+        None
+    };
 
     let segments_json = serde_json::to_string(&response.segments).unwrap_or_default();
 
@@ -143,7 +157,7 @@ async fn save_to_history(
         inference_ms: response.inference_ms as i64,
         text: response.text.clone(),
         segments_json,
-        audio_path: Some(audio_filename),
+        audio_path: audio_path_str,
         has_error: false,
         error_message: None,
     };

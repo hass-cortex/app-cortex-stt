@@ -21,6 +21,12 @@ pub struct Settings {
     pub audio_retention_days: u32,
     pub record_retention_days: u32,
     pub cors_allowed_origins: Vec<String>,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+}
+
+fn default_log_level() -> String {
+    "info".into()
 }
 
 impl Default for Settings {
@@ -35,6 +41,7 @@ impl Default for Settings {
             audio_retention_days: 7,
             record_retention_days: 30,
             cors_allowed_origins: vec![],
+            log_level: default_log_level(),
         }
     }
 }

@@ -39,4 +39,30 @@ impl Database {
         })?;
         Ok(())
     }
+
+    /// Get the persisted default model ID, if any.
+    pub fn get_default_model(&self) -> Result<Option<String>, AsrError> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM settings WHERE key = 'default_model'")
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let result: Option<String> = stmt.query_row([], |row| row.get(0)).ok();
+        Ok(result)
+    }
+
+    /// Persist the default model ID.
+    pub fn set_default_model(&self, model_id: &str) -> Result<(), AsrError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_model', ?1)",
+            params![model_id],
+        )
+        .map_err(|e| AsrError::DatabaseError {
+            detail: e.to_string(),
+        })?;
+        Ok(())
+    }
 }

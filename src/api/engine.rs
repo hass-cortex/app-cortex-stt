@@ -61,7 +61,12 @@ async fn set_default_model(
         ));
     }
 
-    // TODO: persist default model setting once settings DB is available.
+    // Persist to database.
+    state.db.set_default_model(&body.model_id).map_err(|e| {
+        let (status, api_err) = (&e).into();
+        (status, axum::Json(api_err))
+    })?;
+
     Ok((
         StatusCode::OK,
         axum::Json(serde_json::json!({
