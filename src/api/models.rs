@@ -11,6 +11,7 @@ use axum::routing::{delete, get, post};
 use tokio_stream::Stream;
 
 use crate::api::error::ApiError;
+use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::builtin_models;
 use crate::model::download::{DownloadConfig, download_model};
 use crate::state::AppState;
@@ -19,10 +20,12 @@ use crate::state::AppState;
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut models = state.model_manager.list_models().await;
 
-    // Enrich with engine load status.
+    // Enrich with engine load status and hardware recommendations.
     let loaded = state.engine_manager.loaded_models().await;
+    let hw = HardwareCapabilities::detect();
     for model in &mut models {
         model.is_loaded = loaded.contains(&model.id);
+        model.evaluate_recommendation(&hw);
     }
 
     axum::Json(models)

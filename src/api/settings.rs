@@ -9,6 +9,26 @@ use serde::{Deserialize, Serialize};
 use crate::api::error::ApiError;
 use crate::state::AppState;
 
+/// Retention policy controlling how old data is cleaned up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "value")]
+pub enum RetentionPolicy {
+    /// Keep data for at most N days.
+    Days(u32),
+    /// Keep at most N records.
+    Count(usize),
+    /// Keep total disk usage under N megabytes.
+    DiskLimitMb(u64),
+    /// Never automatically delete.
+    Unlimited,
+}
+
+impl Default for RetentionPolicy {
+    fn default() -> Self {
+        Self::Days(7)
+    }
+}
+
 /// Application settings exposed via the REST API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -18,8 +38,8 @@ pub struct Settings {
     pub idle_timeout_secs: u64,
     pub transcription_timeout_secs: u64,
     pub save_audio: bool,
-    pub audio_retention_days: u32,
-    pub record_retention_days: u32,
+    pub audio_retention: RetentionPolicy,
+    pub record_retention: RetentionPolicy,
     pub cors_allowed_origins: Vec<String>,
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -38,8 +58,8 @@ impl Default for Settings {
             idle_timeout_secs: 300,
             transcription_timeout_secs: 120,
             save_audio: true,
-            audio_retention_days: 7,
-            record_retention_days: 30,
+            audio_retention: RetentionPolicy::Days(7),
+            record_retention: RetentionPolicy::Days(30),
             cors_allowed_origins: vec![],
             log_level: default_log_level(),
         }
@@ -86,4 +106,60 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/settings", get(get_settings))
         .route("/api/settings", put(update_settings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retention_policy_days_roundtrip() {
+        let policy = RetentionPolicy::Days(7);
+        let json = serde_json::to_string(&policy).unwrap();
+        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, RetentionPolicy::Days(7));
+    }
+
+    #[test]
+    fn retention_policy_count_roundtrip() {
+        let policy = RetentionPolicy::Count(1000);
+        let json = serde_json::to_string(&policy).unwrap();
+        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, RetentionPolicy::Count(1000));
+    }
+
+    #[test]
+    fn retention_policy_disk_limit_roundtrip() {
+        let policy = RetentionPolicy::DiskLimitMb(5120);
+        let json = serde_json::to_string(&policy).unwrap();
+        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, RetentionPolicy::DiskLimitMb(5120));
+    }
+
+    #[test]
+    fn retention_policy_unlimited_roundtrip() {
+        let policy = RetentionPolicy::Unlimited;
+        let json = serde_json::to_string(&policy).unwrap();
+        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, RetentionPolicy::Unlimited);
+    }
+
+    #[test]
+    fn settings_default_uses_days_policies() {
+        let settings = Settings::default();
+        assert_eq!(settings.audio_retention, RetentionPolicy::Days(7));
+        assert_eq!(settings.record_retention, RetentionPolicy::Days(30));
+    }
+
+    #[test]
+    fn settings_full_roundtrip() {
+        let mut settings = Settings::default();
+        settings.audio_retention = RetentionPolicy::DiskLimitMb(2048);
+        settings.record_retention = RetentionPolicy::Count(500);
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.audio_retention, RetentionPolicy::DiskLimitMb(2048));
+        assert_eq!(parsed.record_retention, RetentionPolicy::Count(500));
+    }
 }

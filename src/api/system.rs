@@ -55,22 +55,38 @@ fn detect_cuda() -> bool {
         .unwrap_or(false)
 }
 
+/// Runtime hardware capabilities used for model recommendation.
+#[derive(Debug, Clone)]
+pub struct HardwareCapabilities {
+    pub available_memory_mb: u64,
+    pub has_avx: bool,
+    pub cuda_available: bool,
+}
+
+impl HardwareCapabilities {
+    /// Detect current hardware capabilities.
+    pub fn detect() -> Self {
+        Self {
+            available_memory_mb: read_meminfo_kb("MemAvailable:").unwrap_or(0) / 1024,
+            has_avx: cfg!(target_feature = "avx"),
+            cuda_available: detect_cuda(),
+        }
+    }
+}
+
 async fn get_system_info(State(_state): State<Arc<AppState>>) -> axum::Json<SystemInfoResponse> {
     let cpu_count = available_parallelism().map(|n| n.get()).unwrap_or(1);
 
     let total_memory_mb = read_meminfo_kb("MemTotal:").unwrap_or(0) / 1024;
-    let available_memory_mb = read_meminfo_kb("MemAvailable:").unwrap_or(0) / 1024;
-
-    let has_avx = cfg!(target_feature = "avx");
-    let has_avx2 = cfg!(target_feature = "avx2");
+    let hw = HardwareCapabilities::detect();
 
     axum::Json(SystemInfoResponse {
         cpu_count,
         total_memory_mb,
-        available_memory_mb,
-        has_avx,
-        has_avx2,
-        cuda_available: detect_cuda(),
+        available_memory_mb: hw.available_memory_mb,
+        has_avx: hw.has_avx,
+        has_avx2: cfg!(target_feature = "avx2"),
+        cuda_available: hw.cuda_available,
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
     })

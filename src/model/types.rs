@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::{EngineType, ModelDefinition};
 
 /// High-level availability status of a model.
@@ -39,6 +40,8 @@ pub struct ModelInfo {
     pub disk_usage_bytes: u64,
     /// Whether the model is currently loaded in the engine manager.
     pub is_loaded: bool,
+    /// Whether the model is recommended for the current hardware.
+    pub is_recommended: bool,
 }
 
 impl ModelInfo {
@@ -64,7 +67,30 @@ impl ModelInfo {
             status,
             disk_usage_bytes,
             is_loaded: false,
+            is_recommended: false,
         }
+    }
+
+    /// Evaluate whether this model is recommended for the given hardware.
+    ///
+    /// A model is NOT recommended if:
+    /// - It requires CUDA but CUDA is not available
+    /// - It requires AVX but AVX is not detected
+    /// - Its size exceeds 50% of available memory
+    pub fn evaluate_recommendation(&mut self, hw: &HardwareCapabilities) {
+        if self.requires_cuda && !hw.cuda_available {
+            self.is_recommended = false;
+            return;
+        }
+        if self.requires_avx && !hw.has_avx {
+            self.is_recommended = false;
+            return;
+        }
+        if hw.available_memory_mb > 0 && self.size_mb > hw.available_memory_mb / 2 {
+            self.is_recommended = false;
+            return;
+        }
+        self.is_recommended = true;
     }
 }
 

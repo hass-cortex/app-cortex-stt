@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::middleware;
-use clap::Parser;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
@@ -29,7 +28,7 @@ use wyoming_asr::wyoming::server::run_wyoming_server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = AppConfig::parse();
+    let config = AppConfig::load();
 
     // Initialize tracing with JSON structured logging.
     tracing_subscriber::fmt()

@@ -360,6 +360,107 @@ impl Database {
         })?;
         Ok(count as usize)
     }
+
+    /// Delete the oldest records to keep at most `max_count` records.
+    /// Returns the number of records deleted.
+    pub fn cleanup_records_by_count(&self, max_count: usize) -> Result<usize, AsrError> {
+        let conn = self.conn()?;
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let excess = total - max_count as i64;
+        if excess <= 0 {
+            return Ok(0);
+        }
+
+        let deleted = conn
+            .execute(
+                "DELETE FROM records WHERE id IN (SELECT id FROM records ORDER BY timestamp ASC LIMIT ?1)",
+                params![excess],
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        Ok(deleted)
+    }
+
+    /// Get audio file paths for the oldest records, ordered by timestamp ASC,
+    /// keeping at most `max_count` records. Returns paths of records that
+    /// would be deleted.
+    pub fn get_audio_paths_exceeding_count(
+        &self,
+        max_count: usize,
+    ) -> Result<Vec<String>, AsrError> {
+        let conn = self.conn()?;
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let excess = total - max_count as i64;
+        if excess <= 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT audio_path FROM records
+                 WHERE audio_path IS NOT NULL
+                 ORDER BY timestamp ASC LIMIT ?1",
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let rows = stmt
+            .query_map(params![excess], |row| row.get::<_, String>(0))
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            paths.push(row.map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?);
+        }
+        Ok(paths)
+    }
+
+    /// Get audio file paths ordered by timestamp ASC (oldest first).
+    /// Used by disk-limit cleanup to iterate and delete until under limit.
+    pub fn get_audio_paths_oldest_first(&self) -> Result<Vec<(String, String)>, AsrError> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, audio_path FROM records
+                 WHERE audio_path IS NOT NULL
+                 ORDER BY timestamp ASC",
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?);
+        }
+        Ok(result)
+    }
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecord> {

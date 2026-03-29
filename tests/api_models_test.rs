@@ -67,6 +67,7 @@ async fn test_list_models_returns_registry() {
     assert!(first["status"].is_string());
     assert!(first["size_mb"].is_number());
     assert!(first["is_loaded"].is_boolean());
+    assert!(first["is_recommended"].is_boolean());
 }
 
 #[tokio::test]
