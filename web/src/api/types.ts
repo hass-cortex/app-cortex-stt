@@ -166,8 +166,6 @@ export interface AppSettings {
 	record_retention: RetentionPolicy;
 	log_level: string;
 	cors_origins: string[];
-	rate_limit_enabled: boolean;
-	rate_limit_per_minute: number;
 	transcription_timeout_secs: number;
 	model_load_timeout_secs: number;
 	pool_acquire_timeout_secs: number;

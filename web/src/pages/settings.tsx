@@ -1,7 +1,6 @@
 import { CorsSettings } from "@/components/settings/cors-settings";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { LoggingSettings } from "@/components/settings/logging-settings";
-import { RateLimitSettings } from "@/components/settings/rate-limit-settings";
 import { RetentionSettings } from "@/components/settings/retention-settings";
 import { Spinner } from "@/components/ui/spinner";
 import { useSettings } from "@/hooks/use-settings";
@@ -33,7 +32,6 @@ export function SettingsPage() {
 				</div>
 				<div className="space-y-4">
 					<CorsSettings />
-					<RateLimitSettings />
 				</div>
 			</div>
 
