@@ -155,7 +155,7 @@ export interface AppSettings {
 	default_model: string;
 	pool_size: number;
 	max_loaded_models: number;
-	idle_timeout_secs: number;
+	idle_timeout_secs: number | null;
 	transcription_timeout_secs: number;
 	save_audio: boolean;
 	audio_retention: RetentionPolicy;

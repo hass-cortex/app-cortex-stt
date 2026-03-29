@@ -38,7 +38,7 @@ async fn test_manager_lazy_load_and_transcribe() {
         max_loaded_models: 2,
         pool_size: 1,
         acquire_timeout: Duration::from_secs(5),
-        idle_timeout: Duration::from_secs(300),
+        idle_timeout: Some(Duration::from_secs(300)),
         idle_check_interval: Duration::from_secs(10),
     };
     let manager = EngineManager::new(config);
@@ -78,7 +78,7 @@ async fn test_manager_lru_eviction() {
         max_loaded_models: 2,
         pool_size: 1,
         acquire_timeout: Duration::from_secs(5),
-        idle_timeout: Duration::from_secs(300),
+        idle_timeout: Some(Duration::from_secs(300)),
         idle_check_interval: Duration::from_secs(10),
     };
     let manager = EngineManager::new(config);

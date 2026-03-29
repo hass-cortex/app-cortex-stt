@@ -36,7 +36,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
     let engine_manager = EngineManager::new(EngineManagerConfig {
         pool_size: 1,
         max_loaded_models: 2,
-        idle_timeout: Duration::from_secs(0),
+        idle_timeout: None,
         acquire_timeout: Duration::from_secs(300),
         idle_check_interval: Duration::from_secs(60),
     });

@@ -59,7 +59,7 @@ async fn create_test_state() -> Arc<AppState> {
         max_loaded_models: 2,
         pool_size: 1,
         acquire_timeout: Duration::from_secs(5),
-        idle_timeout: Duration::from_secs(300),
+        idle_timeout: Some(Duration::from_secs(300)),
         idle_check_interval: Duration::from_secs(10),
     };
     let engine_manager = EngineManager::new(config);

@@ -84,7 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineManagerConfig {
         pool_size: config.pool_size,
         max_loaded_models: config.max_loaded_models,
-        idle_timeout: Duration::from_secs(config.idle_timeout_secs),
+        idle_timeout: if config.idle_timeout_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(config.idle_timeout_secs))
+        },
         acquire_timeout: Duration::from_secs(config.pool_acquire_timeout_secs),
         idle_check_interval: Duration::from_secs(10),
     };

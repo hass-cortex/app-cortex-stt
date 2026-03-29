@@ -35,7 +35,8 @@ pub struct Settings {
     pub default_model: String,
     pub pool_size: usize,
     pub max_loaded_models: usize,
-    pub idle_timeout_secs: u64,
+    /// None = keep models loaded forever; Some(n) = unload after n seconds idle.
+    pub idle_timeout_secs: Option<u64>,
     pub transcription_timeout_secs: u64,
     pub save_audio: bool,
     pub audio_retention: RetentionPolicy,
@@ -55,7 +56,7 @@ impl Default for Settings {
             default_model: "whisper-small".into(),
             pool_size: 1,
             max_loaded_models: 3,
-            idle_timeout_secs: 300,
+            idle_timeout_secs: Some(300),
             transcription_timeout_secs: 120,
             save_audio: true,
             audio_retention: RetentionPolicy::Days(7),

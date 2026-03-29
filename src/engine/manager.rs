@@ -23,7 +23,8 @@ pub struct EngineManagerConfig {
     /// Timeout when acquiring an engine instance from the pool.
     pub acquire_timeout: Duration,
     /// Models idle longer than this are candidates for unloading.
-    pub idle_timeout: Duration,
+    /// None = keep models loaded forever; Some(d) = unload after idle duration.
+    pub idle_timeout: Option<Duration>,
     /// How often the idle watcher checks for stale models.
     pub idle_check_interval: Duration,
 }
@@ -34,7 +35,7 @@ impl Default for EngineManagerConfig {
             max_loaded_models: 2,
             pool_size: 1,
             acquire_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(300),
+            idle_timeout: Some(Duration::from_secs(300)),
             idle_check_interval: Duration::from_secs(10),
         }
     }
@@ -232,9 +233,13 @@ impl EngineManager {
     pub fn spawn_idle_watcher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let manager = Arc::downgrade(self);
         let interval = self.config.idle_check_interval;
-        let idle_timeout = self.config.idle_timeout;
+        let Some(idle_timeout) = self.config.idle_timeout else {
+            debug!("idle timeout is None, models will stay loaded forever");
+            return tokio::spawn(async {});
+        };
 
         tokio::spawn(async move {
+
             let mut ticker = tokio::time::interval(interval);
             loop {
                 ticker.tick().await;
