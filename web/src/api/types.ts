@@ -47,6 +47,7 @@ export type ModelStatus =
 	| "downloaded"
 	| "loading"
 	| "loaded"
+	| "custom"
 	| "error";
 export type EngineType = "Whisper" | "Parakeet" | "SenseVoice" | "GigaAM" | "Moonshine" | "Canary";
 

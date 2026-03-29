@@ -67,7 +67,7 @@ export function ModelCard({ model }: ModelCardProps) {
 
 			{/* Actions */}
 			<div className="flex items-center gap-2 mt-auto pt-3 border-t border-border">
-				{!isDownloaded && !isDownloading && (
+				{!isDownloaded && !isDownloading && model.status !== "custom" && (
 					<Button
 						size="sm"
 						icon={<Download size={14} />}
