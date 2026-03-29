@@ -19,17 +19,19 @@ Powered by [transcribe-rs](https://github.com/thewh1teagle/transcribe-rs), suppo
 
 | Model | Engine | Size | Languages | Notes |
 |-------|--------|------|-----------|-------|
-| whisper-tiny-int8 | Whisper | ~40MB | 99 | Lightest, runs on Raspberry Pi |
-| whisper-base-int8 | Whisper | ~75MB | 99 | Good balance for low-power devices |
-| whisper-small | Whisper | ~460MB | 99 | Recommended starting point |
-| whisper-medium | Whisper | ~1.5GB | 99 | GPU recommended |
-| whisper-large-v3-turbo | Whisper | ~1.5GB | 99 | Best accuracy, GPU recommended |
-| breeze-asr | Whisper | ~1.1GB | 99 | Optimized for zh-TW |
-| parakeet-v2-int8 | Parakeet | ~250MB | en | Fast English-only |
-| parakeet-v3-int8 | Parakeet | ~250MB | 17 | Fast multilingual |
-| sense-voice-small | SenseVoice | ~450MB | zh,en,ja,ko,yue | CJK languages |
-| gigaam-v2-rnnt | GigaAM | ~200MB | ru,en | Russian + English |
-| moonshine-base | Moonshine | ~250MB | en | Lightweight English |
+| whisper-tiny-int8 | Whisper | 42 MB | 18 | Smallest, fastest CPU inference |
+| whisper-small | Whisper | 466 MB | 18 | Good balance of accuracy and speed |
+| whisper-medium-q4 | Whisper | 492 MB | 18 | Q4_1 quantized, good accuracy/size tradeoff |
+| whisper-large-v3-turbo | Whisper | 1.6 GB | 18 | Distilled large-v3, best practical Whisper model |
+| whisper-large-v3-q5 | Whisper | 1.1 GB | 18 | ⚠️ Segfaults — see Known Limitations |
+| breeze-asr | Whisper | 1.1 GB | 18 | ⚠️ Segfaults — see Known Limitations |
+| parakeet-v2-int8 | Parakeet | 473 MB | en | NVIDIA, fast English-only, requires AVX |
+| parakeet-v3-int8 | Parakeet | 478 MB | 17 | NVIDIA, fast multilingual, requires AVX |
+| sense-voice-int8 | SenseVoice | 160 MB | zh,en,ja,ko,yue | FunAudioLLM, CJK + Cantonese, requires AVX |
+| gigaam-v3-int8 | GigaAM | 152 MB | ru,en | Sber, Russian + English, requires AVX |
+| moonshine-base | Moonshine | 58 MB | en | Lightweight English, requires AVX |
+| canary-180m-flash | Canary | 146 MB | en,de,es,fr | NVIDIA, small and fast, requires AVX |
+| canary-1b-v2 | Canary | 692 MB | en,de,es,fr | NVIDIA, high accuracy multilingual, requires AVX |
 
 Custom models (Whisper GGML `.bin` files and ONNX directories) can be added by placing them in the models directory.
 
@@ -148,6 +150,21 @@ Wyoming ASR integrates with Home Assistant via the [Wyoming protocol](https://ww
 **Settings > Devices & Services > Add Integration > Wyoming Protocol** and enter:
 - Host: `<wyoming-asr-ip>`
 - Port: `10300`
+
+## Known Limitations
+
+### whisper-large-v3-q5 and breeze-asr (Q5 Quantized Large Models)
+
+These two models use the full Whisper large architecture (32 text decoder layers) with Q5 quantization. They **segfault** during inference due to an upstream bug in [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (via `whisper-rs-sys` 0.15.0). This is not a memory issue or a CUDA issue — it reproduces on CPU with ample RAM.
+
+- **Affected models:** `whisper-large-v3-q5` (Q5_0), `breeze-asr` (Q5_K)
+- **Root cause:** whisper.cpp crashes on the 32-layer text decoder in full large models with Q5 quantization
+- **Workaround:** Use `whisper-large-v3-turbo` (distilled 4-layer model, works fine) or `whisper-medium-q4` (Q4_1, 24 layers)
+- **Status:** Waiting for upstream fix in whisper.cpp / whisper-rs
+
+### ONNX Models Require AVX
+
+All ONNX-based models (Parakeet, SenseVoice, GigaAM, Moonshine, Canary) require AVX instruction set support. Older CPUs without AVX cannot run these models.
 
 ## License
 
