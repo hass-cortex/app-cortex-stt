@@ -41,10 +41,12 @@ tempfile = "3"
 [features]
 default = []
 whisper = ["transcribe-rs", "transcribe-rs/whisper-cpp"]
+whisper-cuda = ["whisper", "transcribe-rs/whisper-cuda"]
 onnx = ["transcribe-rs", "transcribe-rs/onnx"]
-ort-cuda = ["transcribe-rs/ort-cuda"]
+ort-cuda = ["onnx", "transcribe-rs/ort-cuda"]
 vad-silero = ["transcribe-rs/vad-silero"]
 all-engines = ["whisper", "onnx", "vad-silero"]
+all-engines-cuda = ["whisper-cuda", "ort-cuda", "vad-silero"]
 
 [profile.release]
 opt-level = 3
