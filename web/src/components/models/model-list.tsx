@@ -69,7 +69,7 @@ export function ModelList() {
 			)
 				return false;
 			if (statusFilter === "loaded" && m.status !== "loaded") return false;
-			if (statusFilter === "not_downloaded" && m.status !== "not_downloaded") return false;
+			if (statusFilter === "not_downloaded" && m.status !== "not_downloaded" && m.status !== "available") return false;
 			if (statusFilter === "downloading" && m.status !== "downloading") return false;
 		}
 		return true;

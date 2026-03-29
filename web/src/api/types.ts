@@ -43,6 +43,7 @@ export interface Metrics {
 
 export type ModelStatus =
 	| "not_downloaded"
+	| "available"
 	| "downloading"
 	| "downloaded"
 	| "loading"
