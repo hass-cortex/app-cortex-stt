@@ -52,9 +52,10 @@ pub async fn register_downloaded_models(engine_manager: &EngineManager, model_di
 
 /// Create the appropriate engine factory for a given engine type and model path.
 /// Returns None if the engine type is not compiled in.
+#[allow(unused_variables)]
 fn create_factory(
     engine_type: &EngineType,
-    _model_path: std::path::PathBuf,
+    model_path: std::path::PathBuf,
 ) -> Option<crate::engine::manager::SharedEngineFactory> {
     match engine_type {
         #[cfg(feature = "whisper")]
