@@ -67,18 +67,10 @@ impl Default for Settings {
 }
 
 async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Settings>, ApiError> {
-    let db = state.db.clone();
-    let settings = tokio::task::spawn_blocking(move || db.load_settings())
-        .await
-        .map_err(|e| ApiError {
-            code: "INTERNAL_ERROR",
-            message: format!("task join error: {e}"),
-            model_id: None,
-        })?
-        .map_err(|e| {
-            let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
-            api_err
-        })?;
+    let settings = state.db.load_settings().await.map_err(|e| {
+        let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
+        api_err
+    })?;
     Ok(Json(settings))
 }
 
@@ -86,19 +78,10 @@ async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(settings): Json<Settings>,
 ) -> Result<Json<Settings>, ApiError> {
-    let db = state.db.clone();
-    let s = settings.clone();
-    tokio::task::spawn_blocking(move || db.save_settings(&s))
-        .await
-        .map_err(|e| ApiError {
-            code: "INTERNAL_ERROR",
-            message: format!("task join error: {e}"),
-            model_id: None,
-        })?
-        .map_err(|e| {
-            let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
-            api_err
-        })?;
+    state.db.save_settings(&settings).await.map_err(|e| {
+        let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
+        api_err
+    })?;
     Ok(Json(settings))
 }
 

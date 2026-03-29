@@ -34,34 +34,52 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>
         api_err
     };
 
-    let total = state.db.count_records(None).map_err(|e| map_err(&e))?;
+    let total = state
+        .db
+        .count_records(None)
+        .await
+        .map_err(|e| map_err(&e))?;
     let wyoming_count = state
         .db
         .count_records(Some(TranscriptionSource::Wyoming))
+        .await
         .map_err(|e| map_err(&e))?;
     let http_count = state
         .db
         .count_records(Some(TranscriptionSource::HttpApi))
+        .await
         .map_err(|e| map_err(&e))?;
     let today_transcriptions = state
         .db
         .count_records_today(None)
+        .await
         .map_err(|e| map_err(&e))?;
     let total_audio_duration_ms = state
         .db
         .total_audio_duration_ms()
+        .await
         .map_err(|e| map_err(&e))?;
     let today_audio_duration_ms = state
         .db
         .today_audio_duration_ms()
+        .await
         .map_err(|e| map_err(&e))?;
-    let avg_inference_ms = state.db.avg_inference_ms().map_err(|e| map_err(&e))?;
-    let error_count = state.db.count_errors(false).map_err(|e| map_err(&e))?;
-    let today_error_count = state.db.count_errors(true).map_err(|e| map_err(&e))?;
+    let avg_inference_ms = state.db.avg_inference_ms().await.map_err(|e| map_err(&e))?;
+    let error_count = state
+        .db
+        .count_errors(false)
+        .await
+        .map_err(|e| map_err(&e))?;
+    let today_error_count = state.db.count_errors(true).await.map_err(|e| map_err(&e))?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
     let total_models = state.model_manager.list_models().await.len();
-    let api_keys_count = state.db.list_api_keys().map_err(|e| map_err(&e))?.len();
+    let api_keys_count = state
+        .db
+        .list_api_keys()
+        .await
+        .map_err(|e| map_err(&e))?
+        .len();
 
     let uptime_secs = state.started_at.elapsed().as_secs();
 

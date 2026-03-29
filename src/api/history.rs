@@ -40,7 +40,7 @@ async fn list_history(
         offset: query.offset,
     };
 
-    let records = state.db.list_records(&filter).map_err(|e| {
+    let records = state.db.list_records(&filter).await.map_err(|e| {
         let (_, api_err) = (&e).into();
         api_err
     })?;
@@ -55,6 +55,7 @@ async fn get_history_record(
     state
         .db
         .get_record(&record_id)
+        .await
         .map_err(|e| {
             let (_, api_err) = (&e).into();
             api_err
@@ -74,6 +75,7 @@ async fn get_history_audio(
     let record = state
         .db
         .get_record(&record_id)
+        .await
         .map_err(|e| {
             let (_, api_err) = (&e).into();
             api_err
@@ -106,14 +108,14 @@ async fn delete_history_record(
     Path(record_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get record to find audio path for cleanup.
-    if let Ok(Some(record)) = state.db.get_record(&record_id) {
+    if let Ok(Some(record)) = state.db.get_record(&record_id).await {
         if let Some(audio_filename) = &record.audio_path {
             let audio_path = state.data_dir.join("audio").join(audio_filename);
             let _ = tokio::fs::remove_file(audio_path).await;
         }
     }
 
-    state.db.delete_record(&record_id).map_err(|e| {
+    state.db.delete_record(&record_id).await.map_err(|e| {
         let (_, api_err) = (&e).into();
         api_err
     })?;
@@ -136,6 +138,7 @@ async fn cleanup_history(
     let audio_filenames = state
         .db
         .get_audio_paths_older_than_days(days)
+        .await
         .map_err(|e| {
             let (_, api_err) = (&e).into();
             api_err
@@ -149,6 +152,7 @@ async fn cleanup_history(
     let deleted = state
         .db
         .cleanup_records_older_than_days(days)
+        .await
         .map_err(|e| {
             let (_, api_err) = (&e).into();
             api_err

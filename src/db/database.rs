@@ -1,48 +1,55 @@
 use std::path::Path;
-use std::sync::Mutex;
 
-use rusqlite::Connection;
+use tokio_rusqlite::Connection;
 
 use crate::error::AsrError;
 
-/// Thread-safe SQLite database wrapper.
+/// The concrete error type returned by `conn.call()` when closures use `rusqlite::Error`.
+pub(crate) type CallError = tokio_rusqlite::Error<rusqlite::Error>;
+
+/// Map a [`CallError`] to [`AsrError::DatabaseError`].
+pub(crate) fn map_db_err(e: CallError) -> AsrError {
+    AsrError::DatabaseError {
+        detail: e.to_string(),
+    }
+}
+
+/// Async SQLite database wrapper backed by a dedicated background thread.
 pub struct Database {
-    conn: Mutex<Connection>,
+    conn: Connection,
 }
 
 impl Database {
     /// Open a database at the given file path, creating it if needed.
-    pub fn open(path: &Path) -> Result<Self, AsrError> {
-        let conn = Connection::open(path).map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
-        let db = Self {
-            conn: Mutex::new(conn),
-        };
-        db.run_migrations()?;
+    pub async fn open(path: &Path) -> Result<Self, AsrError> {
+        let conn = Connection::open(path)
+            .await
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        let db = Self { conn };
+        db.run_migrations().await?;
         Ok(db)
     }
 
     /// Open an in-memory database (useful for tests).
-    pub fn open_in_memory() -> Result<Self, AsrError> {
-        let conn = Connection::open_in_memory().map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
-        let db = Self {
-            conn: Mutex::new(conn),
-        };
-        db.run_migrations()?;
+    pub async fn open_in_memory() -> Result<Self, AsrError> {
+        let conn = Connection::open_in_memory()
+            .await
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        let db = Self { conn };
+        db.run_migrations().await?;
         Ok(db)
     }
 
     /// Run all schema migrations.
-    fn run_migrations(&self) -> Result<(), AsrError> {
-        let conn = self.conn.lock().map_err(|e| AsrError::DatabaseError {
-            detail: format!("lock poisoned: {e}"),
-        })?;
-
-        conn.execute_batch(
-            "
+    async fn run_migrations(&self) -> Result<(), AsrError> {
+        self.conn
+            .call(|conn| {
+                conn.execute_batch(
+                    "
             CREATE TABLE IF NOT EXISTS records (
                 id TEXT PRIMARY KEY,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now')),
@@ -76,18 +83,17 @@ impl Database {
                 value TEXT NOT NULL
             );
             ",
-        )
-        .map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
 
         Ok(())
     }
 
-    /// Acquire the inner connection lock.
-    pub fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, AsrError> {
-        self.conn.lock().map_err(|e| AsrError::DatabaseError {
-            detail: format!("lock poisoned: {e}"),
-        })
+    /// Access the inner `tokio_rusqlite::Connection` for running queries.
+    pub fn connection(&self) -> &Connection {
+        &self.conn
     }
 }

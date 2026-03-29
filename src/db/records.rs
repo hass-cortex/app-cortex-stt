@@ -3,7 +3,7 @@ use std::str::FromStr;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use super::database::Database;
+use super::database::{Database, map_db_err};
 use crate::error::AsrError;
 
 /// Where the transcription request originated.
@@ -79,387 +79,390 @@ pub struct ListRecordsFilter {
 
 impl Database {
     /// Insert a new transcription record. Returns the generated UUID.
-    pub fn insert_record(&self, rec: &CreateRecord) -> Result<String, AsrError> {
+    pub async fn insert_record(&self, rec: &CreateRecord) -> Result<String, AsrError> {
         let id = uuid::Uuid::new_v4().to_string();
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                id,
-                rec.source.as_str(),
-                rec.language,
-                rec.model_id,
-                rec.audio_duration_ms,
-                rec.inference_ms,
-                rec.text,
-                rec.segments_json,
-                rec.audio_path,
-                rec.has_error as i32,
-                rec.error_message,
-            ],
-        )
-        .map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
+        let source = rec.source.as_str().to_string();
+        let language = rec.language.clone();
+        let model_id = rec.model_id.clone();
+        let audio_duration_ms = rec.audio_duration_ms;
+        let inference_ms = rec.inference_ms;
+        let text = rec.text.clone();
+        let segments_json = rec.segments_json.clone();
+        let audio_path = rec.audio_path.clone();
+        let has_error = rec.has_error as i32;
+        let error_message = rec.error_message.clone();
+        let id_clone = id.clone();
+
+        self.connection()
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        id_clone,
+                        source,
+                        language,
+                        model_id,
+                        audio_duration_ms,
+                        inference_ms,
+                        text,
+                        segments_json,
+                        audio_path,
+                        has_error,
+                        error_message,
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
         Ok(id)
     }
 
     /// Get a single record by id.
-    pub fn get_record(&self, id: &str) -> Result<Option<TranscriptionRecord>, AsrError> {
-        let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
-                 FROM records WHERE id = ?1",
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+    pub async fn get_record(&self, id: &str) -> Result<Option<TranscriptionRecord>, AsrError> {
+        let id_owned = id.to_string();
 
-        let mut rows =
-            stmt.query_map(params![id], row_to_record)
-                .map_err(|e| AsrError::DatabaseError {
-                    detail: e.to_string(),
-                })?;
+        self.connection()
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
+                     FROM records WHERE id = ?1",
+                )?;
 
-        match rows.next() {
-            Some(row) => Ok(Some(row.map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?)),
-            None => Ok(None),
-        }
+                let mut rows = stmt.query_map(params![id_owned], row_to_record)?;
+
+                match rows.next() {
+                    Some(row) => Ok(Some(row?)),
+                    None => Ok(None),
+                }
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Delete a record by id. Returns true if a row was deleted.
-    pub fn delete_record(&self, id: &str) -> Result<bool, AsrError> {
-        let conn = self.conn()?;
-        let deleted = conn
-            .execute("DELETE FROM records WHERE id = ?1", params![id])
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(deleted > 0)
+    pub async fn delete_record(&self, id: &str) -> Result<bool, AsrError> {
+        let id_owned = id.to_string();
+
+        self.connection()
+            .call(move |conn| {
+                let deleted =
+                    conn.execute("DELETE FROM records WHERE id = ?1", params![id_owned])?;
+                Ok(deleted > 0)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// List records with optional filters, ordered by timestamp descending.
-    pub fn list_records(
+    pub async fn list_records(
         &self,
         filter: &ListRecordsFilter,
     ) -> Result<Vec<TranscriptionRecord>, AsrError> {
-        let mut sql = String::from(
-            "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
-             FROM records WHERE 1=1",
-        );
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        let mut idx = 1;
+        // Clone all filter values into owned types for the move closure.
+        let source = filter.source;
+        let model_id = filter.model_id.clone();
+        let from = filter.from.clone();
+        let to = filter.to.clone();
+        let limit = filter.limit;
+        let offset = filter.offset;
 
-        if let Some(source) = &filter.source {
-            sql.push_str(&format!(" AND source = ?{idx}"));
-            param_values.push(Box::new(source.as_str().to_owned()));
-            idx += 1;
-        }
-        if let Some(model_id) = &filter.model_id {
-            sql.push_str(&format!(" AND model_id = ?{idx}"));
-            param_values.push(Box::new(model_id.clone()));
-            idx += 1;
-        }
-        if let Some(from) = &filter.from {
-            sql.push_str(&format!(" AND timestamp >= ?{idx}"));
-            param_values.push(Box::new(from.clone()));
-            idx += 1;
-        }
-        if let Some(to) = &filter.to {
-            sql.push_str(&format!(" AND timestamp <= ?{idx}"));
-            param_values.push(Box::new(to.clone()));
-            idx += 1;
-        }
+        self.connection()
+            .call(move |conn| {
+                let mut sql = String::from(
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
+                     FROM records WHERE 1=1",
+                );
+                let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+                let mut idx = 1;
 
-        sql.push_str(" ORDER BY timestamp DESC");
+                if let Some(source) = &source {
+                    sql.push_str(&format!(" AND source = ?{idx}"));
+                    param_values.push(Box::new(source.as_str().to_owned()));
+                    idx += 1;
+                }
+                if let Some(model_id) = &model_id {
+                    sql.push_str(&format!(" AND model_id = ?{idx}"));
+                    param_values.push(Box::new(model_id.clone()));
+                    idx += 1;
+                }
+                if let Some(from) = &from {
+                    sql.push_str(&format!(" AND timestamp >= ?{idx}"));
+                    param_values.push(Box::new(from.clone()));
+                    idx += 1;
+                }
+                if let Some(to) = &to {
+                    sql.push_str(&format!(" AND timestamp <= ?{idx}"));
+                    param_values.push(Box::new(to.clone()));
+                    idx += 1;
+                }
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT ?{idx}"));
-            param_values.push(Box::new(limit));
-            idx += 1;
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET ?{idx}"));
-            param_values.push(Box::new(offset));
-        }
+                sql.push_str(" ORDER BY timestamp DESC");
 
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(&sql).map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
+                if let Some(limit) = limit {
+                    sql.push_str(&format!(" LIMIT ?{idx}"));
+                    param_values.push(Box::new(limit));
+                    idx += 1;
+                }
+                if let Some(offset) = offset {
+                    sql.push_str(&format!(" OFFSET ?{idx}"));
+                    param_values.push(Box::new(offset));
+                }
 
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|b| b.as_ref()).collect();
+                let mut stmt = conn.prepare(&sql)?;
 
-        let rows = stmt
-            .query_map(params_ref.as_slice(), row_to_record)
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+                let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+                    param_values.iter().map(|b| b.as_ref()).collect();
 
-        let mut records = Vec::new();
-        for row in rows {
-            records.push(row.map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?);
-        }
-        Ok(records)
+                let rows = stmt.query_map(params_ref.as_slice(), row_to_record)?;
+
+                let mut records = Vec::new();
+                for row in rows {
+                    records.push(row?);
+                }
+                Ok(records)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Delete records older than the given number of days. Returns the count deleted.
-    pub fn cleanup_records_older_than_days(&self, days: i64) -> Result<usize, AsrError> {
-        let conn = self.conn()?;
-        let deleted = conn
-            .execute(
-                "DELETE FROM records WHERE timestamp < datetime('now', ?1)",
-                params![format!("-{days} days")],
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(deleted)
+    pub async fn cleanup_records_older_than_days(&self, days: i64) -> Result<usize, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let deleted = conn.execute(
+                    "DELETE FROM records WHERE timestamp < datetime('now', ?1)",
+                    params![format!("-{days} days")],
+                )?;
+                Ok(deleted)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Get audio file paths for records older than the given number of days.
-    pub fn get_audio_paths_older_than_days(&self, days: i64) -> Result<Vec<String>, AsrError> {
-        let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT audio_path FROM records
-                 WHERE audio_path IS NOT NULL AND timestamp < datetime('now', ?1)",
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+    pub async fn get_audio_paths_older_than_days(
+        &self,
+        days: i64,
+    ) -> Result<Vec<String>, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT audio_path FROM records
+                     WHERE audio_path IS NOT NULL AND timestamp < datetime('now', ?1)",
+                )?;
 
-        let rows = stmt
-            .query_map(params![format!("-{days} days")], |row| row.get(0))
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+                let rows = stmt.query_map(params![format!("-{days} days")], |row| row.get(0))?;
 
-        let mut paths = Vec::new();
-        for row in rows {
-            paths.push(row.map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?);
-        }
-        Ok(paths)
+                let mut paths = Vec::new();
+                for row in rows {
+                    paths.push(row?);
+                }
+                Ok(paths)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Count records from today, optionally filtered by source.
-    pub fn count_records_today(
+    pub async fn count_records_today(
         &self,
         source: Option<TranscriptionSource>,
     ) -> Result<usize, AsrError> {
-        let conn = self.conn()?;
-        let count: i64 = if let Some(src) = source {
-            conn.query_row(
-                "SELECT COUNT(*) FROM records WHERE source = ?1 AND timestamp >= datetime('now', 'start of day')",
-                params![src.as_str()],
-                |row| row.get(0),
-            )
-        } else {
-            conn.query_row(
-                "SELECT COUNT(*) FROM records WHERE timestamp >= datetime('now', 'start of day')",
-                [],
-                |row| row.get(0),
-            )
-        }
-        .map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
-        Ok(count as usize)
+        self.connection()
+            .call(move |conn| {
+                let count: i64 = if let Some(src) = source {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM records WHERE source = ?1 AND timestamp >= datetime('now', 'start of day')",
+                        params![src.as_str()],
+                        |row| row.get(0),
+                    )
+                } else {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                        [],
+                        |row| row.get(0),
+                    )
+                }?;
+                Ok(count as usize)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Sum `audio_duration_ms` for all records.
-    pub fn total_audio_duration_ms(&self) -> Result<i64, AsrError> {
-        let conn = self.conn()?;
-        let total: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(total)
+    pub async fn total_audio_duration_ms(&self) -> Result<i64, AsrError> {
+        self.connection()
+            .call(|conn| {
+                let total: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok(total)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Sum `audio_duration_ms` for today's records.
-    pub fn today_audio_duration_ms(&self) -> Result<i64, AsrError> {
-        let conn = self.conn()?;
-        let total: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE timestamp >= datetime('now', 'start of day')",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(total)
+    pub async fn today_audio_duration_ms(&self) -> Result<i64, AsrError> {
+        self.connection()
+            .call(|conn| {
+                let total: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok(total)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Average `inference_ms` across all records.
-    pub fn avg_inference_ms(&self) -> Result<f64, AsrError> {
-        let conn = self.conn()?;
-        let avg: f64 = conn
-            .query_row(
-                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(avg)
+    pub async fn avg_inference_ms(&self) -> Result<f64, AsrError> {
+        self.connection()
+            .call(|conn| {
+                let avg: f64 = conn.query_row(
+                    "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok(avg)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Count records with `has_error = 1`. If `today_only` is true, restrict to today.
-    pub fn count_errors(&self, today_only: bool) -> Result<usize, AsrError> {
-        let conn = self.conn()?;
-        let count: i64 = if today_only {
-            conn.query_row(
-                "SELECT COUNT(*) FROM records WHERE has_error = 1 AND timestamp >= datetime('now', 'start of day')",
-                [],
-                |row| row.get(0),
-            )
-        } else {
-            conn.query_row(
-                "SELECT COUNT(*) FROM records WHERE has_error = 1",
-                [],
-                |row| row.get(0),
-            )
-        }
-        .map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
-        Ok(count as usize)
+    pub async fn count_errors(&self, today_only: bool) -> Result<usize, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let count: i64 = if today_only {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM records WHERE has_error = 1 AND timestamp >= datetime('now', 'start of day')",
+                        [],
+                        |row| row.get(0),
+                    )
+                } else {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM records WHERE has_error = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                }?;
+                Ok(count as usize)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Count total records, optionally filtered by source.
-    pub fn count_records(&self, source: Option<TranscriptionSource>) -> Result<usize, AsrError> {
-        let conn = self.conn()?;
-        let count: i64 = if let Some(src) = source {
-            conn.query_row(
-                "SELECT COUNT(*) FROM records WHERE source = ?1",
-                params![src.as_str()],
-                |row| row.get(0),
-            )
-        } else {
-            conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
-        }
-        .map_err(|e| AsrError::DatabaseError {
-            detail: e.to_string(),
-        })?;
-        Ok(count as usize)
+    pub async fn count_records(
+        &self,
+        source: Option<TranscriptionSource>,
+    ) -> Result<usize, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let count: i64 = if let Some(src) = source {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM records WHERE source = ?1",
+                        params![src.as_str()],
+                        |row| row.get(0),
+                    )
+                } else {
+                    conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+                }?;
+                Ok(count as usize)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Delete the oldest records to keep at most `max_count` records.
     /// Returns the number of records deleted.
-    pub fn cleanup_records_by_count(&self, max_count: usize) -> Result<usize, AsrError> {
-        let conn = self.conn()?;
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+    pub async fn cleanup_records_by_count(&self, max_count: usize) -> Result<usize, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let total: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
 
-        let excess = total - max_count as i64;
-        if excess <= 0 {
-            return Ok(0);
-        }
+                let excess = total - max_count as i64;
+                if excess <= 0 {
+                    return Ok(0);
+                }
 
-        let deleted = conn
-            .execute(
-                "DELETE FROM records WHERE id IN (SELECT id FROM records ORDER BY timestamp ASC LIMIT ?1)",
-                params![excess],
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-        Ok(deleted)
+                let deleted = conn.execute(
+                    "DELETE FROM records WHERE id IN (SELECT id FROM records ORDER BY timestamp ASC LIMIT ?1)",
+                    params![excess],
+                )?;
+                Ok(deleted)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Get audio file paths for the oldest records, ordered by timestamp ASC,
     /// keeping at most `max_count` records. Returns paths of records that
     /// would be deleted.
-    pub fn get_audio_paths_exceeding_count(
+    pub async fn get_audio_paths_exceeding_count(
         &self,
         max_count: usize,
     ) -> Result<Vec<String>, AsrError> {
-        let conn = self.conn()?;
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+        self.connection()
+            .call(move |conn| {
+                let total: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
 
-        let excess = total - max_count as i64;
-        if excess <= 0 {
-            return Ok(Vec::new());
-        }
+                let excess = total - max_count as i64;
+                if excess <= 0 {
+                    return Ok(Vec::new());
+                }
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT audio_path FROM records
-                 WHERE audio_path IS NOT NULL
-                 ORDER BY timestamp ASC LIMIT ?1",
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+                let mut stmt = conn.prepare(
+                    "SELECT audio_path FROM records
+                     WHERE audio_path IS NOT NULL
+                     ORDER BY timestamp ASC LIMIT ?1",
+                )?;
 
-        let rows = stmt
-            .query_map(params![excess], |row| row.get::<_, String>(0))
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+                let rows = stmt.query_map(params![excess], |row| row.get::<_, String>(0))?;
 
-        let mut paths = Vec::new();
-        for row in rows {
-            paths.push(row.map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?);
-        }
-        Ok(paths)
+                let mut paths = Vec::new();
+                for row in rows {
+                    paths.push(row?);
+                }
+                Ok(paths)
+            })
+            .await
+            .map_err(map_db_err)
     }
 
     /// Get audio file paths ordered by timestamp ASC (oldest first).
     /// Used by disk-limit cleanup to iterate and delete until under limit.
-    pub fn get_audio_paths_oldest_first(&self) -> Result<Vec<(String, String)>, AsrError> {
-        let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, audio_path FROM records
-                 WHERE audio_path IS NOT NULL
-                 ORDER BY timestamp ASC",
-            )
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
+    pub async fn get_audio_paths_oldest_first(&self) -> Result<Vec<(String, String)>, AsrError> {
+        self.connection()
+            .call(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, audio_path FROM records
+                     WHERE audio_path IS NOT NULL
+                     ORDER BY timestamp ASC",
+                )?;
 
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+
+                let mut result = Vec::new();
+                for row in rows {
+                    result.push(row?);
+                }
+                Ok(result)
             })
-            .map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?;
-
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(row.map_err(|e| AsrError::DatabaseError {
-                detail: e.to_string(),
-            })?);
-        }
-        Ok(result)
+            .await
+            .map_err(map_db_err)
     }
 }
 

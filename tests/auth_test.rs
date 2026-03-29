@@ -24,7 +24,7 @@ fn test_app(db: Arc<Database>) -> Router {
 
 #[tokio::test]
 async fn test_auth_rejects_without_token() {
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let app = test_app(db);
 
     let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
@@ -41,8 +41,8 @@ async fn test_auth_rejects_without_token() {
 
 #[tokio::test]
 async fn test_auth_accepts_valid_bearer_token() {
-    let db = Arc::new(Database::open_in_memory().unwrap());
-    let (_record, raw_key) = db.create_api_key("test-key").unwrap();
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
+    let (_record, raw_key) = db.create_api_key("test-key").await.unwrap();
     let app = test_app(Arc::clone(&db));
 
     let req = Request::builder()
@@ -57,7 +57,7 @@ async fn test_auth_accepts_valid_bearer_token() {
 
 #[tokio::test]
 async fn test_auth_rejects_invalid_bearer_token() {
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let app = test_app(db);
 
     let req = Request::builder()

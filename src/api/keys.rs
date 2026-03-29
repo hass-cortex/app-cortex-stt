@@ -35,7 +35,7 @@ struct CreateKeyRequest {
 async fn list_keys(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ApiKeyListItem>>, ApiError> {
-    let keys = state.db.list_api_keys().map_err(|e| {
+    let keys = state.db.list_api_keys().await.map_err(|e| {
         let (_, api_err) = (&e).into();
         api_err
     })?;
@@ -58,7 +58,7 @@ async fn create_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<ApiKeyCreated>), ApiError> {
-    let (record, raw_key) = state.db.create_api_key(&req.name).map_err(|e| {
+    let (record, raw_key) = state.db.create_api_key(&req.name).await.map_err(|e| {
         let (_, api_err) = (&e).into();
         api_err
     })?;
@@ -79,7 +79,7 @@ async fn delete_key(
     State(state): State<Arc<AppState>>,
     Path(key_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state.db.delete_api_key(&key_id).map_err(|e| {
+    state.db.delete_api_key(&key_id).await.map_err(|e| {
         let (_, api_err) = (&e).into();
         api_err
     })?;

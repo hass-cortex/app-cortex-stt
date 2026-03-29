@@ -69,7 +69,7 @@ async fn create_test_state() -> Arc<AppState> {
 
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
 
     Arc::new(AppState {
         engine_manager,

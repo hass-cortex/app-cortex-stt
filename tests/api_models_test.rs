@@ -12,9 +12,9 @@ use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt_server::model::manager::ModelManager;
 use cortex_stt_server::state::{AppState, JobStore};
 
-fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
+async fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let model_manager = ModelManager::new(model_dir.to_path_buf());
 
     Arc::new(AppState {
@@ -39,7 +39,7 @@ fn test_app(state: Arc<AppState>) -> Router {
 #[tokio::test]
 async fn test_list_models_returns_registry() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path());
+    let state = create_test_state(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()
@@ -72,7 +72,7 @@ async fn test_list_models_returns_registry() {
 #[tokio::test]
 async fn test_delete_model_not_downloaded() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path());
+    let state = create_test_state(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()
@@ -90,7 +90,7 @@ async fn test_delete_model_not_downloaded() {
 #[tokio::test]
 async fn test_engine_status() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path());
+    let state = create_test_state(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()

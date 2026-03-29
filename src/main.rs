@@ -53,11 +53,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Open SQLite database.
     let db_path = config.data_dir.join("records.db");
-    let db = Arc::new(Database::open(&db_path)?);
+    let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
 
     // Resolve default model: DB override takes precedence over CLI/env config.
-    let default_model = match db.get_default_model() {
+    let default_model = match db.get_default_model().await {
         Ok(Some(persisted)) => {
             tracing::info!(model = %persisted, "Using persisted default model");
             persisted
@@ -71,8 +71,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Ensure pre-configured API key exists.
     if let Some(ref api_key) = config.api_key {
-        if db.verify_api_key(api_key)?.is_none() {
-            db.ensure_api_key("admin", api_key)?;
+        if db.verify_api_key(api_key).await?.is_none() {
+            db.ensure_api_key("admin", api_key).await?;
             tracing::info!("Pre-configured API key registered");
         }
     }

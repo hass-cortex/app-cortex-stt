@@ -25,7 +25,8 @@ uuid = { version = "1", features = ["v4"] }
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tower = "0.5"
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+tokio-rusqlite = "0.7"
 rubato = "0.16"
 sha2 = "0.10"
 hex = "0.4"

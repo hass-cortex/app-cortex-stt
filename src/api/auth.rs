@@ -8,47 +8,37 @@ use crate::db::database::Database;
 
 use super::error::ApiError;
 
+/// Verify an API key against the database.
+async fn verify_key(db: &Database, token: &str) -> bool {
+    tracing::debug!("verify_key: about to call db.verify_api_key");
+    let result = db.verify_api_key(token).await;
+    tracing::debug!("verify_key: db call returned");
+    result.ok().flatten().is_some()
+}
+
 /// Authentication middleware for the HTTP API.
-///
-/// Logic:
-/// 1. If this is the bootstrap request (POST /api/keys with no keys in DB),
-///    allow it through.
-/// 2. If an `Authorization: Bearer <token>` header is present, verify the token
-///    against the database.
-/// 3. Otherwise, reject with 401.
 pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Response {
     // 1. Bootstrap: allow POST /api/keys when no keys exist yet
     if req.method() == axum::http::Method::POST && req.uri().path() == "/api/keys" {
-        let db_check = Arc::clone(&db);
-        let has_keys = tokio::task::spawn_blocking(move || {
-            db_check
-                .list_api_keys()
-                .map(|keys| !keys.is_empty())
-                .unwrap_or(true)
-        })
-        .await
-        .unwrap_or(true);
+        let has_keys = db
+            .list_api_keys()
+            .await
+            .map(|keys| !keys.is_empty())
+            .unwrap_or(true);
 
         if !has_keys {
             return next.run(req).await;
         }
     }
 
-    // 2. Query param authentication (for audio playback URLs where headers can't be set)
+    // 2. Query param authentication (for audio/SSE URLs where headers can't be set)
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(token) = pair.strip_prefix("api_key=") {
-                let token = token.to_string();
+                if !token.is_empty() && verify_key(&db, token).await {
+                    return next.run(req).await;
+                }
                 if !token.is_empty() {
-                    let db = Arc::clone(&db);
-                    let result = tokio::task::spawn_blocking(move || db.verify_api_key(&token))
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok())
-                        .flatten();
-                    if result.is_some() {
-                        return next.run(req).await;
-                    }
                     return ApiError::invalid_api_key().into_response();
                 }
             }
@@ -61,26 +51,15 @@ pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Res
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 let token = token.trim();
                 if !token.is_empty() {
-                    // verify_api_key is synchronous (Mutex-based SQLite), so
-                    // spawn on blocking pool to avoid starving the async runtime.
-                    let db = Arc::clone(&db);
-                    let token = token.to_string();
-                    let result = tokio::task::spawn_blocking(move || db.verify_api_key(&token))
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok())
-                        .flatten();
-
-                    if result.is_some() {
+                    if verify_key(&db, token).await {
                         return next.run(req).await;
                     }
-                    // Token was provided but invalid
                     return ApiError::invalid_api_key().into_response();
                 }
             }
         }
     }
 
-    // 3. No valid credentials
+    // 4. No valid credentials
     ApiError::auth_required().into_response()
 }

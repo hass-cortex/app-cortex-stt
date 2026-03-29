@@ -41,9 +41,9 @@ fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + S
     Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
 }
 
-fn create_test_state() -> Arc<AppState> {
+async fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
 
@@ -68,7 +68,7 @@ fn test_app(state: Arc<AppState>) -> Router {
 
 #[tokio::test]
 async fn test_health_check_starting_when_default_model_not_registered() {
-    let state = create_test_state();
+    let state = create_test_state().await;
     let app = test_app(state);
 
     let req = Request::builder()
@@ -91,7 +91,7 @@ async fn test_health_check_starting_when_default_model_not_registered() {
 
 #[tokio::test]
 async fn test_health_check_ok_when_default_model_registered() {
-    let state = create_test_state();
+    let state = create_test_state().await;
 
     // Register the default model so health reports "ok".
     state
@@ -121,7 +121,7 @@ async fn test_health_check_ok_when_default_model_registered() {
 
 #[tokio::test]
 async fn test_system_info_returns_hardware() {
-    let state = create_test_state();
+    let state = create_test_state().await;
     let app = test_app(state);
 
     let req = Request::builder()

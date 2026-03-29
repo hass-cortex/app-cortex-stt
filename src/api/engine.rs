@@ -62,10 +62,14 @@ async fn set_default_model(
     }
 
     // Persist to database.
-    state.db.set_default_model(&body.model_id).map_err(|e| {
-        let (status, api_err) = (&e).into();
-        (status, axum::Json(api_err))
-    })?;
+    state
+        .db
+        .set_default_model(&body.model_id)
+        .await
+        .map_err(|e| {
+            let (status, api_err) = (&e).into();
+            (status, axum::Json(api_err))
+        })?;
 
     Ok((
         StatusCode::OK,

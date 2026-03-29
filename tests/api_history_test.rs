@@ -12,9 +12,9 @@ use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt_server::model::manager::ModelManager;
 use cortex_stt_server::state::{AppState, JobStore};
 
-fn create_test_state() -> Arc<AppState> {
+async fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
 
@@ -34,10 +34,11 @@ fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(history_routes()).with_state(state)
 }
 
-fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
-    (0..count)
-        .map(|i| {
-            db.insert_record(&CreateRecord {
+async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
+    let mut ids = Vec::new();
+    for i in 0..count {
+        let id = db
+            .insert_record(&CreateRecord {
                 source: TranscriptionSource::HttpApi,
                 language: Some("en".into()),
                 model_id: "whisper-small".into(),
@@ -49,15 +50,17 @@ fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
                 has_error: false,
                 error_message: None,
             })
-            .unwrap()
-        })
-        .collect()
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    ids
 }
 
 #[tokio::test]
 async fn test_list_history() {
-    let state = create_test_state();
-    insert_test_records(&state.db, 5);
+    let state = create_test_state().await;
+    insert_test_records(&state.db, 5).await;
     let app = test_app(state);
 
     let resp = app
@@ -82,8 +85,8 @@ async fn test_list_history() {
 
 #[tokio::test]
 async fn test_list_history_default_limit() {
-    let state = create_test_state();
-    insert_test_records(&state.db, 3);
+    let state = create_test_state().await;
+    insert_test_records(&state.db, 3).await;
     let app = test_app(state);
 
     let resp = app
@@ -108,8 +111,8 @@ async fn test_list_history_default_limit() {
 
 #[tokio::test]
 async fn test_get_single_history_record() {
-    let state = create_test_state();
-    let ids = insert_test_records(&state.db, 1);
+    let state = create_test_state().await;
+    let ids = insert_test_records(&state.db, 1).await;
     let app = test_app(state);
 
     let resp = app
@@ -135,8 +138,8 @@ async fn test_get_single_history_record() {
 
 #[tokio::test]
 async fn test_delete_history_record() {
-    let state = create_test_state();
-    let ids = insert_test_records(&state.db, 1);
+    let state = create_test_state().await;
+    let ids = insert_test_records(&state.db, 1).await;
     let app = test_app(state.clone());
 
     let resp = app
@@ -153,13 +156,13 @@ async fn test_delete_history_record() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Verify the record is gone.
-    let record = state.db.get_record(&ids[0]).unwrap();
+    let record = state.db.get_record(&ids[0]).await.unwrap();
     assert!(record.is_none());
 }
 
 #[tokio::test]
 async fn test_get_nonexistent_record_returns_404() {
-    let state = create_test_state();
+    let state = create_test_state().await;
     let app = test_app(state);
 
     let resp = app
@@ -177,10 +180,10 @@ async fn test_get_nonexistent_record_returns_404() {
 
 #[tokio::test]
 async fn test_list_history_with_source_filter() {
-    let state = create_test_state();
+    let state = create_test_state().await;
 
     // Insert HTTP API records.
-    insert_test_records(&state.db, 3);
+    insert_test_records(&state.db, 3).await;
 
     // Insert a Wyoming record.
     state
@@ -197,6 +200,7 @@ async fn test_list_history_with_source_filter() {
             has_error: false,
             error_message: None,
         })
+        .await
         .unwrap();
 
     let app = test_app(state);

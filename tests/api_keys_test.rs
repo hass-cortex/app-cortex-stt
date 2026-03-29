@@ -11,9 +11,9 @@ use cortex_stt_server::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt_server::model::manager::ModelManager;
 use cortex_stt_server::state::{AppState, JobStore};
 
-fn create_test_state() -> Arc<AppState> {
+async fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
 
@@ -35,7 +35,7 @@ fn test_app(state: Arc<AppState>) -> Router {
 
 #[tokio::test]
 async fn test_create_api_key() {
-    let state = create_test_state();
+    let state = create_test_state().await;
     let app = test_app(state);
 
     let resp = app
@@ -63,10 +63,10 @@ async fn test_create_api_key() {
 
 #[tokio::test]
 async fn test_list_api_keys() {
-    let state = create_test_state();
+    let state = create_test_state().await;
 
     // Create a key directly via the DB.
-    state.db.create_api_key("key-1").unwrap();
+    state.db.create_api_key("key-1").await.unwrap();
 
     let app = test_app(state);
 
@@ -93,9 +93,9 @@ async fn test_list_api_keys() {
 
 #[tokio::test]
 async fn test_delete_api_key() {
-    let state = create_test_state();
+    let state = create_test_state().await;
 
-    let (record, _) = state.db.create_api_key("to-delete").unwrap();
+    let (record, _) = state.db.create_api_key("to-delete").await.unwrap();
 
     let app = test_app(state);
 
@@ -115,14 +115,14 @@ async fn test_delete_api_key() {
 
 #[tokio::test]
 async fn test_create_key_returns_unique_keys() {
-    let state = create_test_state();
+    let state = create_test_state().await;
 
     // Create two keys and verify they are distinct.
-    let (_, key1) = state.db.create_api_key("k1").unwrap();
-    let (_, key2) = state.db.create_api_key("k2").unwrap();
+    let (_, key1) = state.db.create_api_key("k1").await.unwrap();
+    let (_, key2) = state.db.create_api_key("k2").await.unwrap();
 
     assert_ne!(key1, key2);
 
-    let keys = state.db.list_api_keys().unwrap();
+    let keys = state.db.list_api_keys().await.unwrap();
     assert_eq!(keys.len(), 2);
 }

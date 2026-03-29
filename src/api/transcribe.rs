@@ -136,6 +136,7 @@ async fn save_to_history(
     let save_audio = state
         .db
         .load_settings()
+        .await
         .map(|s| s.save_audio)
         .unwrap_or(true);
 
@@ -168,7 +169,7 @@ async fn save_to_history(
         error_message: None,
     };
 
-    if let Err(e) = state.db.insert_record(&record) {
+    if let Err(e) = state.db.insert_record(&record).await {
         tracing::warn!(error = %e, "Failed to insert transcription record");
     }
 }

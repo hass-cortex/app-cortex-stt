@@ -46,7 +46,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
     eprintln!("Registered {registered} models from {}", mdir.display());
 
     let model_manager = ModelManager::new(mdir);
-    let db = Arc::new(Database::open_in_memory().unwrap());
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
 
     let state = Arc::new(AppState {
         engine_manager,
