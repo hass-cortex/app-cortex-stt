@@ -117,7 +117,9 @@ export function subscribeSSE(
 	onMessage: (data: unknown) => void,
 	onError?: (error: Event) => void,
 ): () => void {
-	const url = `${getBaseUrl()}${path}`;
+	const base = `${getBaseUrl()}${path}`;
+	const key = getApiKey();
+	const url = key ? `${base}${base.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}` : base;
 	const eventSource = new EventSource(url);
 
 	eventSource.onmessage = (event) => {
