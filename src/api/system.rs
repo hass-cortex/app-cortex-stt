@@ -16,8 +16,16 @@ struct SystemInfoResponse {
     has_avx: bool,
     has_avx2: bool,
     cuda_available: bool,
+    /// Which engine backends have GPU acceleration compiled in.
+    gpu_engines: GpuEngines,
     os: &'static str,
     arch: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct GpuEngines {
+    whisper: bool,
+    onnx: bool,
 }
 
 /// Parse a field from /proc/meminfo and return its value in kB.
@@ -87,6 +95,10 @@ async fn get_system_info(State(_state): State<Arc<AppState>>) -> axum::Json<Syst
         has_avx: hw.has_avx,
         has_avx2: cfg!(target_feature = "avx2"),
         cuda_available: hw.cuda_available,
+        gpu_engines: GpuEngines {
+            whisper: cfg!(feature = "whisper-cuda"),
+            onnx: cfg!(feature = "ort-cuda"),
+        },
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
     })

@@ -51,15 +51,23 @@ export function HardwareCard() {
 
 				<div className="flex flex-wrap gap-1.5 pt-1">
 					<Badge variant={data.has_avx ? "success" : "default"}>
-						AVX {data.has_avx ? "Yes" : "No"}
+						AVX {data.has_avx ? "✓" : "✗"}
 					</Badge>
 					<Badge variant={data.has_avx2 ? "success" : "default"}>
-						AVX2 {data.has_avx2 ? "Yes" : "No"}
+						AVX2 {data.has_avx2 ? "✓" : "✗"}
 					</Badge>
 					<Badge variant={data.cuda_available ? "success" : "default"}>
-						CUDA {data.cuda_available ? "Yes" : "No"}
+						CUDA {data.cuda_available ? "✓" : "✗"}
 					</Badge>
 				</div>
+				{data.cuda_available && data.gpu_engines && (
+					<div className="text-xs text-text-muted pt-1">
+						GPU: {[
+							data.gpu_engines.whisper && "Whisper",
+							data.gpu_engines.onnx && "ONNX",
+						].filter(Boolean).join(", ")} engines
+					</div>
+				)}
 			</div>
 		</Card>
 	);

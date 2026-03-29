@@ -38,7 +38,8 @@ export function ModelCard({ model }: ModelCardProps) {
 			<div className="flex flex-wrap gap-1.5 mb-3">
 				<Badge>{model.engine_type}</Badge>
 				<Badge>{formatMB(model.size_mb)}</Badge>
-				{model.requires_cuda && <Badge variant="warning">CUDA</Badge>}
+				{model.uses_gpu && <Badge variant="accent">GPU</Badge>}
+				{!model.uses_gpu && <Badge variant="default">CPU</Badge>}
 				{model.requires_avx && <Badge variant="warning">AVX</Badge>}
 				{isLoaded && <Badge variant="success">Loaded</Badge>}
 				{model.status === "error" && <Badge variant="error">Error</Badge>}

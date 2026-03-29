@@ -6,6 +6,11 @@ export interface HealthResponse {
 	loaded_models: number;
 }
 
+export interface GpuEngines {
+	whisper: boolean;
+	onnx: boolean;
+}
+
 export interface SystemInfo {
 	cpu_count: number;
 	total_memory_mb: number;
@@ -13,6 +18,7 @@ export interface SystemInfo {
 	has_avx: boolean;
 	has_avx2: boolean;
 	cuda_available: boolean;
+	gpu_engines: GpuEngines;
 	os: string;
 	arch: string;
 }
@@ -58,6 +64,7 @@ export interface ModelInfo {
 	requires_cuda: boolean;
 	requires_avx: boolean;
 	is_recommended: boolean;
+	uses_gpu: boolean;
 	status: ModelStatus;
 	disk_usage_bytes: number | null;
 	is_loaded: boolean;

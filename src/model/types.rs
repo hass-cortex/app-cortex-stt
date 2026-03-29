@@ -42,6 +42,8 @@ pub struct ModelInfo {
     pub is_loaded: bool,
     /// Whether the model is recommended for the current hardware.
     pub is_recommended: bool,
+    /// Whether this model will use GPU acceleration (based on compile-time feature flags).
+    pub uses_gpu: bool,
 }
 
 impl ModelInfo {
@@ -68,6 +70,10 @@ impl ModelInfo {
             disk_usage_bytes,
             is_loaded: false,
             is_recommended: false,
+            uses_gpu: match def.engine_type {
+                EngineType::Whisper => cfg!(feature = "whisper-cuda"),
+                _ => cfg!(feature = "ort-cuda"),
+            },
         }
     }
 

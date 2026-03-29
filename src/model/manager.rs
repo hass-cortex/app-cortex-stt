@@ -169,6 +169,7 @@ impl ModelManager {
                     disk_usage_bytes: disk_bytes,
                     is_loaded: false,
                     is_recommended: false,
+                    uses_gpu: cfg!(feature = "whisper-cuda"),
                 });
             } else if path.is_dir() && path.join("model.onnx").exists() {
                 // ONNX-based custom model directory.
@@ -191,6 +192,7 @@ impl ModelManager {
                     disk_usage_bytes: disk_bytes,
                     is_loaded: false,
                     is_recommended: false,
+                    uses_gpu: cfg!(feature = "ort-cuda"),
                 });
             }
         }
