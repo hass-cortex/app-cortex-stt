@@ -19,38 +19,51 @@ pub struct Metrics {
     pub loaded_models: usize,
     pub total_models: usize,
     pub api_keys_count: usize,
+    pub today_transcriptions: usize,
+    pub total_audio_duration_ms: i64,
+    pub today_audio_duration_ms: i64,
+    pub avg_inference_ms: f64,
+    pub error_count: usize,
+    pub today_error_count: usize,
+    pub uptime_secs: u64,
 }
 
 async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>, ApiError> {
-    let total = state.db.count_records(None).map_err(|e| {
-        let (_, api_err) = (&e).into();
+    let map_err = |e: &crate::error::AsrError| -> ApiError {
+        let (_, api_err) = e.into();
         api_err
-    })?;
+    };
+
+    let total = state.db.count_records(None).map_err(|e| map_err(&e))?;
     let wyoming_count = state
         .db
         .count_records(Some(TranscriptionSource::Wyoming))
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?;
+        .map_err(|e| map_err(&e))?;
     let http_count = state
         .db
         .count_records(Some(TranscriptionSource::HttpApi))
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?;
+        .map_err(|e| map_err(&e))?;
+    let today_transcriptions = state
+        .db
+        .count_records_today(None)
+        .map_err(|e| map_err(&e))?;
+    let total_audio_duration_ms = state
+        .db
+        .total_audio_duration_ms()
+        .map_err(|e| map_err(&e))?;
+    let today_audio_duration_ms = state
+        .db
+        .today_audio_duration_ms()
+        .map_err(|e| map_err(&e))?;
+    let avg_inference_ms = state.db.avg_inference_ms().map_err(|e| map_err(&e))?;
+    let error_count = state.db.count_errors(false).map_err(|e| map_err(&e))?;
+    let today_error_count = state.db.count_errors(true).map_err(|e| map_err(&e))?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
     let total_models = state.model_manager.list_models().await.len();
-    let api_keys_count = state
-        .db
-        .list_api_keys()
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?
-        .len();
+    let api_keys_count = state.db.list_api_keys().map_err(|e| map_err(&e))?.len();
+
+    let uptime_secs = state.started_at.elapsed().as_secs();
 
     Ok(Json(Metrics {
         total_transcriptions: total,
@@ -59,6 +72,13 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>
         loaded_models,
         total_models,
         api_keys_count,
+        today_transcriptions,
+        total_audio_duration_ms,
+        today_audio_duration_ms,
+        avg_inference_ms,
+        error_count,
+        today_error_count,
+        uptime_secs,
     }))
 }
 

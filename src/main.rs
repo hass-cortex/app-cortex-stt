@@ -18,6 +18,7 @@ use wyoming_asr::api::models::model_routes;
 use wyoming_asr::api::settings::settings_routes;
 use wyoming_asr::api::system::system_routes;
 use wyoming_asr::api::transcribe::transcribe_routes;
+use wyoming_asr::cleanup::spawn_retention_cleanup;
 use wyoming_asr::config::AppConfig;
 use wyoming_asr::db::database::Database;
 use wyoming_asr::discovery::announce_discovery;
@@ -115,7 +116,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_model: default_model.clone(),
         addon_mode: config.addon,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        started_at: std::time::Instant::now(),
     });
+
+    // Spawn background retention cleanup (hourly).
+    let _cleanup_handle = spawn_retention_cleanup(db.clone(), config.data_dir.clone());
 
     // Build Axum router.
     let addon_mode = config.addon;

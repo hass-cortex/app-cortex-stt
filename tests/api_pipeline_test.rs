@@ -57,6 +57,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         default_model: "whisper-small".to_string(),
         addon_mode: false,
         version: "0.0.0-test".to_string(),
+        started_at: std::time::Instant::now(),
     });
 
     let app = Router::new()

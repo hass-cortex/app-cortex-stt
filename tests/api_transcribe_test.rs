@@ -80,6 +80,7 @@ async fn create_test_state() -> Arc<AppState> {
         default_model: "whisper-small".to_string(),
         addon_mode: false,
         version: "0.0.0-test".to_string(),
+        started_at: std::time::Instant::now(),
     })
 }
 

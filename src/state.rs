@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::RwLock;
 
@@ -92,4 +93,5 @@ pub struct AppState {
     pub default_model: String,
     pub addon_mode: bool,
     pub version: String,
+    pub started_at: Instant,
 }

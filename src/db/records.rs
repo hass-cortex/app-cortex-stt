@@ -251,6 +251,98 @@ impl Database {
         Ok(paths)
     }
 
+    /// Count records from today, optionally filtered by source.
+    pub fn count_records_today(
+        &self,
+        source: Option<TranscriptionSource>,
+    ) -> Result<usize, AsrError> {
+        let conn = self.conn()?;
+        let count: i64 = if let Some(src) = source {
+            conn.query_row(
+                "SELECT COUNT(*) FROM records WHERE source = ?1 AND timestamp >= datetime('now', 'start of day')",
+                params![src.as_str()],
+                |row| row.get(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                [],
+                |row| row.get(0),
+            )
+        }
+        .map_err(|e| AsrError::DatabaseError {
+            detail: e.to_string(),
+        })?;
+        Ok(count as usize)
+    }
+
+    /// Sum `audio_duration_ms` for all records.
+    pub fn total_audio_duration_ms(&self) -> Result<i64, AsrError> {
+        let conn = self.conn()?;
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        Ok(total)
+    }
+
+    /// Sum `audio_duration_ms` for today's records.
+    pub fn today_audio_duration_ms(&self) -> Result<i64, AsrError> {
+        let conn = self.conn()?;
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        Ok(total)
+    }
+
+    /// Average `inference_ms` across all records.
+    pub fn avg_inference_ms(&self) -> Result<f64, AsrError> {
+        let conn = self.conn()?;
+        let avg: f64 = conn
+            .query_row(
+                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        Ok(avg)
+    }
+
+    /// Count records with `has_error = 1`. If `today_only` is true, restrict to today.
+    pub fn count_errors(&self, today_only: bool) -> Result<usize, AsrError> {
+        let conn = self.conn()?;
+        let count: i64 = if today_only {
+            conn.query_row(
+                "SELECT COUNT(*) FROM records WHERE has_error = 1 AND timestamp >= datetime('now', 'start of day')",
+                [],
+                |row| row.get(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM records WHERE has_error = 1",
+                [],
+                |row| row.get(0),
+            )
+        }
+        .map_err(|e| AsrError::DatabaseError {
+            detail: e.to_string(),
+        })?;
+        Ok(count as usize)
+    }
+
     /// Count total records, optionally filtered by source.
     pub fn count_records(&self, source: Option<TranscriptionSource>) -> Result<usize, AsrError> {
         let conn = self.conn()?;
