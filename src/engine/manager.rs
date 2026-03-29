@@ -197,6 +197,11 @@ impl EngineManager {
         self.pools.read().await.keys().cloned().collect()
     }
 
+    /// Returns the IDs of all registered models (both loaded and unloaded).
+    pub async fn registered_models(&self) -> Vec<String> {
+        self.factories.read().await.keys().cloned().collect()
+    }
+
     /// Spawn a background task that periodically unloads idle models.
     ///
     /// The task runs until the returned [`tokio::task::JoinHandle`] is

@@ -35,11 +35,9 @@ pub async fn run_wyoming_server(
             let mut reader = BufReader::new(read_half);
             let mut writer = write_half;
 
-            let handler = ConnectionHandler::new(default_model, transcription_timeout);
-            if let Err(e) = handler
-                .handle(&mut reader, &mut writer, &engine_manager)
-                .await
-            {
+            let handler =
+                ConnectionHandler::new(engine_manager, default_model, transcription_timeout);
+            if let Err(e) = handler.handle(&mut reader, &mut writer).await {
                 error!(%peer, error = %e, "Handler error");
             }
             info!(%peer, "Wyoming client disconnected");

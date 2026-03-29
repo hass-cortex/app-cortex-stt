@@ -54,18 +54,21 @@ async fn test_handler_describe_returns_info() {
     let manager = test_manager();
     manager.register("test-model", mock_factory()).await;
 
-    let handler = ConnectionHandler::new("test-model".to_string(), Duration::from_secs(30));
+    let handler = ConnectionHandler::new(
+        Arc::clone(&manager),
+        "test-model".to_string(),
+        Duration::from_secs(30),
+    );
 
     // Client→Handler channel: client writes events, handler reads them.
     let (client_tx, server_rx) = tokio::io::duplex(4096);
     // Handler→Client channel: handler writes responses, client reads them.
     let (server_tx, client_rx) = tokio::io::duplex(4096);
 
-    let manager_ref = Arc::clone(&manager);
     let handler_task = tokio::spawn(async move {
         let mut reader = BufReader::new(server_rx);
         let mut writer = server_tx;
-        handler.handle(&mut reader, &mut writer, &manager_ref).await
+        handler.handle(&mut reader, &mut writer).await
     });
 
     // Client side: write a describe event then close.
@@ -101,16 +104,19 @@ async fn test_handler_transcribe_flow() {
     let manager = test_manager();
     manager.register("test-model", mock_factory()).await;
 
-    let handler = ConnectionHandler::new("test-model".to_string(), Duration::from_secs(30));
+    let handler = ConnectionHandler::new(
+        Arc::clone(&manager),
+        "test-model".to_string(),
+        Duration::from_secs(30),
+    );
 
     let (client_tx, server_rx) = tokio::io::duplex(65536);
     let (server_tx, client_rx) = tokio::io::duplex(65536);
 
-    let manager_ref = Arc::clone(&manager);
     let handler_task = tokio::spawn(async move {
         let mut reader = BufReader::new(server_rx);
         let mut writer = server_tx;
-        handler.handle(&mut reader, &mut writer, &manager_ref).await
+        handler.handle(&mut reader, &mut writer).await
     });
 
     let mut client_writer = client_tx;

@@ -1,41 +1,37 @@
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tracing::{debug, error, info, warn};
 
 use crate::engine::manager::EngineManager;
+use crate::engine::registry::builtin_models;
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
 use crate::wyoming::event::{read_event, write_event};
 use crate::wyoming::types::{AsrModel, AsrProgram, AudioStart, Info, Transcribe, Transcript};
 
-/// Per-connection Wyoming protocol handler.
-///
-/// Processes a stream of Wyoming events implementing the ASR describe/transcribe
-/// lifecycle. Each connection gets its own handler instance which maintains
-/// per-session state (audio buffer, language, format).
 pub struct ConnectionHandler {
+    engine_manager: Arc<EngineManager>,
     default_model: String,
     transcription_timeout: Duration,
 }
 
 impl ConnectionHandler {
-    pub fn new(default_model: String, transcription_timeout: Duration) -> Self {
+    pub fn new(
+        engine_manager: Arc<EngineManager>,
+        default_model: String,
+        transcription_timeout: Duration,
+    ) -> Self {
         Self {
+            engine_manager,
             default_model,
             transcription_timeout,
         }
     }
 
-    /// Run the event loop, reading events from `reader` and writing responses
-    /// to `writer`. Returns `Ok(())` on clean EOF or an error if the
-    /// protocol/engine fails.
-    pub async fn handle<R, W>(
-        &self,
-        reader: &mut R,
-        writer: &mut W,
-        engine_manager: &EngineManager,
-    ) -> Result<(), AsrError>
+    pub async fn handle<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<(), AsrError>
     where
         R: AsyncBufRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -56,7 +52,7 @@ impl ConnectionHandler {
             match event.event_type.as_str() {
                 "describe" => {
                     debug!("handling describe event");
-                    let info = self.build_info();
+                    let info = self.build_info().await;
                     let info_event = info.to_event();
                     write_event(writer, &info_event).await?;
                 }
@@ -87,7 +83,7 @@ impl ConnectionHandler {
                     );
 
                     let transcript = self
-                        .run_transcription(&audio_buffer, &language, &audio_format, engine_manager)
+                        .run_transcription(&audio_buffer, &language, &audio_format)
                         .await;
 
                     match transcript {
@@ -98,8 +94,6 @@ impl ConnectionHandler {
                         }
                         Err(e) => {
                             error!(error = %e, "transcription failed");
-                            // Write empty transcript on error so the client
-                            // knows the audio-stop was processed.
                             let t = Transcript {
                                 text: String::new(),
                             };
@@ -107,7 +101,6 @@ impl ConnectionHandler {
                         }
                     }
 
-                    // Reset session state for next transcription cycle.
                     audio_buffer.clear();
                     audio_format = None;
                 }
@@ -119,42 +112,52 @@ impl ConnectionHandler {
         }
     }
 
-    /// Build the `Info` response advertising this server's ASR capability.
-    fn build_info(&self) -> Info {
+    async fn build_info(&self) -> Info {
+        let registry: HashMap<String, Vec<String>> = builtin_models()
+            .into_iter()
+            .map(|def| (def.id, def.supported_languages))
+            .collect();
+
+        let registered_ids = self.engine_manager.registered_models().await;
+
+        let models: Vec<AsrModel> = registered_ids
+            .into_iter()
+            .map(|id| {
+                let languages = registry.get(&id).cloned().unwrap_or_default();
+                AsrModel {
+                    name: id,
+                    installed: true,
+                    languages,
+                }
+            })
+            .collect();
+
         Info {
             asr: vec![AsrProgram {
                 name: "wyoming-asr".to_string(),
                 installed: true,
-                models: vec![AsrModel {
-                    name: self.default_model.clone(),
-                    installed: true,
-                    languages: Vec::new(),
-                }],
+                models,
             }],
         }
     }
 
-    /// Convert PCM bytes to f32 samples, acquire an engine, and run
-    /// transcription with a timeout guard.
     async fn run_transcription(
         &self,
         audio_bytes: &[u8],
         language: &Option<String>,
         _audio_format: &Option<AudioStart>,
-        engine_manager: &EngineManager,
     ) -> Result<String, AsrError> {
         let samples = pcm_bytes_to_f32(audio_bytes);
         let model_id = self.default_model.clone();
         let timeout = self.transcription_timeout;
 
-        let mut guard = engine_manager.acquire(&model_id).await?;
+        let mut guard = self.engine_manager.acquire(&model_id).await?;
 
         let options = TranscribeOptions {
             language: language.clone(),
             translate: false,
         };
 
-        // Run synchronous inference on a blocking thread, wrapped in a timeout.
         let result = tokio::time::timeout(
             timeout,
             tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options)),
