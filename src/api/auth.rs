@@ -34,7 +34,28 @@ pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Res
         }
     }
 
-    // 2. Bearer token authentication
+    // 2. Query param authentication (for audio playback URLs where headers can't be set)
+    if let Some(query) = req.uri().query() {
+        for pair in query.split('&') {
+            if let Some(token) = pair.strip_prefix("api_key=") {
+                let token = token.to_string();
+                if !token.is_empty() {
+                    let db = Arc::clone(&db);
+                    let result = tokio::task::spawn_blocking(move || db.verify_api_key(&token))
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .flatten();
+                    if result.is_some() {
+                        return next.run(req).await;
+                    }
+                    return ApiError::invalid_api_key().into_response();
+                }
+            }
+        }
+    }
+
+    // 3. Bearer token authentication
     if let Some(auth_value) = req.headers().get("authorization") {
         if let Ok(auth_str) = auth_value.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
