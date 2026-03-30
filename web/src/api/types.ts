@@ -25,7 +25,7 @@ export interface SystemInfo {
 
 export interface Metrics {
 	total_transcriptions: number;
-	wyoming_transcriptions: number;
+	external_transcriptions: number;
 	http_transcriptions: number;
 	loaded_models: number;
 	total_models: number;
@@ -91,7 +91,7 @@ export interface EngineStatus {
 
 // --- History ---
 
-export type TranscriptionSource = "wyoming" | "http_api";
+export type TranscriptionSource = "external" | "http_api";
 
 export interface TranscriptionRecord {
 	id: string;

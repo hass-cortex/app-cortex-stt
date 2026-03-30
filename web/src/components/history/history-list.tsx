@@ -15,7 +15,7 @@ import { SegmentTimeline } from "./segment-timeline";
 
 const sourceOptions = [
 	{ value: "", label: "All sources" },
-	{ value: "wyoming", label: "External" },
+	{ value: "external", label: "External" },
 	{ value: "http_api", label: "HTTP API" },
 ];
 
@@ -28,7 +28,7 @@ const errorOptions = [
 /** Format source label for display */
 function formatSource(source: string): string {
 	switch (source) {
-		case "wyoming":
+		case "external":
 			return "External";
 		case "http_api":
 			return "HTTP API";
@@ -163,7 +163,7 @@ function HistoryRow({
 					</p>
 					<div className="flex items-center gap-2 mt-0.5">
 						<span className="text-xs text-text-muted">{formatRelativeTime(record.timestamp)}</span>
-						<Badge variant={record.source === "wyoming" ? "info" : "accent"}>
+						<Badge variant={record.source === "external" ? "info" : "accent"}>
 							{formatSource(record.source)}
 						</Badge>
 						<span className="text-xs text-text-muted">{record.model_id}</span>

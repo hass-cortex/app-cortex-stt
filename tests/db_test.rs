@@ -3,7 +3,7 @@ use cortex_stt_server::db::records::{CreateRecord, ListRecordsFilter, Transcript
 
 fn sample_record() -> CreateRecord {
     CreateRecord {
-        source: TranscriptionSource::Wyoming,
+        source: TranscriptionSource::External,
         language: Some("en".to_string()),
         model_id: "whisper-tiny".to_string(),
         audio_duration_ms: 3200,
@@ -40,7 +40,7 @@ async fn test_insert_and_get_record() {
         .unwrap()
         .expect("record should exist");
     assert_eq!(fetched.id, id);
-    assert_eq!(fetched.source, "wyoming");
+    assert_eq!(fetched.source, "external");
     assert_eq!(fetched.language.as_deref(), Some("en"));
     assert_eq!(fetched.model_id, "whisper-tiny");
     assert_eq!(fetched.audio_duration_ms, 3200);
@@ -72,7 +72,7 @@ async fn test_list_records_with_filters() {
 
     // Insert records with different sources and models
     let mut rec1 = sample_record();
-    rec1.source = TranscriptionSource::Wyoming;
+    rec1.source = TranscriptionSource::External;
     rec1.model_id = "whisper-tiny".to_string();
     db.insert_record(&rec1).await.unwrap();
 
@@ -82,7 +82,7 @@ async fn test_list_records_with_filters() {
     db.insert_record(&rec2).await.unwrap();
 
     let mut rec3 = sample_record();
-    rec3.source = TranscriptionSource::Wyoming;
+    rec3.source = TranscriptionSource::External;
     rec3.model_id = "whisper-large".to_string();
     db.insert_record(&rec3).await.unwrap();
 
@@ -94,14 +94,14 @@ async fn test_list_records_with_filters() {
     assert_eq!(all.len(), 3);
 
     // Filter by source
-    let wyoming_only = db
+    let external_only = db
         .list_records(&ListRecordsFilter {
-            source: Some(TranscriptionSource::Wyoming),
+            source: Some(TranscriptionSource::External),
             ..Default::default()
         })
         .await
         .unwrap();
-    assert_eq!(wyoming_only.len(), 2);
+    assert_eq!(external_only.len(), 2);
 
     // Filter by model_id
     let large_only = db
@@ -204,7 +204,7 @@ async fn test_record_retention_cleanup_by_days() {
         .call(|conn| -> Result<(), rusqlite::Error> {
             conn.execute(
                 "INSERT INTO records (id, timestamp, source, model_id, audio_duration_ms, inference_ms, text, segments_json, has_error)
-                 VALUES ('old-1', datetime('now', '-30 days'), 'wyoming', 'model-x', 1000, 100, 'old text', '[]', 0)",
+                 VALUES ('old-1', datetime('now', '-30 days'), 'external', 'model-x', 1000, 100, 'old text', '[]', 0)",
                 [],
             )?;
             Ok(())

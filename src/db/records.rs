@@ -10,14 +10,14 @@ use crate::error::AsrError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionSource {
-    Wyoming,
+    External,
     HttpApi,
 }
 
 impl TranscriptionSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Wyoming => "wyoming",
+            Self::External => "external",
             Self::HttpApi => "http_api",
         }
     }
@@ -28,7 +28,7 @@ impl FromStr for TranscriptionSource {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "wyoming" => Ok(Self::Wyoming),
+            "external" => Ok(Self::External),
             "http_api" => Ok(Self::HttpApi),
             other => Err(format!("unknown transcription source: {other}")),
         }

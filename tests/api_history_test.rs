@@ -186,16 +186,16 @@ async fn test_list_history_with_source_filter() {
     // Insert HTTP API records.
     insert_test_records(&state.db, 3).await;
 
-    // Insert a Wyoming record.
+    // Insert an External record.
     state
         .db
         .insert_record(&CreateRecord {
-            source: TranscriptionSource::Wyoming,
+            source: TranscriptionSource::External,
             language: Some("en".into()),
             model_id: "whisper-small".into(),
             audio_duration_ms: 2000,
             inference_ms: 150,
-            text: "wyoming transcription".into(),
+            text: "external transcription".into(),
             segments_json: "[]".into(),
             audio_path: None,
             has_error: false,
@@ -209,7 +209,7 @@ async fn test_list_history_with_source_filter() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/history?source=wyoming")
+                .uri("/api/history?source=external")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -224,5 +224,5 @@ async fn test_list_history_with_source_filter() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let records = json.as_array().unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["source"], "wyoming");
+    assert_eq!(records[0]["source"], "external");
 }
