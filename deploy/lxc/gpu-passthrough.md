@@ -1,6 +1,6 @@
 # GPU Passthrough for Proxmox LXC
 
-This guide covers passing an NVIDIA GPU through to a Proxmox LXC container for Wyoming ASR CUDA acceleration.
+This guide covers passing an NVIDIA GPU through to a Proxmox LXC container for Cortex STT Server CUDA acceleration.
 
 ## Prerequisites
 
@@ -98,15 +98,15 @@ rm nvidia-installer.run
 nvidia-smi
 ```
 
-### 3. Install Wyoming ASR with GPU support
+### 3. Install Cortex STT Server with GPU support
 
 ```bash
 bash setup.sh --gpu
 ```
 
-### 4. Configure Wyoming ASR for CUDA
+### 4. Configure Cortex STT Server for CUDA
 
-Edit `/etc/wyoming-asr/config.toml`:
+Edit `/etc/cortex-stt/config.toml`:
 
 ```toml
 [engine]
@@ -116,7 +116,7 @@ gpu_mode = "cuda"
 Restart the service:
 
 ```bash
-systemctl restart wyoming-asr
+systemctl restart cortex-stt-server
 ```
 
 ## Troubleshooting

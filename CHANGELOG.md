@@ -1,4 +1,6 @@
-# Changelog
+# Changelog — Cortex STT Server
+
+> **Note:** This project was originally named "Wyoming ASR" and was renamed to "Cortex STT Server" in March 2026. Historical entries below reflect the original naming.
 
 All notable changes to this project will be documented in this file.
 

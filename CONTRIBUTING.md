@@ -1,4 +1,4 @@
-# Contributing to Wyoming ASR
+# Contributing to Cortex STT Server
 
 Thank you for your interest in contributing!
 
@@ -54,7 +54,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 Examples:
 ```
 feat: add Qwen3 ASR engine support
-fix: handle timeout in Wyoming handler gracefully
+fix: handle timeout in transcription handler gracefully
 docs: add API key management guide
 chore: update transcribe-rs to 0.4.0
 refactor: extract audio resampling to separate module
@@ -96,7 +96,6 @@ cargo test -- --nocapture
 See the [design spec](docs/design/) for architecture details.
 
 Key modules:
-- `src/wyoming/` - Wyoming protocol TCP server
 - `src/engine/` - Model pool and engine management
 - `src/api/` - Axum HTTP API and static file serving
 - `src/model/` - Model download and storage
@@ -114,4 +113,4 @@ When transcribe-rs adds a new engine:
 
 ## Questions?
 
-Open a [Discussion](https://github.com/hass-cortex/wyoming-asr/discussions) for questions or ideas.
+Open a [Discussion](https://github.com/hass-cortex/cortex-stt-server/discussions) for questions or ideas.
