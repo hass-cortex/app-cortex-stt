@@ -1,6 +1,6 @@
-import { EngineControls } from "@/components/engine/engine-controls";
-import { LoadedModels } from "@/components/engine/pool-status";
-import { TimeoutSettings } from "@/components/engine/timeout-settings";
+import { DefaultModel } from "@/components/engine/default-model";
+import { ModelLifecycle } from "@/components/engine/model-lifecycle";
+import { TranscriptionSettings } from "@/components/engine/timeout-settings";
 import { Spinner } from "@/components/ui/spinner";
 import { useEngineStatus } from "@/hooks/use-engine";
 import { useSettings } from "@/hooks/use-settings";
@@ -28,10 +28,10 @@ export function EnginePage() {
 
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 				<div className="space-y-4">
-					<EngineControls defaultModel={settings?.default_model ?? ""} />
-					<TimeoutSettings />
+					<DefaultModel defaultModel={settings?.default_model ?? ""} />
+					<TranscriptionSettings />
 				</div>
-				<LoadedModels models={engine?.loaded_models ?? []} />
+				<ModelLifecycle loadedModels={engine?.loaded_models ?? []} />
 			</div>
 		</div>
 	);
