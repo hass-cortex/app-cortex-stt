@@ -158,6 +158,7 @@ export interface AppSettings {
 	idle_timeout_secs: number | null;
 	transcription_timeout_secs: number;
 	save_audio: boolean;
+	preload_default_model: boolean;
 	audio_retention: RetentionPolicy;
 	record_retention: RetentionPolicy;
 	cors_allowed_origins: string[];

@@ -41,6 +41,8 @@ pub struct Settings {
     pub save_audio: bool,
     pub audio_retention: RetentionPolicy,
     pub record_retention: RetentionPolicy,
+    #[serde(default)]
+    pub preload_default_model: bool,
     pub cors_allowed_origins: Vec<String>,
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -59,6 +61,7 @@ impl Default for Settings {
             idle_timeout_secs: Some(300),
             transcription_timeout_secs: 120,
             save_audio: true,
+            preload_default_model: false,
             audio_retention: RetentionPolicy::Days(7),
             record_retention: RetentionPolicy::Days(30),
             cors_allowed_origins: vec![],

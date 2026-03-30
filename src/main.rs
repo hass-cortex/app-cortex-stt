@@ -105,8 +105,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
-    // Pre-load default model if configured.
-    if config.preload_model {
+    // Pre-load default model if configured (CLI flag OR settings DB).
+    let preload = config.preload_model
+        || db
+            .load_settings()
+            .await
+            .map(|s| s.preload_default_model)
+            .unwrap_or(false);
+    if preload {
         tracing::info!(model = %default_model, "Pre-loading default model");
         match engine_manager.acquire(&default_model).await {
             Ok(guard) => {

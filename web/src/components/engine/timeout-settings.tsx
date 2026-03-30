@@ -19,12 +19,14 @@ export function TimeoutSettings() {
 	const [idleTimeout, setIdleTimeout] = useState(
 		String(currentIdle ?? 300),
 	);
+	const [preloadModel, setPreloadModel] = useState(settings?.preload_default_model ?? false);
 
 	const handleSave = () => {
 		updateMutation.mutate(
 			{
 				transcription_timeout_secs: Number.parseInt(transcriptionTimeout, 10),
 				idle_timeout_secs: keepLoaded ? null : Number.parseInt(idleTimeout, 10),
+				preload_default_model: preloadModel,
 			},
 			{
 				onSuccess: () => toast("Timeout settings saved", "success"),
@@ -70,6 +72,23 @@ export function TimeoutSettings() {
 						{keepLoaded
 							? "Models stay in memory until manually unloaded or server restart."
 							: "Models are unloaded after being idle for this duration."}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<label className="flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={preloadModel}
+							onChange={(e) => setPreloadModel(e.target.checked)}
+							className="rounded border-border"
+						/>
+						<span className="text-sm text-text-primary">Pre-load default model on startup</span>
+					</label>
+					<p className="text-xs text-text-muted">
+						{preloadModel
+							? "Default model is loaded into memory when the server starts, eliminating first-request latency."
+							: "Models are loaded on-demand when the first transcription request arrives."}
 					</p>
 				</div>
 
