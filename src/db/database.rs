@@ -62,7 +62,8 @@ impl Database {
                 segments_json TEXT NOT NULL DEFAULT '[]',
                 audio_path TEXT,
                 has_error INTEGER NOT NULL DEFAULT 0,
-                error_message TEXT
+                error_message TEXT,
+                api_key_id TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);

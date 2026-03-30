@@ -25,7 +25,6 @@ export interface SystemInfo {
 
 export interface Metrics {
 	total_transcriptions: number;
-	external_transcriptions: number;
 	http_transcriptions: number;
 	loaded_models: number;
 	total_models: number;
@@ -91,7 +90,7 @@ export interface EngineStatus {
 
 // --- History ---
 
-export type TranscriptionSource = "external" | "http_api";
+export type TranscriptionSource = "http_api";
 
 export interface TranscriptionRecord {
 	id: string;
@@ -106,6 +105,7 @@ export interface TranscriptionRecord {
 	audio_path: string | null;
 	has_error: boolean;
 	error_message: string | null;
+	api_key_id: string | null;
 }
 
 export interface TranscriptionSegment {

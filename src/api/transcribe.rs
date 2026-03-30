@@ -12,6 +12,7 @@ use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
+use crate::api::auth::AuthKeyId;
 use crate::api::error::ApiError;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::audio::wav_writer::write_wav;
@@ -132,6 +133,7 @@ async fn save_to_history(
     language: &Option<String>,
     samples: &[f32],
     response: &TranscribeResponse,
+    api_key_id: Option<String>,
 ) {
     let save_audio = state
         .db
@@ -167,6 +169,7 @@ async fn save_to_history(
         audio_path: audio_path_str,
         has_error: false,
         error_message: None,
+        api_key_id,
     };
 
     if let Err(e) = state.db.insert_record(&record).await {
@@ -213,19 +216,21 @@ async fn transcribe_dispatch(
     state: State<Arc<AppState>>,
     query: Query<TranscribeQuery>,
     headers: HeaderMap,
+    auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
 ) -> Response {
+    let api_key_id = auth_key.map(|ext| ext.0 .0);
     let accept = headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
     if accept.contains("text/event-stream") {
-        transcribe_sse(state, query, headers, body)
+        transcribe_sse(state, query, headers, api_key_id, body)
             .await
             .into_response()
     } else {
-        transcribe_sync(state, query, headers, body)
+        transcribe_sync(state, query, headers, api_key_id, body)
             .await
             .into_response()
     }
@@ -236,6 +241,7 @@ async fn transcribe_sync(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TranscribeQuery>,
     headers: HeaderMap,
+    api_key_id: Option<String>,
     body: Bytes,
 ) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
     let content_type = headers
@@ -274,6 +280,7 @@ async fn transcribe_sync(
         &language,
         &samples_copy,
         &response,
+        api_key_id,
     )
     .await;
 
@@ -288,6 +295,7 @@ async fn transcribe_sse(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TranscribeQuery>,
     headers: HeaderMap,
+    api_key_id: Option<String>,
     body: Bytes,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, axum::Json<ApiError>)>
 {
@@ -344,6 +352,7 @@ async fn transcribe_sse(
                     &language,
                     &samples_copy,
                     &response,
+                    api_key_id,
                 )
                 .await;
 
@@ -382,8 +391,10 @@ async fn transcribe_async(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TranscribeQuery>,
     headers: HeaderMap,
+    auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
 ) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), (StatusCode, axum::Json<ApiError>)> {
+    let api_key_id = auth_key.map(|ext| ext.0 .0);
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
@@ -438,6 +449,7 @@ async fn transcribe_async(
                     &language,
                     &samples_copy,
                     &response,
+                    api_key_id,
                 )
                 .await;
 

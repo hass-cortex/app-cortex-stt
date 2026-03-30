@@ -14,7 +14,6 @@ use crate::state::AppState;
 #[derive(Debug, Serialize)]
 pub struct Metrics {
     pub total_transcriptions: usize,
-    pub external_transcriptions: usize,
     pub http_transcriptions: usize,
     pub loaded_models: usize,
     pub total_models: usize,
@@ -37,11 +36,6 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>
     let total = state
         .db
         .count_records(None)
-        .await
-        .map_err(|e| map_err(&e))?;
-    let external_count = state
-        .db
-        .count_records(Some(TranscriptionSource::External))
         .await
         .map_err(|e| map_err(&e))?;
     let http_count = state
@@ -85,7 +79,6 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>
 
     Ok(Json(Metrics {
         total_transcriptions: total,
-        external_transcriptions: external_count,
         http_transcriptions: http_count,
         loaded_models,
         total_models,

@@ -8,14 +8,21 @@ use crate::db::database::Database;
 
 use super::error::ApiError;
 
-/// Verify an API key against the database.
-async fn verify_key(db: &Database, token: &str) -> bool {
-    let result = db.verify_api_key(token).await;
-    result.ok().flatten().is_some()
+/// Authenticated API key ID, inserted into request extensions by the auth middleware.
+#[derive(Clone, Debug)]
+pub struct AuthKeyId(pub String);
+
+/// Verify an API key against the database. Returns the key ID if valid.
+async fn verify_key(db: &Database, token: &str) -> Option<String> {
+    db.verify_api_key(token)
+        .await
+        .ok()
+        .flatten()
+        .map(|record| record.id)
 }
 
 /// Authentication middleware for the HTTP API.
-pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Response {
+pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) -> Response {
     // 1. Bootstrap: allow POST /api/keys when no keys exist yet
     if req.method() == axum::http::Method::POST && req.uri().path() == "/api/keys" {
         let has_keys = db
@@ -33,10 +40,11 @@ pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Res
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(token) = pair.strip_prefix("api_key=") {
-                if !token.is_empty() && verify_key(&db, token).await {
-                    return next.run(req).await;
-                }
                 if !token.is_empty() {
+                    if let Some(key_id) = verify_key(&db, token).await {
+                        req.extensions_mut().insert(AuthKeyId(key_id));
+                        return next.run(req).await;
+                    }
                     return ApiError::invalid_api_key().into_response();
                 }
             }
@@ -49,7 +57,8 @@ pub async fn auth_middleware(req: Request, next: Next, db: Arc<Database>) -> Res
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 let token = token.trim();
                 if !token.is_empty() {
-                    if verify_key(&db, token).await {
+                    if let Some(key_id) = verify_key(&db, token).await {
+                        req.extensions_mut().insert(AuthKeyId(key_id));
                         return next.run(req).await;
                     }
                     return ApiError::invalid_api_key().into_response();

@@ -10,14 +10,12 @@ use crate::error::AsrError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionSource {
-    External,
     HttpApi,
 }
 
 impl TranscriptionSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::External => "external",
             Self::HttpApi => "http_api",
         }
     }
@@ -28,7 +26,6 @@ impl FromStr for TranscriptionSource {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "external" => Ok(Self::External),
             "http_api" => Ok(Self::HttpApi),
             other => Err(format!("unknown transcription source: {other}")),
         }
@@ -47,6 +44,7 @@ pub struct CreateRecord {
     pub audio_path: Option<String>,
     pub has_error: bool,
     pub error_message: Option<String>,
+    pub api_key_id: Option<String>,
 }
 
 /// A stored transcription record.
@@ -64,6 +62,7 @@ pub struct TranscriptionRecord {
     pub audio_path: Option<String>,
     pub has_error: bool,
     pub error_message: Option<String>,
+    pub api_key_id: Option<String>,
 }
 
 /// Optional filters for listing records.
@@ -91,13 +90,14 @@ impl Database {
         let audio_path = rec.audio_path.clone();
         let has_error = rec.has_error as i32;
         let error_message = rec.error_message.clone();
+        let api_key_id = rec.api_key_id.clone();
         let id_clone = id.clone();
 
         self.connection()
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         id_clone,
                         source,
@@ -110,6 +110,7 @@ impl Database {
                         audio_path,
                         has_error,
                         error_message,
+                        api_key_id,
                     ],
                 )?;
                 Ok(())
@@ -127,7 +128,7 @@ impl Database {
         self.connection()
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id
                      FROM records WHERE id = ?1",
                 )?;
 
@@ -172,7 +173,7 @@ impl Database {
         self.connection()
             .call(move |conn| {
                 let mut sql = String::from(
-                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id
                      FROM records WHERE 1=1",
                 );
                 let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -480,5 +481,6 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         audio_path: row.get(9)?,
         has_error: row.get::<_, i32>(10)? != 0,
         error_message: row.get(11)?,
+        api_key_id: row.get(12)?,
     })
 }
