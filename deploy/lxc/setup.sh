@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Wyoming ASR - Proxmox LXC Installation Script
+# Cortex STT Server - Proxmox LXC Installation Script
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/hass-cortex/wyoming-asr/main/deploy/lxc/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hass-cortex/cortex-stt-server/main/deploy/lxc/setup.sh | bash
 #
 # Or with options:
 #   bash setup.sh --version 0.1.0 --gpu
@@ -13,11 +13,11 @@ set -euo pipefail
 # Defaults
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="/usr/local/bin"
-DATA_DIR="/var/lib/wyoming-asr"
-WEB_DIR="/usr/local/share/wyoming-asr/web"
-CONFIG_DIR="/etc/wyoming-asr"
+DATA_DIR="/var/lib/cortex-stt"
+WEB_DIR="/usr/local/share/cortex-stt/web"
+CONFIG_DIR="/etc/cortex-stt"
 ENABLE_GPU=false
-REPO="hass-cortex/wyoming-asr"
+REPO="hass-cortex/cortex-stt-server"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --version VERSION  Version to install (default: latest)"
             echo "  --gpu              Install with CUDA GPU support"
-            echo "  --data-dir PATH    Data directory (default: /var/lib/wyoming-asr)"
+            echo "  --data-dir PATH    Data directory (default: /var/lib/cortex-stt)"
             echo "  --help             Show this help"
             exit 0
             ;;
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "========================================"
-echo "  Wyoming ASR Installer"
+echo "  Cortex STT Server Installer"
 echo "  Version: ${VERSION}"
 echo "  GPU: ${ENABLE_GPU}"
 echo "========================================"
@@ -69,35 +69,33 @@ apt-get install -y --no-install-recommends \
     libgomp1
 
 # Download binary
-BINARY_URL="https://github.com/${REPO}/releases/download/v${VERSION}/wyoming-asr-${BINARY_ARCH}-unknown-linux-gnu"
+BINARY_URL="https://github.com/${REPO}/releases/download/v${VERSION}/cortex-stt-server-${BINARY_ARCH}-unknown-linux-gnu"
 echo "Downloading binary from: ${BINARY_URL}"
-curl -fsSL -o "${INSTALL_DIR}/wyoming-asr" "${BINARY_URL}"
-chmod +x "${INSTALL_DIR}/wyoming-asr"
+curl -fsSL -o "${INSTALL_DIR}/cortex-stt-server" "${BINARY_URL}"
+chmod +x "${INSTALL_DIR}/cortex-stt-server"
 
 # Download and extract web UI
-WEB_URL="https://github.com/${REPO}/releases/download/v${VERSION}/wyoming-asr-web.tar.gz"
+WEB_URL="https://github.com/${REPO}/releases/download/v${VERSION}/cortex-stt-web.tar.gz"
 echo "Downloading web UI from: ${WEB_URL}"
 mkdir -p "${WEB_DIR}"
 curl -fsSL "${WEB_URL}" | tar -xz -C "${WEB_DIR}"
 
 # Create system user
-if ! id -u wyoming-asr &>/dev/null; then
-    useradd -r -s /bin/false -d "${DATA_DIR}" wyoming-asr
+if ! id -u cortex-stt &>/dev/null; then
+    useradd -r -s /bin/false -d "${DATA_DIR}" cortex-stt
 fi
 
 # Create directories
 mkdir -p "${DATA_DIR}/models" "${DATA_DIR}/audio" "${CONFIG_DIR}"
-chown -R wyoming-asr:wyoming-asr "${DATA_DIR}"
+chown -R cortex-stt:cortex-stt "${DATA_DIR}"
 
 # Create default config
 if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
     cat > "${CONFIG_DIR}/config.toml" <<'TOML'
-# Wyoming ASR configuration
-# See https://github.com/hass-cortex/wyoming-asr for documentation
+# Cortex STT Server configuration
+# See https://github.com/hass-cortex/cortex-stt-server for documentation
 
 [server]
-wyoming_host = "0.0.0.0"
-wyoming_port = 10300
 http_host = "0.0.0.0"
 http_port = 10400
 
@@ -110,10 +108,10 @@ TOML
 fi
 
 # Install systemd service
-UNIT_URL="https://raw.githubusercontent.com/${REPO}/v${VERSION}/deploy/wyoming-asr.service"
-curl -fsSL -o /etc/systemd/system/wyoming-asr.service "${UNIT_URL}"
+UNIT_URL="https://raw.githubusercontent.com/${REPO}/v${VERSION}/deploy/cortex-stt.service"
+curl -fsSL -o /etc/systemd/system/cortex-stt.service "${UNIT_URL}"
 systemctl daemon-reload
-systemctl enable wyoming-asr
+systemctl enable cortex-stt
 
 # GPU setup hint
 if [ "${ENABLE_GPU}" = true ]; then
@@ -126,18 +124,17 @@ if [ "${ENABLE_GPU}" = true ]; then
 fi
 
 # Start service
-systemctl start wyoming-asr
+systemctl start cortex-stt
 
 echo ""
 echo "========================================"
 echo "  Installation complete!"
 echo ""
-echo "  Binary:  ${INSTALL_DIR}/wyoming-asr"
+echo "  Binary:  ${INSTALL_DIR}/cortex-stt-server"
 echo "  Data:    ${DATA_DIR}"
 echo "  Config:  ${CONFIG_DIR}/config.toml"
 echo "  Web UI:  http://$(hostname -I | awk '{print $1}'):10400"
-echo "  Wyoming: tcp://$(hostname -I | awk '{print $1}'):10300"
 echo ""
-echo "  Service: systemctl status wyoming-asr"
-echo "  Logs:    journalctl -u wyoming-asr -f"
+echo "  Service: systemctl status cortex-stt"
+echo "  Logs:    journalctl -u cortex-stt -f"
 echo "========================================"

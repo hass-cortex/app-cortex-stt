@@ -3,8 +3,8 @@ configuration:
   default_model:
     name: Default model
     description: >-
-      Default speech-to-text model used for Wyoming connections. Available
-      models can be managed from the Admin UI.
+      Default speech-to-text model. Available models can be managed from
+      the Admin UI.
   language:
     name: Language
     description: >-
@@ -44,5 +44,4 @@ configuration:
       Enable detailed debug logging. Useful for troubleshooting but
       produces verbose output.
 network:
-  10300/tcp: Wyoming Protocol
   10400/tcp: Admin Web UI / HTTP API

@@ -1,4 +1,4 @@
-# Wyoming ASR - Docker Compose (CPU)
+# Cortex STT Server - Docker Compose (CPU)
 #
 # Usage:
 #   docker compose -f deploy/docker-compose.yml up -d
@@ -7,20 +7,19 @@
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cuda.yml up -d
 
 services:
-  wyoming-asr:
-    image: ghcr.io/hass-cortex/wyoming-asr:latest-cpu
-    container_name: wyoming-asr
+  cortex-stt-server:
+    image: ghcr.io/hass-cortex/cortex-stt-server:latest-cpu
+    container_name: cortex-stt-server
     restart: unless-stopped
     ports:
-      - "10300:10300"  # Wyoming protocol
       - "10400:10400"  # Admin UI / HTTP API
     volumes:
-      - wyoming-asr-data:/data
-      - wyoming-asr-config:/config
+      - cortex-stt-data:/data
+      - cortex-stt-config:/config
     environment:
       - DEFAULT_MODEL=whisper-small
       - RUST_LOG=info
 
 volumes:
-  wyoming-asr-data:
-  wyoming-asr-config:
+  cortex-stt-data:
+  cortex-stt-config:

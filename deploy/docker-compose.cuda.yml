@@ -1,11 +1,11 @@
-# Wyoming ASR - CUDA GPU override
+# Cortex STT Server - CUDA GPU override
 #
 # Usage (always combined with base):
 #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cuda.yml up -d
 
 services:
-  wyoming-asr:
-    image: ghcr.io/hass-cortex/wyoming-asr:latest-cuda
+  cortex-stt-server:
+    image: ghcr.io/hass-cortex/cortex-stt-server:latest-cuda
     environment:
       - GPU_MODE=cuda
       - NVIDIA_VISIBLE_DEVICES=all

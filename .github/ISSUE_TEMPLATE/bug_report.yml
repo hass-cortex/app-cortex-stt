@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug with Wyoming ASR
+description: Report a bug with Cortex STT Server
 labels: ["bug"]
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Wyoming ASR version
+      label: Cortex STT Server version
       placeholder: "0.1.0"
     validations:
       required: true
@@ -42,8 +42,8 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the issue
       placeholder: |
-        1. Start wyoming-asr with model X
-        2. Send audio via Wyoming protocol
+        1. Start cortex-stt-server with model X
+        2. Send audio via HTTP API
         3. Observe error in logs
     validations:
       required: true

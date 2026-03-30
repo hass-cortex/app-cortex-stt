@@ -1,0 +1,28 @@
+[Unit]
+Description=Cortex STT Server - Multi-engine Speech-to-Text
+Documentation=https://github.com/hass-cortex/cortex-stt-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cortex-stt
+Group=cortex-stt
+ExecStart=/usr/local/bin/cortex-stt-server \
+    --data-dir /var/lib/cortex-stt \
+    --static-dir /usr/local/share/cortex-stt/web
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/cortex-stt
+
+# Environment
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 # ============================================================================
-# wyoming-asr Dockerfile
+# cortex-stt-server Dockerfile
 # Multi-stage build with CPU, CUDA, and HA App targets
 # ============================================================================
 
@@ -39,8 +39,8 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
 COPY src/ src/
 RUN touch src/main.rs \
     && cargo build --release --features "${CARGO_FEATURES}" \
-    && strip target/release/wyoming-asr \
-    && cp target/release/wyoming-asr /wyoming-asr
+    && strip target/release/cortex-stt-server \
+    && cp target/release/cortex-stt-server /cortex-stt-server
 
 # ============================================================================
 # Stage 2: Web UI builder
@@ -73,22 +73,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy binary and web assets
-COPY --from=rust-builder /wyoming-asr /app/wyoming-asr
+COPY --from=rust-builder /cortex-stt-server /app/cortex-stt-server
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 # Create data directories
 RUN mkdir -p /data/models /data/audio /config \
-    && useradd -r -s /bin/false wyoming \
-    && chown -R wyoming:wyoming /data /config
+    && useradd -r -s /bin/false cortex-stt \
+    && chown -R cortex-stt:cortex-stt /data /config
 
-USER wyoming
+USER cortex-stt
 
-EXPOSE 10300 10400
+EXPOSE 10400
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
     CMD curl -sf http://localhost:10400/health || exit 1
 
-ENTRYPOINT ["/app/wyoming-asr"]
+ENTRYPOINT ["/app/cortex-stt-server"]
 CMD ["--data-dir", "/data", "--static-dir", "/app/web/dist"]
 
 # ============================================================================
@@ -107,25 +107,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy binary and web assets
-COPY --from=rust-builder /wyoming-asr /app/wyoming-asr
+COPY --from=rust-builder /cortex-stt-server /app/cortex-stt-server
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 # Create data directories
 RUN mkdir -p /data/models /data/audio /config \
-    && useradd -r -s /bin/false wyoming \
-    && chown -R wyoming:wyoming /data /config
+    && useradd -r -s /bin/false cortex-stt \
+    && chown -R cortex-stt:cortex-stt /data /config
 
-USER wyoming
+USER cortex-stt
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-EXPOSE 10300 10400
+EXPOSE 10400
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
     CMD curl -sf http://localhost:10400/health || exit 1
 
-ENTRYPOINT ["/app/wyoming-asr"]
+ENTRYPOINT ["/app/cortex-stt-server"]
 CMD ["--data-dir", "/data", "--static-dir", "/app/web/dist", "--gpu-mode", "cuda"]
 
 # ============================================================================
@@ -146,7 +146,7 @@ RUN \
 WORKDIR /app
 
 # Copy binary and web assets
-COPY --from=rust-builder /wyoming-asr /app/wyoming-asr
+COPY --from=rust-builder /cortex-stt-server /app/cortex-stt-server
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 # Copy S6-overlay service definitions
@@ -155,7 +155,7 @@ COPY rootfs /
 # Create data directories (S6 runs as root, binary drops privileges)
 RUN mkdir -p /data/models /data/audio
 
-EXPOSE 10300 10400
+EXPOSE 10400
 
 # Healthcheck: 10 minute start period for first-run model download
 HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
