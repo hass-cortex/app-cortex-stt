@@ -3,7 +3,7 @@ use cortex_stt_server::db::records::{CreateRecord, ListRecordsFilter, Transcript
 
 fn sample_record() -> CreateRecord {
     CreateRecord {
-        source: TranscriptionSource::External,
+        source: TranscriptionSource::HttpApi,
         language: Some("en".to_string()),
         model_id: "whisper-tiny".to_string(),
         audio_duration_ms: 3200,
@@ -13,6 +13,7 @@ fn sample_record() -> CreateRecord {
         audio_path: None,
         has_error: false,
         error_message: None,
+        api_key_id: None,
     }
 }
 
@@ -40,7 +41,7 @@ async fn test_insert_and_get_record() {
         .unwrap()
         .expect("record should exist");
     assert_eq!(fetched.id, id);
-    assert_eq!(fetched.source, "external");
+    assert_eq!(fetched.source, "http_api");
     assert_eq!(fetched.language.as_deref(), Some("en"));
     assert_eq!(fetched.model_id, "whisper-tiny");
     assert_eq!(fetched.audio_duration_ms, 3200);
@@ -72,7 +73,7 @@ async fn test_list_records_with_filters() {
 
     // Insert records with different sources and models
     let mut rec1 = sample_record();
-    rec1.source = TranscriptionSource::External;
+    rec1.source = TranscriptionSource::HttpApi;
     rec1.model_id = "whisper-tiny".to_string();
     db.insert_record(&rec1).await.unwrap();
 
@@ -82,7 +83,7 @@ async fn test_list_records_with_filters() {
     db.insert_record(&rec2).await.unwrap();
 
     let mut rec3 = sample_record();
-    rec3.source = TranscriptionSource::External;
+    rec3.source = TranscriptionSource::HttpApi;
     rec3.model_id = "whisper-large".to_string();
     db.insert_record(&rec3).await.unwrap();
 
@@ -94,14 +95,14 @@ async fn test_list_records_with_filters() {
     assert_eq!(all.len(), 3);
 
     // Filter by source
-    let external_only = db
+    let http_only = db
         .list_records(&ListRecordsFilter {
-            source: Some(TranscriptionSource::External),
+            source: Some(TranscriptionSource::HttpApi),
             ..Default::default()
         })
         .await
         .unwrap();
-    assert_eq!(external_only.len(), 2);
+    assert_eq!(http_only.len(), 3);
 
     // Filter by model_id
     let large_only = db

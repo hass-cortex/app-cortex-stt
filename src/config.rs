@@ -65,6 +65,10 @@ pub struct AppConfig {
     #[arg(long, env = "STATIC_DIR")]
     pub static_dir: Option<PathBuf>,
 
+    /// Pre-load the default model on startup so the first request is fast.
+    #[arg(long, env = "PRELOAD_MODEL", default_value_t = false)]
+    pub preload_model: bool,
+
     /// Pre-configured API key (created on startup if not already in DB).
     /// Useful for development, testing, and CI. Skips the bootstrap dance.
     #[arg(long, env = "API_KEY")]
@@ -95,6 +99,7 @@ pub struct FileConfig {
     pub pool_acquire_timeout_secs: Option<u64>,
     pub gpu_mode: Option<String>,
     pub log_level: Option<String>,
+    pub preload_model: Option<bool>,
     pub static_dir: Option<PathBuf>,
     pub api_key: Option<String>,
 }
@@ -147,6 +152,9 @@ impl FileConfig {
         }
         if let Some(ref v) = self.log_level {
             set_if_unset("RUST_LOG", v);
+        }
+        if let Some(v) = self.preload_model {
+            set_if_unset("PRELOAD_MODEL", &v.to_string());
         }
         if let Some(ref v) = self.static_dir {
             set_if_unset("STATIC_DIR", &v.to_string_lossy());

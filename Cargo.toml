@@ -50,7 +50,7 @@ tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 
 [features]
-default = []
+default = ["all-engines"]
 whisper = ["transcribe-rs", "transcribe-rs/whisper-cpp"]
 whisper-cuda = ["whisper", "transcribe-rs/whisper-cuda"]
 onnx = ["transcribe-rs", "transcribe-rs/onnx"]

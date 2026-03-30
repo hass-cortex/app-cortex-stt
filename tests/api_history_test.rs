@@ -50,6 +50,7 @@ async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
                 audio_path: None,
                 has_error: false,
                 error_message: None,
+                api_key_id: None,
             })
             .await
             .unwrap();
@@ -186,30 +187,12 @@ async fn test_list_history_with_source_filter() {
     // Insert HTTP API records.
     insert_test_records(&state.db, 3).await;
 
-    // Insert an External record.
-    state
-        .db
-        .insert_record(&CreateRecord {
-            source: TranscriptionSource::External,
-            language: Some("en".into()),
-            model_id: "whisper-small".into(),
-            audio_duration_ms: 2000,
-            inference_ms: 150,
-            text: "external transcription".into(),
-            segments_json: "[]".into(),
-            audio_path: None,
-            has_error: false,
-            error_message: None,
-        })
-        .await
-        .unwrap();
-
     let app = test_app(state);
 
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/history?source=external")
+                .uri("/api/history?source=http_api")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -223,6 +206,6 @@ async fn test_list_history_with_source_filter() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let records = json.as_array().unwrap();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["source"], "external");
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0]["source"], "http_api");
 }

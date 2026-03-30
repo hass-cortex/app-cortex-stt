@@ -105,6 +105,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
+    // Pre-load default model if configured.
+    if config.preload_model {
+        tracing::info!(model = %default_model, "Pre-loading default model");
+        match engine_manager.acquire(&default_model).await {
+            Ok(guard) => {
+                drop(guard); // Release back to pool immediately.
+                tracing::info!(model = %default_model, "Default model pre-loaded");
+            }
+            Err(e) => {
+                tracing::warn!(model = %default_model, error = %e, "Failed to pre-load default model");
+            }
+        }
+    }
+
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::new());
 
