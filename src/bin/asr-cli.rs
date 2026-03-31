@@ -463,6 +463,7 @@ async fn register_engine(
                 model_path,
                 engine_type.clone(),
                 transcribe_rs::onnx::Quantization::Int8,
+                cortex_stt_server::api::settings::ComputeDevice::default(),
             );
             engine_manager.register(model_id, factory).await;
         }

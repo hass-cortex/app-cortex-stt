@@ -15,9 +15,14 @@ use crate::error::AsrError;
 /// Wrapper around any transcribe-rs ONNX model implementing our SpeechEngine trait.
 pub struct OnnxBridge {
     engine: Box<dyn SpeechModel>,
+    device: String,
 }
 
 impl SpeechEngine for OnnxBridge {
+    fn device(&self) -> &str {
+        &self.device
+    }
+
     fn capabilities(&self) -> EngineCapabilities {
         let caps = self.engine.capabilities();
         EngineCapabilities {
@@ -65,8 +70,26 @@ pub fn onnx_factory(
     model_dir: PathBuf,
     engine_type: EngineType,
     quantization: Quantization,
+    compute_device: crate::api::settings::ComputeDevice,
 ) -> crate::engine::manager::SharedEngineFactory {
     std::sync::Arc::new(move || {
+        // Save and set accelerator based on compute device preference.
+        let prev = transcribe_rs::get_ort_accelerator();
+        match compute_device {
+            crate::api::settings::ComputeDevice::Cpu => {
+                transcribe_rs::set_ort_accelerator(transcribe_rs::OrtAccelerator::CpuOnly);
+            }
+            crate::api::settings::ComputeDevice::Gpu => {
+                // Keep current accelerator (don't change).
+            }
+            crate::api::settings::ComputeDevice::Auto => {
+                if quantization == Quantization::Int8 {
+                    transcribe_rs::set_ort_accelerator(transcribe_rs::OrtAccelerator::CpuOnly);
+                }
+                // else keep current
+            }
+        }
+
         let engine: Box<dyn SpeechModel> = match engine_type {
             EngineType::SenseVoice => {
                 let model = transcribe_rs::onnx::sense_voice::SenseVoiceModel::load(
@@ -118,7 +141,18 @@ pub fn onnx_factory(
                         })?;
                 Box::new(model)
             }
+            #[cfg(feature = "qwen3")]
+            EngineType::Qwen3 => {
+                let model =
+                    transcribe_rs::onnx::qwen3::Qwen3Model::load(&model_dir, &quantization)
+                        .map_err(|e| AsrError::InferenceFailed {
+                            model_id: model_dir.display().to_string(),
+                            detail: format!("Failed to load Qwen3: {e}"),
+                        })?;
+                Box::new(model)
+            }
             _ => {
+                transcribe_rs::set_ort_accelerator(prev);
                 return Err(AsrError::InferenceFailed {
                     model_id: model_dir.display().to_string(),
                     detail: format!("Unsupported ONNX engine type: {:?}", engine_type),
@@ -126,6 +160,16 @@ pub fn onnx_factory(
             }
         };
 
-        Ok(Box::new(OnnxBridge { engine }) as Box<dyn SpeechEngine>)
+        // Determine actual device used.
+        let actual_device = if transcribe_rs::get_ort_accelerator() == transcribe_rs::OrtAccelerator::CpuOnly {
+            "cpu".to_string()
+        } else {
+            "cuda".to_string()
+        };
+
+        // Restore previous accelerator setting.
+        transcribe_rs::set_ort_accelerator(prev);
+
+        Ok(Box::new(OnnxBridge { engine, device: actual_device }) as Box<dyn SpeechEngine>)
     })
 }

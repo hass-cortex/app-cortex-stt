@@ -81,17 +81,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_manager = ModelManager::new(model_dir);
 
     // Create engine manager (returns Arc<EngineManager>).
+    // DB settings take precedence over CLI defaults for engine behavior.
+    let db_settings = db.load_settings().await.ok();
+    let idle_timeout = match db_settings.as_ref().and_then(|s| s.idle_timeout_secs) {
+        Some(0) => None,
+        Some(secs) => Some(Duration::from_secs(secs)),
+        None if db_settings.is_some() => None, // DB explicitly set to null = keep loaded forever
+        None => {
+            // No DB settings yet, fall back to CLI
+            if config.idle_timeout_secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(config.idle_timeout_secs))
+            }
+        }
+    };
     let engine_config = EngineManagerConfig {
-        pool_size: config.pool_size,
-        max_loaded_models: config.max_loaded_models,
-        idle_timeout: if config.idle_timeout_secs == 0 {
-            None
-        } else {
-            Some(Duration::from_secs(config.idle_timeout_secs))
-        },
+        pool_size: db_settings
+            .as_ref()
+            .map(|s| s.pool_size)
+            .unwrap_or(config.pool_size),
+        max_loaded_models: db_settings
+            .as_ref()
+            .map(|s| s.max_loaded_models)
+            .unwrap_or(config.max_loaded_models),
+        idle_timeout,
         acquire_timeout: Duration::from_secs(config.pool_acquire_timeout_secs),
         idle_check_interval: Duration::from_secs(10),
     };
+    tracing::info!(
+        pool_size = engine_config.pool_size,
+        max_loaded_models = engine_config.max_loaded_models,
+        idle_timeout = ?engine_config.idle_timeout,
+        "Engine config resolved (DB settings take precedence)"
+    );
     let engine_manager = EngineManager::new(engine_config);
 
     // Spawn background idle model watcher.
@@ -99,17 +122,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register engine factories for downloaded registry models.
     let model_dir_path = config.model_dir();
+    let device_overrides = db_settings
+        .as_ref()
+        .map(|s| s.device_overrides.clone())
+        .unwrap_or_default();
     cortex_stt_server::engine::register::register_downloaded_models(
         &engine_manager,
         &model_dir_path,
+        &device_overrides,
     )
     .await;
 
     // Pre-load default model if configured (CLI flag OR settings DB).
     let preload = config.preload_model
-        || db
-            .load_settings()
-            .await
+        || db_settings
+            .as_ref()
             .map(|s| s.preload_default_model)
             .unwrap_or(false);
     if preload {

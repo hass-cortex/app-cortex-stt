@@ -114,6 +114,28 @@ impl ModelPool {
 }
 
 impl PoolGuard {
+    /// Returns the compute device of the pooled engine instance.
+    pub fn device(&self) -> &str {
+        let lock = self.pool.instances[self.index]
+            .lock()
+            .expect("engine mutex poisoned");
+        match lock.as_ref() {
+            Some(engine) => {
+                // SAFETY: The device string is stable for the lifetime of the engine.
+                // We need to extend the lifetime past the MutexGuard.
+                let device: &str = engine.device();
+                // Copy to avoid lifetime issue with the lock guard.
+                // Return a static str for known values.
+                match device {
+                    "cpu" => "cpu",
+                    "cuda" => "cuda",
+                    _ => "cpu",
+                }
+            }
+            None => "cpu",
+        }
+    }
+
     /// Run transcription on the pooled engine instance.
     ///
     /// If the engine panics during inference, the instance is discarded and

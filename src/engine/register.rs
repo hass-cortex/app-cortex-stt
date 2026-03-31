@@ -18,7 +18,11 @@ use crate::engine::registry::{EngineType, builtin_models};
 /// with the EngineManager. Returns the number of factories registered.
 ///
 /// This is deterministic — no directory scanning or type guessing.
-pub async fn register_downloaded_models(engine_manager: &EngineManager, model_dir: &Path) -> u32 {
+pub async fn register_downloaded_models(
+    engine_manager: &EngineManager,
+    model_dir: &Path,
+    device_overrides: &std::collections::HashMap<String, crate::api::settings::ComputeDevice>,
+) -> u32 {
     let mut registered = 0u32;
 
     for def in builtin_models() {
@@ -31,7 +35,8 @@ pub async fn register_downloaded_models(engine_manager: &EngineManager, model_di
             continue;
         }
 
-        let factory = create_factory(&def.engine_type, model_path.clone());
+        let device = device_overrides.get(&def.id).cloned().unwrap_or_default();
+        let factory = create_factory(&def.engine_type, model_path.clone(), device);
         let Some(factory) = factory else {
             continue;
         };
@@ -60,7 +65,19 @@ pub async fn register_downloaded_models(engine_manager: &EngineManager, model_di
 fn create_factory(
     engine_type: &EngineType,
     model_path: std::path::PathBuf,
+    compute_device: crate::api::settings::ComputeDevice,
 ) -> Option<crate::engine::manager::SharedEngineFactory> {
+    // Infer quantization from model path: "int8" in filename → Int8, else None (FP32).
+    #[cfg(any(feature = "onnx", feature = "qwen3"))]
+    let quantization = {
+        let name = model_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.contains("int8") {
+            transcribe_rs::onnx::Quantization::Int8
+        } else {
+            transcribe_rs::onnx::Quantization::FP32
+        }
+    };
+
     match engine_type {
         #[cfg(feature = "whisper")]
         EngineType::Whisper => Some(crate::engine::whisper_bridge::whisper_factory(model_path)),
@@ -73,7 +90,16 @@ fn create_factory(
         | EngineType::Canary => Some(crate::engine::onnx_bridge::onnx_factory(
             model_path,
             engine_type.clone(),
-            transcribe_rs::onnx::Quantization::Int8,
+            quantization,
+            compute_device,
+        )),
+
+        #[cfg(feature = "qwen3")]
+        EngineType::Qwen3 => Some(crate::engine::onnx_bridge::onnx_factory(
+            model_path,
+            engine_type.clone(),
+            quantization,
+            compute_device,
         )),
 
         _ => {

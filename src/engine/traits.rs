@@ -38,6 +38,11 @@ pub trait SpeechEngine: Send {
     /// Returns the static capabilities of this engine instance.
     fn capabilities(&self) -> EngineCapabilities;
 
+    /// Returns the compute device this engine instance is using ("cpu" or "cuda").
+    fn device(&self) -> &str {
+        "cpu"
+    }
+
     /// Transcribe PCM f32 audio samples into text.
     fn transcribe(
         &mut self,

@@ -35,7 +35,7 @@ async fn run_pipeline(model_id: &str, audio_file: &str, lang: &str) {
     });
 
     // 2. Auto-register from registry (same function as main.rs)
-    let registered = register_downloaded_models(&engine_manager, &mdir).await;
+    let registered = register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
 
     // 3. Try acquire — if model not registered, it wasn't downloaded
     let mut guard = match engine_manager.acquire(model_id).await {
