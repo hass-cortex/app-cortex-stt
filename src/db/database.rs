@@ -90,6 +90,23 @@ impl Database {
             .await
             .map_err(map_db_err)?;
 
+        // Migration: add device column to records
+        self.conn
+            .call(|conn| {
+                let has_device: bool = conn
+                    .prepare("SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='device'")?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_device {
+                    conn.execute_batch(
+                        "ALTER TABLE records ADD COLUMN device TEXT NOT NULL DEFAULT 'cpu';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
         Ok(())
     }
 

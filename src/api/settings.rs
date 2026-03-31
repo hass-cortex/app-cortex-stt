@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -8,6 +9,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::error::ApiError;
 use crate::state::AppState;
+
+/// Compute device preference for a model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ComputeDevice {
+    #[default]
+    Auto,
+    Cpu,
+    Gpu,
+}
 
 /// Retention policy controlling how old data is cleaned up.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,6 +60,9 @@ pub struct Settings {
     /// Timezone for display. "auto" = browser detection, or IANA timezone (e.g., "Asia/Taipei")
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    /// Per-model compute device override. Key = model_id.
+    #[serde(default)]
+    pub device_overrides: HashMap<String, ComputeDevice>,
 }
 
 fn default_log_level() -> String {
@@ -74,6 +88,7 @@ impl Default for Settings {
             cors_allowed_origins: vec![],
             log_level: default_log_level(),
             timezone: default_timezone(),
+            device_overrides: HashMap::new(),
         }
     }
 }

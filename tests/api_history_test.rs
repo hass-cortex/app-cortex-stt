@@ -51,6 +51,7 @@ async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
                 has_error: false,
                 error_message: None,
                 api_key_id: None,
+                device: "cpu".to_string(),
             })
             .await
             .unwrap();

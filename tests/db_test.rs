@@ -14,6 +14,7 @@ fn sample_record() -> CreateRecord {
         has_error: false,
         error_message: None,
         api_key_id: None,
+        device: "cpu".to_string(),
     }
 }
 
