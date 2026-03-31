@@ -46,7 +46,7 @@ function parseSegments(segmentsJson: string | null): TranscriptionSegment[] {
 
 export function HistoryList() {
 	const [filters, setFilters] = useState<HistoryFilters>({ limit: 50 });
-	const [expandedId, setExpandedId] = useState<string | null>(null);
+	const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 	const { data, isLoading, error } = useHistoryList(filters);
 
 	const updateFilter = (key: keyof HistoryFilters, value: string) => {
@@ -58,7 +58,15 @@ export function HistoryList() {
 	};
 
 	const toggleExpand = (id: string) => {
-		setExpandedId((prev) => (prev === id ? null : id));
+		setExpandedIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) {
+				next.delete(id);
+			} else {
+				next.add(id);
+			}
+			return next;
+		});
 	};
 
 	if (error) {
@@ -111,11 +119,22 @@ export function HistoryList() {
 				/>
 			) : (
 				<div className="space-y-1">
+					{expandedIds.size >= 2 && (
+						<div className="flex justify-end">
+							<Button
+								size="sm"
+								variant="ghost"
+								onClick={() => setExpandedIds(new Set())}
+							>
+								Collapse All
+							</Button>
+						</div>
+					)}
 					{records.map((record) => (
 						<HistoryRow
 							key={record.id}
 							record={record}
-							isExpanded={expandedId === record.id}
+							isExpanded={expandedIds.has(record.id)}
 							onToggle={() => toggleExpand(record.id)}
 						/>
 					))}
