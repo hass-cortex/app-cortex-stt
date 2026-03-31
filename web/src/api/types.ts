@@ -163,6 +163,7 @@ export interface AppSettings {
 	record_retention: RetentionPolicy;
 	cors_allowed_origins: string[];
 	log_level: string;
+	timezone: string;
 }
 
 // --- Errors ---

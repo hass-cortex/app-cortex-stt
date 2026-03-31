@@ -7,7 +7,9 @@ import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useDeleteHistoryRecord, useHistoryList } from "@/hooks/use-history";
-import { formatDuration, formatRelativeTime, formatTimestamp } from "@/lib/format";
+import { useSettings } from "@/hooks/use-settings";
+import { formatDuration } from "@/lib/format";
+import { formatTimestamp } from "@/utils/time";
 import { AlertCircle, ChevronDown, ChevronRight, History, Mic, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { AudioPlayer } from "./audio-player";
@@ -48,6 +50,8 @@ export function HistoryList() {
 	const [filters, setFilters] = useState<HistoryFilters>({ limit: 50 });
 	const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 	const { data, isLoading, error } = useHistoryList(filters);
+	const { data: settings } = useSettings();
+	const timezone = settings?.timezone ?? "auto";
 
 	const updateFilter = (key: keyof HistoryFilters, value: string) => {
 		setFilters((prev) => ({
@@ -136,6 +140,7 @@ export function HistoryList() {
 							record={record}
 							isExpanded={expandedIds.has(record.id)}
 							onToggle={() => toggleExpand(record.id)}
+							timezone={timezone}
 						/>
 					))}
 				</div>
@@ -148,10 +153,12 @@ function HistoryRow({
 	record,
 	isExpanded,
 	onToggle,
+	timezone,
 }: {
 	record: TranscriptionRecord;
 	isExpanded: boolean;
 	onToggle: () => void;
+	timezone: string;
 }) {
 	return (
 		<div
@@ -178,7 +185,7 @@ function HistoryRow({
 						{record.text || <span className="text-text-muted italic">Empty</span>}
 					</p>
 					<div className="flex items-center gap-2 mt-0.5">
-						<span className="text-xs text-text-muted">{formatRelativeTime(record.timestamp)}</span>
+						<span className="text-xs text-text-muted">{formatTimestamp(record.timestamp, timezone)}</span>
 						<Badge variant="accent">
 							{formatSource(record.source)}
 						</Badge>
@@ -199,12 +206,12 @@ function HistoryRow({
 			</button>
 
 			{/* Expanded detail */}
-			{isExpanded && <ExpandedDetail record={record} />}
+			{isExpanded && <ExpandedDetail record={record} timezone={timezone} />}
 		</div>
 	);
 }
 
-function ExpandedDetail({ record }: { record: TranscriptionRecord }) {
+function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; timezone: string }) {
 	const deleteMutation = useDeleteHistoryRecord();
 	const { toast } = useToast();
 
@@ -225,7 +232,7 @@ function ExpandedDetail({ record }: { record: TranscriptionRecord }) {
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 text-xs">
 				<div>
 					<span className="text-text-muted">Timestamp</span>
-					<p className="text-text-primary">{formatTimestamp(record.timestamp)}</p>
+					<p className="text-text-primary">{formatTimestamp(record.timestamp, timezone)}</p>
 				</div>
 				<div>
 					<span className="text-text-muted">Audio Duration</span>
