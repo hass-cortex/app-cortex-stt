@@ -106,6 +106,7 @@ export interface TranscriptionRecord {
 	has_error: boolean;
 	error_message: string | null;
 	api_key_id: string | null;
+	device: string;
 }
 
 export interface TranscriptionSegment {
@@ -144,6 +145,8 @@ export interface GeneratedKey {
 
 // --- Settings ---
 
+export type ComputeDevice = "auto" | "cpu" | "gpu";
+
 export type RetentionPolicyType = "Count" | "Days" | "DiskLimitMb" | "Unlimited";
 
 export interface RetentionPolicy {
@@ -164,6 +167,7 @@ export interface AppSettings {
 	cors_allowed_origins: string[];
 	log_level: string;
 	timezone: string;
+	device_overrides: Record<string, ComputeDevice>;
 }
 
 // --- Errors ---

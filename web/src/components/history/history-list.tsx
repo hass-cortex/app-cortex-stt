@@ -196,6 +196,7 @@ function HistoryRow({
 				<div className="text-right shrink-0 hidden sm:block">
 					<p className="text-xs text-text-secondary">{formatDuration(record.audio_duration_ms)}</p>
 					<p className="text-xs text-text-muted">{formatDuration(record.inference_ms)} inference</p>
+					<p className="text-xs text-text-muted">{record.device?.toUpperCase() ?? "CPU"}</p>
 				</div>
 
 				{isExpanded ? (
@@ -249,6 +250,14 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 							? (record.inference_ms / record.audio_duration_ms).toFixed(2)
 							: "N/A"}
 						x
+					</p>
+				</div>
+				<div>
+					<span className="text-text-muted">Device</span>
+					<p className="text-text-primary">
+						<Badge variant={record.device === "cuda" ? "info" : "default"}>
+							{record.device?.toUpperCase() ?? "CPU"}
+						</Badge>
 					</p>
 				</div>
 			</div>
