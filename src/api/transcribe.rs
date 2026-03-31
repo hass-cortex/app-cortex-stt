@@ -52,6 +52,7 @@ pub struct TranscribeResponse {
     pub model: String,
     pub duration_ms: u64,
     pub inference_ms: u64,
+    pub device: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ async fn run_transcription(
 ) -> Result<TranscribeResponse, crate::error::AsrError> {
     let mut guard = state.engine_manager.acquire(model).await?;
 
+    let device = guard.device().to_string();
     let model_owned = model.to_string();
     let inference_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options))
@@ -116,6 +118,7 @@ async fn run_transcription(
         model: model_owned,
         duration_ms,
         inference_ms,
+        device,
     })
 }
 
@@ -134,6 +137,7 @@ async fn save_to_history(
     samples: &[f32],
     response: &TranscribeResponse,
     api_key_id: Option<String>,
+    device: String,
 ) {
     let save_audio = state
         .db
@@ -170,6 +174,7 @@ async fn save_to_history(
         has_error: false,
         error_message: None,
         api_key_id,
+        device,
     };
 
     if let Err(e) = state.db.insert_record(&record).await {
@@ -273,6 +278,7 @@ async fn transcribe_sync(
             (status, axum::Json(api_error))
         })?;
 
+    let device = response.device.clone();
     save_to_history(
         &state,
         TranscriptionSource::HttpApi,
@@ -281,6 +287,7 @@ async fn transcribe_sync(
         &samples_copy,
         &response,
         api_key_id,
+        device,
     )
     .await;
 
@@ -345,6 +352,7 @@ async fn transcribe_sse(
         // Run full inference on the complete audio.
         match run_transcription(&state, &model, samples, options, duration_ms).await {
             Ok(response) => {
+                let device = response.device.clone();
                 save_to_history(
                     &state,
                     TranscriptionSource::HttpApi,
@@ -353,6 +361,7 @@ async fn transcribe_sse(
                     &samples_copy,
                     &response,
                     api_key_id,
+                    device,
                 )
                 .await;
 
@@ -442,6 +451,7 @@ async fn transcribe_async(
 
         match run_transcription(&state_inner, &model, samples, options, duration_ms).await {
             Ok(response) => {
+                let device = response.device.clone();
                 save_to_history(
                     &state_inner,
                     TranscriptionSource::HttpApi,
@@ -450,6 +460,7 @@ async fn transcribe_async(
                     &samples_copy,
                     &response,
                     api_key_id,
+                    device,
                 )
                 .await;
 
