@@ -46,10 +46,17 @@ pub struct Settings {
     pub cors_allowed_origins: Vec<String>,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// Timezone for display. "auto" = browser detection, or IANA timezone (e.g., "Asia/Taipei")
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
 }
 
 fn default_log_level() -> String {
     "info".into()
+}
+
+fn default_timezone() -> String {
+    "auto".into()
 }
 
 impl Default for Settings {
@@ -66,6 +73,7 @@ impl Default for Settings {
             record_retention: RetentionPolicy::Days(30),
             cors_allowed_origins: vec![],
             log_level: default_log_level(),
+            timezone: default_timezone(),
         }
     }
 }
