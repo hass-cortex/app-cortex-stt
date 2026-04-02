@@ -42,7 +42,8 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
     });
 
     // Register real engines from downloaded models.
-    let registered = register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
+    let registered =
+        register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
     eprintln!("Registered {registered} models from {}", mdir.display());
 
     let model_manager = ModelManager::new(mdir);

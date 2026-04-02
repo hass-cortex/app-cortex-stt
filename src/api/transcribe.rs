@@ -224,7 +224,7 @@ async fn transcribe_dispatch(
     auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
 ) -> Response {
-    let api_key_id = auth_key.map(|ext| ext.0 .0);
+    let api_key_id = auth_key.map(|ext| ext.0.0);
     let accept = headers
         .get("accept")
         .and_then(|v| v.to_str().ok())
@@ -403,7 +403,7 @@ async fn transcribe_async(
     auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
 ) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), (StatusCode, axum::Json<ApiError>)> {
-    let api_key_id = auth_key.map(|ext| ext.0 .0);
+    let api_key_id = auth_key.map(|ext| ext.0.0);
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())

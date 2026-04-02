@@ -94,7 +94,9 @@ impl Database {
         self.conn
             .call(|conn| {
                 let has_device: bool = conn
-                    .prepare("SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='device'")?
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='device'",
+                    )?
                     .query_row([], |row| row.get::<_, i64>(0))
                     .map(|c| c > 0)?;
                 if !has_device {
