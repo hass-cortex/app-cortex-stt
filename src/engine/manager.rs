@@ -239,7 +239,6 @@ impl EngineManager {
         };
 
         tokio::spawn(async move {
-
             let mut ticker = tokio::time::interval(interval);
             loop {
                 ticker.tick().await;

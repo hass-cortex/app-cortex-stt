@@ -67,11 +67,16 @@ fn create_factory(
     model_path: std::path::PathBuf,
     compute_device: crate::api::settings::ComputeDevice,
 ) -> Option<crate::engine::manager::SharedEngineFactory> {
-    // Infer quantization from model path: "int8" in filename → Int8, else None (FP32).
-    #[cfg(any(feature = "onnx", feature = "qwen3"))]
+    // Infer quantization from model path filename.
+    #[cfg(feature = "onnx")]
     let quantization = {
-        let name = model_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.contains("int8") {
+        let name = model_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if name.contains("int4") {
+            transcribe_rs::onnx::Quantization::Int4
+        } else if name.contains("int8") {
             transcribe_rs::onnx::Quantization::Int8
         } else {
             transcribe_rs::onnx::Quantization::FP32
@@ -87,15 +92,8 @@ fn create_factory(
         | EngineType::Parakeet
         | EngineType::GigaAM
         | EngineType::Moonshine
-        | EngineType::Canary => Some(crate::engine::onnx_bridge::onnx_factory(
-            model_path,
-            engine_type.clone(),
-            quantization,
-            compute_device,
-        )),
-
-        #[cfg(feature = "qwen3")]
-        EngineType::Qwen3 => Some(crate::engine::onnx_bridge::onnx_factory(
+        | EngineType::Canary
+        | EngineType::CohereTranscribe => Some(crate::engine::onnx_bridge::onnx_factory(
             model_path,
             engine_type.clone(),
             quantization,

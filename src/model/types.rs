@@ -100,21 +100,25 @@ impl ModelInfo {
     }
 }
 
+/// Current phase of a download operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadPhase {
+    Downloading,
+    Verifying,
+    Extracting,
+    Completed,
+    Failed,
+}
+
 /// Progress information for an active download.
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
     pub model_id: String,
+    pub status: DownloadPhase,
     pub downloaded_bytes: u64,
-    pub total_bytes: Option<u64>,
-    pub percent: Option<f32>,
-}
-
-/// Status of a download operation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DownloadStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Failed,
+    pub total_bytes: u64,
+    pub speed_bps: f64,
+    pub eta_secs: Option<f64>,
+    pub error: Option<String>,
 }

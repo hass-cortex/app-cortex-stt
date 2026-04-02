@@ -9,6 +9,7 @@ pub enum EngineType {
     GigaAM,
     Moonshine,
     Canary,
+    CohereTranscribe,
 }
 
 /// Static metadata describing a speech-to-text model available in the
@@ -54,6 +55,11 @@ const PARAKEET_V3_LANGUAGES: &[&str] = &[
 
 /// Canary multilingual language list.
 const CANARY_LANGUAGES: &[&str] = &["en", "de", "es", "fr"];
+
+/// Cohere Transcribe multilingual language list.
+const COHERE_LANGUAGES: &[&str] = &[
+    "en", "de", "fr", "es", "it", "pt", "nl", "pl", "el", "ar", "vi", "zh", "ja", "ko",
+];
 
 /// Helper to convert a `&[&str]` language slice into `Vec<String>`.
 fn langs(codes: &[&str]) -> Vec<String> {
@@ -316,6 +322,26 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             requires_avx: true,
             disabled: false,
         },
+        // ── Cohere Transcribe models ───────────────────────────────────
+        ModelDefinition {
+            id: "cohere-int8".to_string(),
+            name: "Cohere Transcribe 2B (INT8)".to_string(),
+            description: "Cohere Transcribe 2B, INT8 quantised, #1 on Open ASR Leaderboard"
+                .to_string(),
+            engine_type: EngineType::CohereTranscribe,
+            filename: "cohere-int8".to_string(),
+            is_directory: true,
+            url: "https://blob.handy.computer/cohere-int8.tar.gz".to_string(),
+            sha256: "ea2257d52434f3644574f187dcdcf666e302cd11b92866116ab8e14cd9c887f0".to_string(),
+            archive_dir_name: "cohere-int8".to_string(),
+            size_mb: 1708,
+            accuracy_score: 0.90,
+            speed_score: 0.60,
+            supported_languages: langs(COHERE_LANGUAGES),
+            requires_cuda: false,
+            requires_avx: true,
+            disabled: false,
+        },
     ]
 }
 
@@ -326,7 +352,7 @@ mod tests {
     #[test]
     fn builtin_models_has_expected_count() {
         let models = builtin_models();
-        assert_eq!(models.len(), 13);
+        assert_eq!(models.len(), 14);
     }
 
     #[test]

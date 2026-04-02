@@ -12,7 +12,7 @@ use url::Url;
 
 use crate::error::AsrError;
 use crate::model::manager::ModelManager;
-use crate::model::types::DownloadProgress;
+use crate::model::types::{DownloadPhase, DownloadProgress};
 
 /// Hosts allowed for model downloads.
 pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co", "github.com", "blob.handy.computer"];
@@ -85,7 +85,7 @@ pub struct DownloadHandle {
 /// 2. Streams the response body in chunks, updating progress via the watch channel.
 /// 3. Verifies SHA-256 on completion (if `expected_sha256` is non-empty and config allows).
 /// 4. Deletes corrupted files on hash mismatch.
-pub fn download_model(
+pub async fn download_model(
     url: &str,
     dest_path: PathBuf,
     expected_sha256: &str,
@@ -102,10 +102,17 @@ pub fn download_model(
 
     let initial_progress = DownloadProgress {
         model_id: model_id.to_string(),
+        status: DownloadPhase::Downloading,
         downloaded_bytes: 0,
-        total_bytes: None,
-        percent: None,
+        total_bytes: 0,
+        speed_bps: 0.0,
+        eta_secs: None,
+        error: None,
     };
+
+    // Register initial progress immediately so list_models() sees "downloading" status
+    // before the first HTTP chunk arrives.
+    model_manager.set_download_progress(initial_progress.clone()).await;
 
     let (tx, rx) = watch::channel(initial_progress.clone());
 
@@ -125,11 +132,38 @@ pub fn download_model(
         )
         .await;
 
-        if let Err(e) = result {
-            error!(model_id = %model_id, error = %e, "download failed");
+        match &result {
+            Ok(()) => {
+                let progress = DownloadProgress {
+                    model_id: model_id.clone(),
+                    status: DownloadPhase::Completed,
+                    downloaded_bytes: 0,
+                    total_bytes: 0,
+                    speed_bps: 0.0,
+                    eta_secs: None,
+                    error: None,
+                };
+                model_manager.set_download_progress(progress.clone()).await;
+                let _ = tx.send(progress);
+            }
+            Err(e) => {
+                error!(model_id = %model_id, error = %e, "download failed");
+                let progress = DownloadProgress {
+                    model_id: model_id.clone(),
+                    status: DownloadPhase::Failed,
+                    downloaded_bytes: 0,
+                    total_bytes: 0,
+                    speed_bps: 0.0,
+                    eta_secs: None,
+                    error: Some(e.to_string()),
+                };
+                model_manager.set_download_progress(progress.clone()).await;
+                let _ = tx.send(progress);
+            }
         }
 
-        // Clean up progress tracking regardless of outcome.
+        // Brief delay so SSE clients can pick up the terminal status.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         model_manager.remove_download_progress(&model_id).await;
     });
 
@@ -237,6 +271,7 @@ async fn download_task(
         response.content_length()
     };
 
+    let total = total_bytes.unwrap_or(0);
     let mut downloaded_bytes = existing_bytes;
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -245,6 +280,7 @@ async fn download_task(
         .await?;
 
     let mut stream = response.bytes_stream();
+    let start_time = std::time::Instant::now();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| AsrError::DownloadFailed {
@@ -255,23 +291,30 @@ async fn download_task(
         file.write_all(&chunk).await?;
         downloaded_bytes += chunk.len() as u64;
 
-        let percent = total_bytes.map(|total| {
-            if total > 0 {
-                (downloaded_bytes as f32 / total as f32) * 100.0
-            } else {
-                0.0
-            }
-        });
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let net_downloaded = downloaded_bytes.saturating_sub(existing_bytes) as f64;
+        let speed_bps = if elapsed > 0.0 {
+            net_downloaded / elapsed
+        } else {
+            0.0
+        };
+        let eta_secs = if speed_bps > 0.0 && total > downloaded_bytes {
+            Some((total - downloaded_bytes) as f64 / speed_bps)
+        } else {
+            None
+        };
 
         let progress = DownloadProgress {
             model_id: model_id.to_string(),
+            status: DownloadPhase::Downloading,
             downloaded_bytes,
-            total_bytes,
-            percent,
+            total_bytes: total,
+            speed_bps,
+            eta_secs,
+            error: None,
         };
 
         model_manager.set_download_progress(progress.clone()).await;
-        // Ignore send errors (receiver may have been dropped).
         let _ = tx.send(progress);
     }
 
@@ -286,6 +329,18 @@ async fn download_task(
 
     // SHA-256 verification.
     if config.verify_sha256 && !expected_sha256.is_empty() {
+        let verifying = DownloadProgress {
+            model_id: model_id.to_string(),
+            status: DownloadPhase::Verifying,
+            downloaded_bytes,
+            total_bytes: total,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        };
+        model_manager.set_download_progress(verifying.clone()).await;
+        let _ = tx.send(verifying);
+
         let actual = compute_sha256(&part_path).await?;
 
         if actual != expected_sha256 {
@@ -311,6 +366,20 @@ async fn download_task(
     let is_tar_bz2 = url_lower.ends_with(".tar.bz2") || url_lower.ends_with(".tbz2");
 
     if is_tar_gz || is_tar_bz2 {
+        let extracting = DownloadProgress {
+            model_id: model_id.to_string(),
+            status: DownloadPhase::Extracting,
+            downloaded_bytes,
+            total_bytes: total,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        };
+        model_manager
+            .set_download_progress(extracting.clone())
+            .await;
+        let _ = tx.send(extracting);
+
         info!(model_id = %model_id, "extracting archive");
         let parent = dest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let part_path_owned = part_path.clone();
@@ -345,17 +414,19 @@ async fn download_task(
                     })?;
             }
 
-            // Find extracted contents — if single top-level dir, use it; otherwise use tmp_dir
-            let entries: Vec<_> = std::fs::read_dir(&tmp_dir)
-                .map_err(AsrError::Io)?
-                .filter_map(|e| e.ok())
-                .collect();
-
-            let source_dir = if entries.len() == 1 && entries[0].path().is_dir() {
-                entries[0].path()
-            } else {
-                tmp_dir.clone()
-            };
+            // Unwrap single-directory nesting (e.g. archive contains dir/dir/files).
+            let mut source_dir = tmp_dir.clone();
+            loop {
+                let entries: Vec<_> = std::fs::read_dir(&source_dir)
+                    .map_err(AsrError::Io)?
+                    .filter_map(|e| e.ok())
+                    .collect();
+                if entries.len() == 1 && entries[0].path().is_dir() {
+                    source_dir = entries[0].path();
+                } else {
+                    break;
+                }
+            }
 
             // Rename to final destination (atomic swap)
             if dest_path_owned.exists() {

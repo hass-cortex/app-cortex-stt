@@ -14,6 +14,9 @@ async fn all_registry_urls_are_reachable() {
     let mut failures = Vec::new();
 
     for m in &models {
+        if m.disabled {
+            continue;
+        }
         match client.head(&m.url).send().await {
             Ok(resp) if resp.status().is_success() || resp.status().is_redirection() => {}
             Ok(resp) => {

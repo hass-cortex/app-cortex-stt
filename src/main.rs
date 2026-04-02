@@ -1,3 +1,6 @@
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -200,12 +203,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(CorsLayer::permissive());
 
     // Serve web UI static files with SPA fallback routing.
+    // For HA ingress support, inject X-Ingress-Path into index.html at runtime.
     if let Some(web_dir) = config.static_dir() {
         let index_path = web_dir.join("index.html");
-        let serve_dir = ServeDir::new(&web_dir).not_found_service(ServeFile::new(&index_path));
-        // Wrap in a fallback that also falls back to index.html for SPA routes
-        app = app.fallback_service(serve_dir.fallback(ServeFile::new(&index_path)));
-        tracing::info!(?web_dir, "Serving web UI with SPA fallback");
+        let index_template = tokio::fs::read_to_string(&index_path).await?;
+        // Remove index.html from static dir so ServeDir doesn't serve it directly.
+        // We handle index.html ourselves to inject ingress path.
+        let serve_dir = ServeDir::new(&web_dir);
+
+        // Handler that injects ingress path into HTML (for root + SPA fallback)
+        let make_index_handler = |tpl: String| {
+            move |req: axum::extract::Request| {
+                let tpl = tpl.clone();
+                async move {
+                    let ingress_path = req
+                        .headers()
+                        .get("x-ingress-path")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    let html = tpl.replace(
+                        "window.__INGRESS_PATH__ = '';",
+                        &format!(
+                            "window.__INGRESS_PATH__ = {};",
+                            serde_json::to_string(ingress_path)
+                                .unwrap_or_else(|_| "''".to_string())
+                        ),
+                    );
+                    axum::response::Html(html)
+                }
+            }
+        };
+
+        // Explicit root route with ingress injection
+        app = app.route(
+            "/",
+            axum::routing::get(make_index_handler(index_template.clone())),
+        );
+        // SPA fallback: static files first, then index.html with injection for unknown routes
+        let spa_fallback = axum::routing::get(make_index_handler(index_template));
+        app = app.fallback_service(serve_dir.not_found_service(spa_fallback));
+        tracing::info!(?web_dir, "Serving web UI with SPA fallback (ingress-aware)");
     } else {
         tracing::info!("No web UI directory found; static file serving disabled");
     }

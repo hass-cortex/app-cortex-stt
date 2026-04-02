@@ -209,7 +209,8 @@ async fn cmd_download(
             verify_sha256: !def.sha256.is_empty(),
             ..Default::default()
         },
-    )?;
+    )
+    .await?;
     let mut rx = handle.progress_rx;
 
     // Poll progress
@@ -218,12 +219,13 @@ async fn cmd_download(
             break;
         }
         let progress = rx.borrow().clone();
-        if let Some(pct) = progress.percent {
+        if progress.total_bytes > 0 {
+            let pct = progress.downloaded_bytes as f64 / progress.total_bytes as f64 * 100.0;
             print!(
                 "\r  {:.1}% ({} / {} MB)",
                 pct,
                 progress.downloaded_bytes / (1024 * 1024),
-                progress.total_bytes.unwrap_or(0) / (1024 * 1024)
+                progress.total_bytes / (1024 * 1024)
             );
         }
     }

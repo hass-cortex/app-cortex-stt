@@ -43,6 +43,8 @@ impl SpeechEngine for WhisperBridge {
         let tr_options = transcribe_rs::TranscribeOptions {
             language: options.language.clone(),
             translate: options.translate,
+            leading_silence_ms: None,
+            trailing_silence_ms: None,
         };
 
         let result = self.engine.transcribe(samples, &tr_options).map_err(|e| {

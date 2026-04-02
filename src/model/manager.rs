@@ -381,9 +381,12 @@ mod tests {
 
         mgr.set_download_progress(DownloadProgress {
             model_id: "test-model".to_string(),
+            status: crate::model::types::DownloadPhase::Downloading,
             downloaded_bytes: 100,
-            total_bytes: Some(1000),
-            percent: Some(10.0),
+            total_bytes: 1000,
+            speed_bps: 50.0,
+            eta_secs: Some(18.0),
+            error: None,
         })
         .await;
 

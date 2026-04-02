@@ -1,7 +1,7 @@
 //! Bridge between transcribe-rs ONNX models and our SpeechEngine trait.
 //!
 //! Only compiled when the `onnx` feature is enabled.
-//! Supports: SenseVoice, Parakeet, GigaAM, Moonshine, Canary.
+//! Supports: SenseVoice, Parakeet, GigaAM, Moonshine, Canary, CohereTranscribe.
 
 use std::path::PathBuf;
 
@@ -40,6 +40,8 @@ impl SpeechEngine for OnnxBridge {
         let tr_options = transcribe_rs::TranscribeOptions {
             language: options.language.clone(),
             translate: options.translate,
+            leading_silence_ms: None,
+            trailing_silence_ms: None,
         };
 
         let result = self.engine.transcribe(samples, &tr_options).map_err(|e| {
@@ -141,13 +143,12 @@ pub fn onnx_factory(
                         })?;
                 Box::new(model)
             }
-            #[cfg(feature = "qwen3")]
-            EngineType::Qwen3 => {
+            EngineType::CohereTranscribe => {
                 let model =
-                    transcribe_rs::onnx::qwen3::Qwen3Model::load(&model_dir, &quantization)
+                    transcribe_rs::onnx::cohere::CohereModel::load(&model_dir, &quantization)
                         .map_err(|e| AsrError::InferenceFailed {
                             model_id: model_dir.display().to_string(),
-                            detail: format!("Failed to load Qwen3: {e}"),
+                            detail: format!("Failed to load Cohere Transcribe: {e}"),
                         })?;
                 Box::new(model)
             }
@@ -161,15 +162,19 @@ pub fn onnx_factory(
         };
 
         // Determine actual device used.
-        let actual_device = if transcribe_rs::get_ort_accelerator() == transcribe_rs::OrtAccelerator::CpuOnly {
-            "cpu".to_string()
-        } else {
-            "cuda".to_string()
-        };
+        let actual_device =
+            if transcribe_rs::get_ort_accelerator() == transcribe_rs::OrtAccelerator::CpuOnly {
+                "cpu".to_string()
+            } else {
+                "cuda".to_string()
+            };
 
         // Restore previous accelerator setting.
         transcribe_rs::set_ort_accelerator(prev);
 
-        Ok(Box::new(OnnxBridge { engine, device: actual_device }) as Box<dyn SpeechEngine>)
+        Ok(Box::new(OnnxBridge {
+            engine,
+            device: actual_device,
+        }) as Box<dyn SpeechEngine>)
     })
 }

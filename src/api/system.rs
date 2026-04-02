@@ -76,7 +76,7 @@ impl HardwareCapabilities {
     pub fn detect() -> Self {
         Self {
             available_memory_mb: read_meminfo_kb("MemAvailable:").unwrap_or(0) / 1024,
-            has_avx: cfg!(target_feature = "avx"),
+            has_avx: std::arch::is_x86_feature_detected!("avx"),
             cuda_available: detect_cuda(),
         }
     }
@@ -93,7 +93,7 @@ async fn get_system_info(State(_state): State<Arc<AppState>>) -> axum::Json<Syst
         total_memory_mb,
         available_memory_mb: hw.available_memory_mb,
         has_avx: hw.has_avx,
-        has_avx2: cfg!(target_feature = "avx2"),
+        has_avx2: std::arch::is_x86_feature_detected!("avx2"),
         cuda_available: hw.cuda_available,
         gpu_engines: GpuEngines {
             whisper: cfg!(feature = "whisper-cuda"),

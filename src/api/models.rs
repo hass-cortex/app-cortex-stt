@@ -95,6 +95,7 @@ async fn start_download(
         state.model_manager.clone(),
         DownloadConfig::default(),
     )
+    .await
     .map_err(|e| {
         let (status, api_err) = (&e).into();
         (status, axum::Json(api_err))
@@ -139,14 +140,29 @@ async fn download_progress(
 
             match progress {
                 Some(p) => {
+                    let is_terminal = matches!(
+                        p.status,
+                        crate::model::types::DownloadPhase::Completed
+                        | crate::model::types::DownloadPhase::Failed
+                    );
                     let data = serde_json::to_string(&p).unwrap_or_default();
-                    yield Ok(Event::default().event("progress").data(data));
+                    yield Ok(Event::default().data(data));
+                    if is_terminal {
+                        break;
+                    }
                 }
                 None => {
-                    // No active download — send a "done" event and close.
-                    yield Ok(Event::default().event("done").data(
-                        serde_json::json!({"model_id": id, "status": "complete"}).to_string()
-                    ));
+                    // No active download — send a final event and close.
+                    let done = serde_json::json!({
+                        "model_id": id,
+                        "status": "completed",
+                        "downloaded_bytes": 0,
+                        "total_bytes": 0,
+                        "speed_bps": 0,
+                        "eta_secs": null,
+                        "error": null,
+                    });
+                    yield Ok(Event::default().data(done.to_string()));
                     break;
                 }
             }
