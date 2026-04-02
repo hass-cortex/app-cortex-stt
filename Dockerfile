@@ -129,7 +129,7 @@ ENTRYPOINT ["/app/cortex-stt-server"]
 CMD ["--data-dir", "/data", "--static-dir", "/app/web/dist", "--gpu-mode", "cuda"]
 
 # ============================================================================
-# Stage 3c: HA App (S6-overlay base)
+# Stage 3c: HA App (pre-built binary, deployed via deploy.sh)
 # ============================================================================
 FROM ${BUILD_FROM} AS addon
 
@@ -140,6 +140,7 @@ RUN \
         ca-certificates \
         libssl3 \
         libgomp1 \
+        libstdc++6 \
         curl \
         gosu \
     && rm -rf /var/lib/apt/lists/*
@@ -149,9 +150,10 @@ RUN useradd -r -s /bin/false cortex-stt
 
 WORKDIR /app
 
-# Copy binary and web assets
-COPY --from=rust-builder /cortex-stt-server /app/cortex-stt-server
-COPY --from=web-builder /build/web/dist /app/web/dist
+# Copy pre-built binary and web assets (placed by deploy.sh)
+COPY cortex-stt-server /app/cortex-stt-server
+RUN chmod +x /app/cortex-stt-server
+COPY web/dist /app/web/dist
 
 # Create data directories
 RUN mkdir -p /data/models /data/audio

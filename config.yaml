@@ -16,7 +16,7 @@ panel_icon: mdi:microphone-message
 panel_title: Cortex STT
 panel_admin: true
 ports:
-  10400/tcp: 10400
+  10400/tcp: null
 ports_description:
   10400/tcp: STT HTTP API and Admin UI
 map:

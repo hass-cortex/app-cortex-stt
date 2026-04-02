@@ -36,7 +36,14 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
         }
     }
 
-    // 2. Query param authentication (for audio/SSE URLs where headers can't be set)
+    // 2. HA Ingress bypass: requests through ingress are already authenticated by HA
+    if req.headers().contains_key("x-ingress-path") {
+        req.extensions_mut()
+            .insert(AuthKeyId("ha-ingress".to_string()));
+        return next.run(req).await;
+    }
+
+    // 3. Query param authentication (for audio/SSE URLs where headers can't be set)
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(token) = pair.strip_prefix("api_key=") {
@@ -51,7 +58,7 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
         }
     }
 
-    // 3. Bearer token authentication
+    // 4. Bearer token authentication
     if let Some(auth_value) = req.headers().get("authorization") {
         if let Ok(auth_str) = auth_value.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -67,6 +74,6 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
         }
     }
 
-    // 4. No valid credentials
+    // 5. No valid credentials
     ApiError::auth_required().into_response()
 }

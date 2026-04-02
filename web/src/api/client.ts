@@ -33,10 +33,9 @@ export function setApiKey(key: string | null): void {
 	}
 }
 
-/** Determine the base URL. Empty string for same-origin (production). */
+/** Determine the base URL. Uses ingress path when served via HA ingress. */
 function getBaseUrl(): string {
-	// In production, the UI is served from the same Axum server
-	return "";
+	return (window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__ || "";
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {

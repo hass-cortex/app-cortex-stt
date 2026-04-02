@@ -1,4 +1,4 @@
-import type { ComputeDevice } from "@/api/types";
+import type { AppSettings } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -94,7 +94,7 @@ export function ModelLifecycle({ loadedModels }: ModelLifecycleProps) {
 											]}
 											value={settings?.device_overrides?.[modelId] ?? "auto"}
 											onChange={(e) => {
-												const overrides = { ...settings?.device_overrides, [modelId]: e.target.value as ComputeDevice };
+												const overrides = { ...settings?.device_overrides, [modelId]: e.target.value } as AppSettings["device_overrides"];
 												updateSettingsMutation.mutate(
 													{ device_overrides: overrides },
 													{

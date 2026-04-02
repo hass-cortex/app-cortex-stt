@@ -20,17 +20,21 @@ export function DefaultModel({ defaultModel }: DefaultModelProps) {
 	const updateSettingsMutation = useUpdateSettings();
 	const { toast } = useToast();
 
-	const [selectedDefault, setSelectedDefault] = useState(defaultModel);
 	const [preloadModel, setPreloadModel] = useState(settings?.preload_default_model ?? false);
 
 	const downloadedModels = (models ?? []).filter(
 		(m) => m.status === "downloaded" || m.status === "loaded" || m.status === "loading",
 	);
 
-	const modelOptions = downloadedModels.map((m) => ({
-		value: m.id,
-		label: m.name,
-	}));
+	const modelOptions = [
+		{ value: "", label: "" },
+		...downloadedModels.map((m) => ({
+			value: m.id,
+			label: m.name,
+		})),
+	];
+
+	const [selectedDefault, setSelectedDefault] = useState(defaultModel);
 
 	const handleSetDefault = () => {
 		setDefaultMutation.mutate(selectedDefault, {
@@ -71,7 +75,7 @@ export function DefaultModel({ defaultModel }: DefaultModelProps) {
 						Apply
 					</Button>
 				</div>
-				{selectedDefault === defaultModel && <Badge variant="success">Current default</Badge>}
+				{defaultModel && selectedDefault === defaultModel && <Badge variant="success">Current default</Badge>}
 
 				<hr className="border-border" />
 
