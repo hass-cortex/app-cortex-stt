@@ -133,7 +133,7 @@ CMD ["--data-dir", "/data", "--static-dir", "/app/web/dist", "--gpu-mode", "cuda
 # ============================================================================
 FROM ${BUILD_FROM} AS addon
 
-# Install runtime dependencies
+# Install runtime dependencies + gosu for privilege dropping
 RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -141,7 +141,11 @@ RUN \
         libssl3 \
         libgomp1 \
         curl \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -r -s /bin/false cortex-stt
 
 WORKDIR /app
 
@@ -149,14 +153,13 @@ WORKDIR /app
 COPY --from=rust-builder /cortex-stt-server /app/cortex-stt-server
 COPY --from=web-builder /build/web/dist /app/web/dist
 
-# Copy S6-overlay service definitions
-COPY rootfs /
-
-# Create data directories (S6 runs as root, binary drops privileges)
+# Create data directories
 RUN mkdir -p /data/models /data/audio
+
+# Copy startup script
+COPY run.sh /run.sh
+RUN chmod a+x /run.sh
 
 EXPOSE 10400
 
-# Healthcheck: 10 minute start period for first-run model download
-HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
-    CMD curl -sf http://localhost:10400/health || exit 1
+CMD [ "/run.sh" ]
