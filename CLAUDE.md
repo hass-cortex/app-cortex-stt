@@ -43,60 +43,7 @@ The download extractor (`src/model/download.rs`) handles nested directories and 
 
 All engine tests use mock `SpeechEngine` implementations. No real model files needed in CI.
 
-## HA Addon
+## HA App
 
-Dockerfile multi-stage build: stages 1-2 compile Rust binary and web UI, stage 3c (`addon`) packages them into an HA-compatible image.
-
-### Addon Files
-
-| File | Purpose |
-|------|---------|
-| `config.yaml` | HA addon metadata, options schema |
-| `build.yaml` | Build args (CARGO_FEATURES), base image |
-| `run.sh` | Bashio entrypoint, reads HA config, launches binary |
-| `translations/en.yaml` | UI labels for config options |
-| `Dockerfile` | Multi-stage: `rust-builder` → `web-builder` → `addon` |
-
-### Addon Slug
-
-- Published: `cortex_stt_server`
-- Local dev: `local_cortex_stt_server`
-
-### Port
-
-| Port | Purpose |
-|------|---------|
-| 10400 | HTTP API + Admin UI (via Ingress) |
-
-### Deployment
-
-The HA app stage (`addon` in Dockerfile) uses a **pre-built binary** — it does NOT compile Rust inside Docker. Deployment flow:
-
-```bash
-# 1. Build release binary locally
-cargo build --release --features all-engines,vad-silero
-
-# 2. Copy binary to CIFS-mounted addon directory
-cp target/release/cortex-stt-server /mnt/ha/addons/cortex-stt-server/cortex-stt-server
-
-# 3. Rebuild via Supervisor (packages binary into runtime image, no Rust compilation)
-# ha_addon_action --slug=local_cortex_stt_server --action=rebuild
-
-# 4. Wait for health check
-while ! curl -sf http://192.168.10.34:10400/health > /dev/null 2>&1; do
-  echo "Waiting..."; sleep 30
-done && curl -s http://192.168.10.34:10400/health | jq .
-```
-
-**Notes:**
-- Version unchanged → use `rebuild`. Version bumped → use `ha_store_reload` then `update`.
-- Rebuild is async, typically ~1-2 minutes.
-- If web UI changed, also rsync `web/dist/` to `/mnt/ha/addons/cortex-stt-server/web/dist/`.
-
-### Volume Mounts
-
-| Container Path | Source | Purpose |
-|---|---|---|
-| `/data` | Docker volume | Database, audio files |
-| `/config` | addon_config | config.toml persistence |
-| `/share/cortex-stt/models` | share | Models (persist across rebuilds) |
+Addon shell files (config.yaml, build.yaml, Dockerfile, run.sh, translations) are in `ha-apps/cortex-stt-server/`.
+Deploy via `scripts/deploy.sh cortex-stt-server`. See workspace root `CLAUDE.local.md`.

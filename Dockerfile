@@ -1,10 +1,9 @@
 # ============================================================================
 # cortex-stt-server Dockerfile
-# Multi-stage build with CPU, CUDA, and HA App targets
+# Multi-stage build with CPU and CUDA targets
 # ============================================================================
 
 # ---------- Args ----------
-ARG BUILD_FROM
 ARG CUDA_VERSION=12.8.1
 ARG RUST_VERSION=1.85
 ARG NODE_VERSION=22
@@ -127,41 +126,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
 
 ENTRYPOINT ["/app/cortex-stt-server"]
 CMD ["--data-dir", "/data", "--static-dir", "/app/web/dist", "--gpu-mode", "cuda"]
-
-# ============================================================================
-# Stage 3c: HA App (pre-built binary, deployed via deploy.sh)
-# ============================================================================
-FROM ${BUILD_FROM} AS addon
-
-# Install runtime dependencies + gosu for privilege dropping
-RUN \
-    apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libssl3 \
-        libgomp1 \
-        libstdc++6 \
-        curl \
-        gosu \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -r -s /bin/false cortex-stt
-
-WORKDIR /app
-
-# Copy pre-built binary and web assets (placed by deploy.sh)
-COPY cortex-stt-server /app/cortex-stt-server
-RUN chmod +x /app/cortex-stt-server
-COPY web/dist /app/web/dist
-
-# Create data directories
-RUN mkdir -p /data/models /data/audio
-
-# Copy startup script
-COPY run.sh /run.sh
-RUN chmod a+x /run.sh
-
-EXPOSE 10400
-
-CMD [ "/run.sh" ]
