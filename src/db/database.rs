@@ -90,6 +90,25 @@ impl Database {
             .await
             .map_err(map_db_err)?;
 
+        // Migration: add raw_key column to api_keys
+        self.conn
+            .call(|conn| {
+                let has_col: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='raw_key'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_col {
+                    conn.execute_batch(
+                        "ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
         // Migration: add device column to records
         self.conn
             .call(|conn| {

@@ -162,12 +162,15 @@ pub fn onnx_factory(
         };
 
         // Determine actual device used.
-        let actual_device =
-            if transcribe_rs::get_ort_accelerator() == transcribe_rs::OrtAccelerator::CpuOnly {
-                "cpu".to_string()
-            } else {
-                "cuda".to_string()
-            };
+        // Only report "cuda" if accelerator is not CPU-only AND CUDA is actually available.
+        let actual_device = if transcribe_rs::get_ort_accelerator()
+            != transcribe_rs::OrtAccelerator::CpuOnly
+            && crate::api::system::HardwareCapabilities::detect().cuda_available
+        {
+            "cuda".to_string()
+        } else {
+            "cpu".to_string()
+        };
 
         // Restore previous accelerator setting.
         transcribe_rs::set_ort_accelerator(prev);

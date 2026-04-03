@@ -46,21 +46,26 @@ fn read_meminfo_kb(_field: &str) -> Option<u64> {
     None
 }
 
-/// Detect CUDA availability at runtime.
+/// Cached CUDA availability (static per process — CUDA doesn't appear/disappear at runtime).
+static CUDA_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Detect CUDA availability at runtime (cached after first call).
 ///
 /// Returns `true` only when the binary was compiled with a CUDA feature
 /// (`whisper-cuda` or `ort-cuda`) **and** `nvidia-smi` succeeds at runtime.
 fn detect_cuda() -> bool {
-    let compiled_with_cuda = cfg!(feature = "whisper-cuda") || cfg!(feature = "ort-cuda");
-    if !compiled_with_cuda {
-        return false;
-    }
-    std::process::Command::new("nvidia-smi")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    *CUDA_AVAILABLE.get_or_init(|| {
+        let compiled_with_cuda = cfg!(feature = "whisper-cuda") || cfg!(feature = "ort-cuda");
+        if !compiled_with_cuda {
+            return false;
+        }
+        std::process::Command::new("nvidia-smi")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
 }
 
 /// Runtime hardware capabilities used for model recommendation.

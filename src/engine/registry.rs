@@ -342,6 +342,25 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             requires_avx: true,
             disabled: false,
         },
+        ModelDefinition {
+            id: "cohere-int4".to_string(),
+            name: "Cohere Transcribe 2B (INT4)".to_string(),
+            description: "Cohere Transcribe 2B, INT4 quantised, smaller & faster, slightly lower accuracy"
+                .to_string(),
+            engine_type: EngineType::CohereTranscribe,
+            filename: "cohere-int4".to_string(),
+            is_directory: true,
+            url: "https://blob.handy.computer/cohere-int4.tar.gz".to_string(),
+            sha256: "".to_string(),
+            archive_dir_name: "cohere-int4".to_string(),
+            size_mb: 1100,
+            accuracy_score: 0.85,
+            speed_score: 0.70,
+            supported_languages: langs(COHERE_LANGUAGES),
+            requires_cuda: false,
+            requires_avx: true,
+            disabled: false,
+        },
     ]
 }
 
@@ -352,7 +371,7 @@ mod tests {
     #[test]
     fn builtin_models_has_expected_count() {
         let models = builtin_models();
-        assert_eq!(models.len(), 14);
+        assert_eq!(models.len(), 15);
     }
 
     #[test]

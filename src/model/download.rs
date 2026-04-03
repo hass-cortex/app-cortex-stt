@@ -415,14 +415,16 @@ async fn download_task(
             }
 
             // Unwrap single-directory nesting (e.g. archive contains dir/dir/files).
+            // Only consider directories — ignores loose files like macOS resource forks.
             let mut source_dir = tmp_dir.clone();
             loop {
-                let entries: Vec<_> = std::fs::read_dir(&source_dir)
+                let subdirs: Vec<_> = std::fs::read_dir(&source_dir)
                     .map_err(AsrError::Io)?
                     .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
                     .collect();
-                if entries.len() == 1 && entries[0].path().is_dir() {
-                    source_dir = entries[0].path();
+                if subdirs.len() == 1 {
+                    source_dir = subdirs[0].path();
                 } else {
                     break;
                 }

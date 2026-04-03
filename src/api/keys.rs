@@ -13,6 +13,7 @@ use crate::state::AppState;
 struct ApiKeyListItem {
     id: String,
     name: String,
+    key: String,
     last4: String,
     created_at: String,
     last_used_at: Option<String>,
@@ -45,6 +46,7 @@ async fn list_keys(
         .map(|k| ApiKeyListItem {
             id: k.id,
             name: k.name,
+            key: k.raw_key,
             last4: k.last4,
             created_at: k.created_at,
             last_used_at: k.last_used_at,

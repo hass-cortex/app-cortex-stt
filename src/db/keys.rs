@@ -5,14 +5,28 @@ use sha2::{Digest, Sha256};
 use super::database::{Database, map_db_err};
 use crate::error::AsrError;
 
-/// A stored API key record (never exposes the raw key).
+/// A stored API key record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyRecord {
     pub id: String,
     pub name: String,
+    pub raw_key: String,
     pub last4: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
+}
+
+impl ApiKeyRecord {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            raw_key: row.get(2)?,
+            last4: row.get(3)?,
+            created_at: row.get(4)?,
+            last_used_at: row.get(5)?,
+        })
+    }
 }
 
 /// Base64url alphabet (RFC 4648 section 5, no padding).
@@ -62,28 +76,21 @@ impl Database {
         let id_clone = id.clone();
         let key_hash_clone = key_hash.clone();
         let last4_clone = last4.clone();
+        let raw_key_clone = raw_key.clone();
 
         let record = self
             .connection()
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO api_keys (id, name, key_hash, last4) VALUES (?1, ?2, ?3, ?4)",
-                    params![id_clone, name_owned, key_hash_clone, last4_clone],
+                    "INSERT INTO api_keys (id, name, key_hash, last4, raw_key) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id_clone, name_owned, key_hash_clone, last4_clone, raw_key_clone],
                 )?;
 
                 // Read back to get server-generated created_at
                 let record = conn.query_row(
-                    "SELECT id, name, last4, created_at, last_used_at FROM api_keys WHERE id = ?1",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys WHERE id = ?1",
                     params![id_clone],
-                    |row| {
-                        Ok(ApiKeyRecord {
-                            id: row.get(0)?,
-                            name: row.get(1)?,
-                            last4: row.get(2)?,
-                            created_at: row.get(3)?,
-                            last_used_at: row.get(4)?,
-                        })
-                    },
+                    ApiKeyRecord::from_row,
                 )?;
 
                 Ok(record)
@@ -111,17 +118,9 @@ impl Database {
                 }
 
                 let record = conn.query_row(
-                    "SELECT id, name, last4, created_at, last_used_at FROM api_keys WHERE key_hash = ?1",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys WHERE key_hash = ?1",
                     params![key_hash],
-                    |row| {
-                        Ok(ApiKeyRecord {
-                            id: row.get(0)?,
-                            name: row.get(1)?,
-                            last4: row.get(2)?,
-                            created_at: row.get(3)?,
-                            last_used_at: row.get(4)?,
-                        })
-                    },
+                    ApiKeyRecord::from_row,
                 )?;
 
                 Ok(Some(record))
@@ -135,18 +134,10 @@ impl Database {
         self.connection()
             .call(|conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, name, last4, created_at, last_used_at FROM api_keys ORDER BY created_at DESC",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys ORDER BY created_at DESC",
                 )?;
 
-                let rows = stmt.query_map([], |row| {
-                    Ok(ApiKeyRecord {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        last4: row.get(2)?,
-                        created_at: row.get(3)?,
-                        last_used_at: row.get(4)?,
-                    })
-                })?;
+                let rows = stmt.query_map([], ApiKeyRecord::from_row)?;
 
                 let mut keys = Vec::new();
                 for row in rows {
@@ -189,8 +180,8 @@ impl Database {
                 };
 
                 conn.execute(
-                    "INSERT INTO api_keys (id, name, key_hash, last4) VALUES (?1, ?2, ?3, ?4)",
-                    params![id, name_owned, key_hash, last4],
+                    "INSERT INTO api_keys (id, name, key_hash, last4, raw_key) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, name_owned, key_hash, last4, raw_key_owned],
                 )?;
 
                 Ok(())
