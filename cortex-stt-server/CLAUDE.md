@@ -45,5 +45,8 @@ All engine tests use mock `SpeechEngine` implementations. No real model files ne
 
 ## HA App
 
-Addon shell files (config.yaml, build.yaml, Dockerfile, run.sh, translations) are in `ha-apps/cortex-stt-server/`.
-Deploy via `scripts/deploy.sh cortex-stt-server`. See workspace root `CLAUDE.local.md`.
+This directory contains both the Rust source (`src/`, `Cargo.toml`) AND the HA addon shell (`Dockerfile`, `config.yaml`, `build.yaml`, `rootfs/`, `translations/`). The multi-stage Dockerfile builds the binary in Stage 1 (Rust toolchain), the web UI in Stage 2 (Node + Vite), and produces a runtime image from `hassio-addons/debian-base` in Stage 3.
+
+- **Local dev**: `./scripts/dev.sh cortex-stt-server` from the hass-cortex workspace root syncs the built binary and `web/dist/` to `/mnt/ha/share/.dev/cortex-stt-server/`; restart the addon via `ha_addon_action --slug=local_cortex_stt_server --action=restart` to load the override. See the `deploy` skill.
+- **Publishing**: releases are cut via `gh release create` on `hass-cortex/app-cortex-stt`; CI builds multi-arch images, pushes to `ghcr.io/hass-cortex/cortex-stt-server`, and dispatches updates to the `ha-apps` (stable) + `ha-apps-beta` metadata catalogs. See the `publish` skill.
+- See workspace root `CLAUDE.local.md` for CIFS mount setup.
