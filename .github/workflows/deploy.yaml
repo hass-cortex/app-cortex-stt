@@ -1,0 +1,27 @@
+---
+name: Deploy
+
+# yamllint disable-line rule:truthy
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  ci:
+    uses: hassio-addons/workflows/.github/workflows/app-ci.yaml@3846ae0fd09acec8ac1ac308ceacd052b9d01bec
+
+  deploy:
+    needs: ci
+    uses: hassio-addons/workflows/.github/workflows/app-deploy.yaml@3846ae0fd09acec8ac1ac308ceacd052b9d01bec
+    with:
+      repository: ha-apps
+      repository_beta: ha-apps-beta
+    secrets:
+      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
