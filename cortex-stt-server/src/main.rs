@@ -24,7 +24,7 @@ use cortex_stt_server::model::manager::ModelManager;
 use cortex_stt_server::state::{AppState, JobStore};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
