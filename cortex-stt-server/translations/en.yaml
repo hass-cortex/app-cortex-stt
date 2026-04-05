@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Log Level
+    description: Logging verbosity level
+network:
+  10400/tcp: STT HTTP API and Admin UI

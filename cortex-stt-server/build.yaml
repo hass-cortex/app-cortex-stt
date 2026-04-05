@@ -1,0 +1,13 @@
+---
+build_from:
+  aarch64: ghcr.io/hassio-addons/debian-base:9.2.0
+  amd64: ghcr.io/hassio-addons/debian-base:9.2.0
+
+args:
+  CARGO_FEATURES: 'all-engines,vad-silero'
+
+labels:
+  org.opencontainers.image.title: Cortex STT Server
+  org.opencontainers.image.description: Multi-engine speech-to-text service
+  org.opencontainers.image.source: https://github.com/hass-cortex/ha-apps
+  org.opencontainers.image.licenses: MIT

@@ -1,6 +1,8 @@
-/target
-/web/node_modules
-/web/dist
-/web/bun.lock
+cortex-stt-server/target/
+cortex-stt-server/web/node_modules/
+cortex-stt-server/web/dist/
+cortex-stt-server/data/
+cortex-stt-server/web/bun.lock
+.env
+*.log
 *.tsbuildinfo
-data/
