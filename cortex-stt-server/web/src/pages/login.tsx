@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
+import { CortexLogo } from "@/components/ui/cortex-logo";
 import { Input } from "@/components/ui/input";
 import { setApiKey } from "@/api/client";
-import { Activity } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 interface LoginPageProps {
@@ -53,9 +53,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 			<div className="w-full max-w-sm space-y-8">
 				{/* Branding */}
 				<div className="flex flex-col items-center gap-3">
-					<div className="flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10">
-						<Activity size={24} className="text-accent" />
-					</div>
+					<CortexLogo size={56} />
 					<h1 className="text-xl font-bold text-text-primary">Cortex STT Server</h1>
 					<p className="text-sm text-text-muted">Enter your API key to continue</p>
 				</div>

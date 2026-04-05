@@ -1,7 +1,7 @@
 import { setApiKey } from "@/api/client";
+import { CortexLogo } from "@/components/ui/cortex-logo";
 import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 import {
-	Activity,
 	ChevronLeft,
 	ChevronRight,
 	Cpu,
@@ -71,11 +71,11 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 			<div className="flex items-center justify-between h-14 px-3 border-b border-border">
 				{!isCollapsed && (
 					<div className="flex items-center gap-2 overflow-hidden">
-						<Activity size={20} className="text-accent shrink-0" />
+						<CortexLogo size={22} className="shrink-0" />
 						<span className="text-sm font-semibold text-text-primary truncate">Cortex STT</span>
 					</div>
 				)}
-				{isCollapsed && <Activity size={20} className="text-accent mx-auto" />}
+				{isCollapsed && <CortexLogo size={22} className="mx-auto" />}
 				{!mobile && (
 					<button
 						type="button"
