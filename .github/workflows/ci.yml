@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  # Prevent whisper.cpp from compiling with -march=native (avoids SIGILL on targets lacking AVX-512)
+  GGML_NATIVE: 'OFF'
 
 jobs:
   rust-check:

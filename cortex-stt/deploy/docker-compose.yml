@@ -1,0 +1,25 @@
+# Cortex STT Server - Docker Compose (CPU)
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# GPU (CUDA):
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.cuda.yml up -d
+
+services:
+  cortex-stt:
+    image: ghcr.io/hass-cortex/cortex-stt:latest-cpu
+    container_name: cortex-stt
+    restart: unless-stopped
+    ports:
+      - "10400:10400"  # Admin UI / HTTP API
+    volumes:
+      - cortex-stt-data:/data
+      - cortex-stt-config:/config
+    environment:
+      - DEFAULT_MODEL=whisper-small
+      - RUST_LOG=info
+
+volumes:
+  cortex-stt-data:
+  cortex-stt-config:

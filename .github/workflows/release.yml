@@ -13,6 +13,8 @@ env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Prevent whisper.cpp from compiling with -march=native (avoids SIGILL on targets lacking AVX-512)
+  GGML_NATIVE: 'OFF'
 
 jobs:
   build-binary:
@@ -23,10 +25,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            artifact: cortex-stt-server-x86_64-unknown-linux-gnu
+            artifact: cortex-stt-x86_64-unknown-linux-gnu
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            artifact: cortex-stt-server-aarch64-unknown-linux-gnu
+            artifact: cortex-stt-aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
 
@@ -43,8 +45,8 @@ jobs:
       - name: Build release binary
         run: |
           cargo build --release --features all-engines,vad-silero
-          strip target/release/cortex-stt-server || true
-          cp target/release/cortex-stt-server ${{ matrix.artifact }}
+          strip target/release/cortex-stt || true
+          cp target/release/cortex-stt ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -93,7 +95,7 @@ jobs:
       - name: Download binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: cortex-stt-server-x86_64-unknown-linux-gnu
+          name: cortex-stt-x86_64-unknown-linux-gnu
           path: .
 
       - name: Download web artifact
@@ -104,9 +106,9 @@ jobs:
 
       - name: Prepare build context
         run: |
-          chmod +x cortex-stt-server-x86_64-unknown-linux-gnu
+          chmod +x cortex-stt-x86_64-unknown-linux-gnu
           mkdir -p docker-build/web/dist
-          cp cortex-stt-server-x86_64-unknown-linux-gnu docker-build/cortex-stt-server
+          cp cortex-stt-x86_64-unknown-linux-gnu docker-build/cortex-stt
           tar -xzf cortex-stt-web.tar.gz -C docker-build/web/dist
 
       - name: Set up Docker Buildx
@@ -157,6 +159,6 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
           files: |
-            artifacts/cortex-stt-server-x86_64-unknown-linux-gnu/cortex-stt-server-x86_64-unknown-linux-gnu
-            artifacts/cortex-stt-server-aarch64-unknown-linux-gnu/cortex-stt-server-aarch64-unknown-linux-gnu
+            artifacts/cortex-stt-x86_64-unknown-linux-gnu/cortex-stt-x86_64-unknown-linux-gnu
+            artifacts/cortex-stt-aarch64-unknown-linux-gnu/cortex-stt-aarch64-unknown-linux-gnu
             artifacts/cortex-stt-web/cortex-stt-web.tar.gz

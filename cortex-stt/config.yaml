@@ -1,0 +1,31 @@
+name: Cortex STT
+description: Multi-engine speech-to-text service with Whisper, Parakeet, SenseVoice, and more
+version: "dev"
+slug: cortex_stt
+url: https://github.com/hass-cortex/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: services
+init: false
+homeassistant: '2026.3.0'
+timeout: 300
+ingress: true
+ingress_port: 10400
+ingress_stream: true
+panel_icon: mdi:microphone-message
+panel_title: Cortex STT
+panel_admin: true
+ports:
+  10400/tcp: null
+ports_description:
+  10400/tcp: STT HTTP API and Admin UI
+map:
+  - type: addon_config
+    read_only: false
+  - type: share
+    read_only: false
+options:
+  log_level: info
+schema:
+  log_level: list(trace|debug|info|warning|error|fatal)

@@ -42,7 +42,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the issue
       placeholder: |
-        1. Start cortex-stt-server with model X
+        1. Start cortex-stt with model X
         2. Send audio via HTTP API
         3. Observe error in logs
     validations:
