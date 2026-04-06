@@ -1,3 +1,7 @@
+# Global ARG — must be before any FROM to be usable in FROM lines.
+# HA Supervisor injects BUILD_FROM via --build-arg from build.yaml.
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.2.0
+
 # ==============================================================================
 # Stage 1: Build Rust binary
 # ==============================================================================
@@ -36,7 +40,6 @@ RUN bun run build
 # ==============================================================================
 # Stage 3: Runtime
 # ==============================================================================
-ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.2.0
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
 
