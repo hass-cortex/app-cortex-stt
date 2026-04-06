@@ -1,0 +1,22 @@
+# Single-stage Dockerfile for local dev (pre-built binary + web/dist).
+# Used by dev.sh --init mode. The multi-stage Dockerfile is for CI only.
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.2.0
+FROM ${BUILD_FROM}
+
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        libgomp1 \
+        libstdc++6 \
+        curl \
+        gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -s /bin/false cortex-stt
+
+COPY rootfs /
+
+WORKDIR /app
+COPY cortex-stt /app/cortex-stt
+RUN chmod +x /app/cortex-stt
+COPY web/dist /app/web/dist
