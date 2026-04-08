@@ -194,8 +194,8 @@ function HistoryRow({
 				</div>
 
 				<div className="text-right shrink-0 hidden sm:block">
-					<p className="text-xs text-text-secondary">{formatDuration(record.audio_duration_ms)}</p>
-					<p className="text-xs text-text-muted">{formatDuration(record.inference_ms)} inference</p>
+					<p className="text-xs text-text-muted">{formatDuration(record.audio_duration_ms)}</p>
+					<p className="text-xs text-text-secondary">{formatDuration(record.inference_ms)} inference</p>
 					{record.model_load_ms > 0 && (
 						<p className="text-xs text-amber-500">{formatDuration(record.model_load_ms)} load</p>
 					)}
