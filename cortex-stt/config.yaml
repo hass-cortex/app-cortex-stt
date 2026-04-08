@@ -11,15 +11,15 @@ init: false
 homeassistant: '2026.3.0'
 timeout: 300
 ingress: true
-ingress_port: 10400
+ingress_port: 8769
 ingress_stream: true
 panel_icon: mdi:microphone-message
 panel_title: Cortex STT
 panel_admin: true
 ports:
-  10400/tcp: null
+  8769/tcp: null
 ports_description:
-  10400/tcp: STT HTTP API and Admin UI
+  8769/tcp: STT HTTP API and Admin UI
 map:
   - type: addon_config
     read_only: false

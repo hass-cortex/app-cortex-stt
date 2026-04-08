@@ -1,11 +1,11 @@
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { useModels, useScanCustomModels } from "@/hooks/use-models";
-import { Package, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useModels } from "@/hooks/use-models";
+import { useSystemInfo } from "@/hooks/use-system";
+import { Package } from "lucide-react";
+import { useMemo, useState } from "react";
 import { ModelCard } from "./model-card";
 
 const engineOptions = [
@@ -29,9 +29,21 @@ function isInProgress(status: string): boolean {
 
 export function ModelList() {
 	const { data: models, isLoading, error } = useModels();
-	const scanMutation = useScanCustomModels();
+	const { data: systemInfo } = useSystemInfo();
 	const [search, setSearch] = useState("");
 	const [engineFilter, setEngineFilter] = useState("");
+	const [languageFilter, setLanguageFilter] = useState("");
+
+	const languageOptions = useMemo(() => {
+		const langs = new Set<string>();
+		for (const m of models ?? []) {
+			for (const l of m.supported_languages) langs.add(l);
+		}
+		return [
+			{ value: "", label: "All languages" },
+			...Array.from(langs).sort().map((l) => ({ value: l, label: l })),
+		];
+	}, [models]);
 
 	if (isLoading) {
 		return (
@@ -60,6 +72,7 @@ export function ModelList() {
 			return false;
 		}
 		if (engineFilter && m.engine_type !== engineFilter) return false;
+		if (languageFilter && !m.supported_languages.includes(languageFilter)) return false;
 		return true;
 	});
 
@@ -83,15 +96,12 @@ export function ModelList() {
 					onChange={(e) => setEngineFilter(e.target.value)}
 					className="sm:w-40"
 				/>
-				<Button
-					variant="secondary"
-					size="md"
-					icon={<RefreshCw size={14} />}
-					onClick={() => scanMutation.mutate()}
-					loading={scanMutation.isPending}
-				>
-					Scan
-				</Button>
+				<Select
+					options={languageOptions}
+					value={languageFilter}
+					onChange={(e) => setLanguageFilter(e.target.value)}
+					className="sm:w-40"
+				/>
 			</div>
 
 			{filtered.length === 0 ? (
@@ -110,7 +120,7 @@ export function ModelList() {
 							</h2>
 							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{downloaded.map((model) => (
-									<ModelCard key={model.id} model={model} />
+									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
 								))}
 							</div>
 						</div>
@@ -124,7 +134,7 @@ export function ModelList() {
 							</h2>
 							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{available.map((model) => (
-									<ModelCard key={model.id} model={model} />
+									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
 								))}
 							</div>
 						</div>

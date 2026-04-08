@@ -17,10 +17,21 @@ struct SystemInfoResponse {
     has_avx: bool,
     has_avx2: bool,
     cuda_available: bool,
+    /// GPU hardware info (present only when CUDA is detected).
+    gpu_info: Option<GpuInfo>,
     /// Which engine backends have GPU acceleration compiled in.
     gpu_engines: GpuEngines,
     os: &'static str,
     arch: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct GpuInfo {
+    name: String,
+    memory_total_mb: u64,
+    memory_used_mb: u64,
+    memory_free_mb: u64,
+    driver_version: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,26 +58,70 @@ fn read_meminfo_kb(_field: &str) -> Option<u64> {
     None
 }
 
+/// Try PATH first, then common install locations (WSL, CUDA toolkit).
+const NVIDIA_SMI_CANDIDATES: &[&str] = &["nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi", "/usr/bin/nvidia-smi"];
+
 /// Cached CUDA availability (static per process — CUDA doesn't appear/disappear at runtime).
 static CUDA_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// Detect CUDA availability at runtime (cached after first call).
+/// Detect whether an NVIDIA GPU is present (cached after first call).
 ///
-/// Returns `true` only when the binary was compiled with a CUDA feature
-/// (`whisper-cuda` or `ort-cuda`) **and** `nvidia-smi` succeeds at runtime.
+/// Returns `true` when `nvidia-smi` succeeds, regardless of whether the
+/// binary was compiled with CUDA features.
 fn detect_cuda() -> bool {
     *CUDA_AVAILABLE.get_or_init(|| {
-        let compiled_with_cuda = cfg!(feature = "whisper-cuda") || cfg!(feature = "ort-cuda");
-        if !compiled_with_cuda {
-            return false;
+        for cmd in NVIDIA_SMI_CANDIDATES {
+            let result = std::process::Command::new(cmd)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            match &result {
+                Ok(status) if status.success() => {
+                    tracing::info!(cmd, "CUDA detected via nvidia-smi");
+                    return true;
+                }
+                Ok(status) => {
+                    tracing::debug!(cmd, code = ?status.code(), "nvidia-smi exited non-zero");
+                }
+                Err(e) => {
+                    tracing::debug!(cmd, error = %e, "nvidia-smi not found");
+                }
+            }
         }
-        std::process::Command::new("nvidia-smi")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        tracing::info!("No CUDA GPU detected");
+        false
     })
+}
+
+/// Query GPU details via nvidia-smi.
+fn query_gpu_info() -> Option<GpuInfo> {
+    for cmd in NVIDIA_SMI_CANDIDATES {
+        let output = match std::process::Command::new(cmd)
+            .args([
+                "--query-gpu=name,memory.total,memory.used,memory.free,driver_version",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = text.trim().splitn(5, ", ").collect();
+        if parts.len() == 5 {
+            return Some(GpuInfo {
+                name: parts[0].to_string(),
+                memory_total_mb: parts[1].parse().unwrap_or(0),
+                memory_used_mb: parts[2].parse().unwrap_or(0),
+                memory_free_mb: parts[3].parse().unwrap_or(0),
+                driver_version: parts[4].to_string(),
+            });
+        }
+    }
+    None
 }
 
 /// Runtime hardware capabilities used for model recommendation.
@@ -79,11 +134,15 @@ pub struct HardwareCapabilities {
 
 impl HardwareCapabilities {
     /// Detect current hardware capabilities.
+    ///
+    /// `cuda_available` here means the binary can actually run CUDA workloads
+    /// (hardware present AND compiled with CUDA features).
     pub fn detect() -> Self {
+        let compiled_with_cuda = cfg!(feature = "cuda");
         Self {
             available_memory_mb: read_meminfo_kb("MemAvailable:").unwrap_or(0) / 1024,
             has_avx: std::arch::is_x86_feature_detected!("avx"),
-            cuda_available: detect_cuda(),
+            cuda_available: compiled_with_cuda && detect_cuda(),
         }
     }
 }
@@ -94,16 +153,20 @@ async fn get_system_info(State(_state): State<Arc<AppState>>) -> axum::Json<Syst
     let total_memory_mb = read_meminfo_kb("MemTotal:").unwrap_or(0) / 1024;
     let hw = HardwareCapabilities::detect();
 
+    let cuda = detect_cuda();
+    let gpu_info = if cuda { query_gpu_info() } else { None };
+
     axum::Json(SystemInfoResponse {
         cpu_count,
         total_memory_mb,
         available_memory_mb: hw.available_memory_mb,
         has_avx: hw.has_avx,
         has_avx2: std::arch::is_x86_feature_detected!("avx2"),
-        cuda_available: hw.cuda_available,
+        cuda_available: cuda,
+        gpu_info,
         gpu_engines: GpuEngines {
-            whisper: cfg!(feature = "whisper-cuda"),
-            onnx: cfg!(feature = "ort-cuda"),
+            whisper: cfg!(feature = "cuda"),
+            onnx: cfg!(feature = "cuda"),
         },
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,

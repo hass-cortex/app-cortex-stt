@@ -1,4 +1,4 @@
-import { del, get, post } from "./client";
+import { del, get } from "./client";
 import type { HistoryFilters, TranscriptionRecord } from "./types";
 
 /** List transcription records with filters (returns flat array) */
@@ -24,7 +24,8 @@ export function deleteHistoryRecord(id: string): Promise<void> {
 	return del(`/api/history/${encodeURIComponent(id)}`);
 }
 
-/** Run manual retention cleanup */
-export function cleanupHistory(): Promise<{ deleted_records: number; deleted_audio_files: number }> {
-	return post<{ deleted_records: number; deleted_audio_files: number }>("/api/history/cleanup");
+/** Delete all transcription records and audio files */
+export function deleteAllHistory(): Promise<{ deleted_records: number; deleted_audio_files: number }> {
+	return del<{ deleted_records: number; deleted_audio_files: number }>("/api/history");
 }
+

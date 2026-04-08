@@ -237,6 +237,33 @@ impl Database {
             .map_err(map_db_err)
     }
 
+    /// Delete all records. Returns the count deleted.
+    pub async fn delete_all_records(&self) -> Result<usize, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let deleted = conn.execute("DELETE FROM records", [])?;
+                Ok(deleted)
+            })
+            .await
+            .map_err(map_db_err)
+    }
+
+    /// Get all audio file paths.
+    pub async fn get_all_audio_paths(&self) -> Result<Vec<String>, AsrError> {
+        self.connection()
+            .call(move |conn| {
+                let mut stmt =
+                    conn.prepare("SELECT audio_path FROM records WHERE audio_path IS NOT NULL")?;
+                let paths: Vec<String> = stmt
+                    .query_map([], |row| row.get(0))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                Ok(paths)
+            })
+            .await
+            .map_err(map_db_err)
+    }
+
     /// Delete records older than the given number of days. Returns the count deleted.
     pub async fn cleanup_records_older_than_days(&self, days: i64) -> Result<usize, AsrError> {
         self.connection()

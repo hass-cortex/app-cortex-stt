@@ -18,7 +18,7 @@ pub struct AppConfig {
     pub http_host: String,
 
     /// HTTP server port
-    #[arg(long, env = "HTTP_PORT", default_value_t = 10400)]
+    #[arg(long, env = "HTTP_PORT", default_value_t = 8769)]
     pub http_port: u16,
 
     /// Data directory (models, audio, database)

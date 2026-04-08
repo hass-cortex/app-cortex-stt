@@ -168,6 +168,32 @@ async fn cleanup_history(
     })))
 }
 
+/// DELETE /api/history — delete all records and audio files.
+async fn delete_all_history(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Collect audio paths before deleting records.
+    let audio_filenames = state.db.get_all_audio_paths().await.map_err(|e| {
+        let (_, api_err) = (&e).into();
+        api_err
+    })?;
+
+    let audio_dir = state.data_dir.join("audio");
+    for filename in &audio_filenames {
+        let _ = tokio::fs::remove_file(audio_dir.join(filename)).await;
+    }
+
+    let deleted = state.db.delete_all_records().await.map_err(|e| {
+        let (_, api_err) = (&e).into();
+        api_err
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "deleted_records": deleted,
+        "deleted_audio_files": audio_filenames.len(),
+    })))
+}
+
 /// SSE endpoint that emits a `new_record` event whenever a transcription is
 /// saved to history. Clients use this to trigger a refetch instead of polling.
 async fn history_live(
@@ -192,7 +218,7 @@ async fn history_live(
 
 pub fn history_routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/history", get(list_history))
+        .route("/api/history", get(list_history).delete(delete_all_history))
         .route("/api/history/live", get(history_live))
         .route("/api/history/cleanup", post(cleanup_history))
         .route("/api/history/{record_id}", get(get_history_record))

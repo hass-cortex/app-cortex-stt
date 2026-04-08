@@ -29,7 +29,7 @@ export function ModelLifecycle({ loadedModels }: ModelLifecycleProps) {
 	const currentIdle = settings?.idle_timeout_secs;
 	const [keepLoaded, setKeepLoaded] = useState(currentIdle === null || currentIdle === undefined);
 	const [idleTimeout, setIdleTimeout] = useState(String(currentIdle ?? 300));
-	const [maxLoaded, setMaxLoaded] = useState(String(settings?.max_loaded_models ?? 3));
+	const [maxLoaded, setMaxLoaded] = useState(String(settings?.max_loaded_models ?? 1));
 
 	const downloadedModels = (models ?? []).filter(
 		(m) => m.status === "downloaded" || m.status === "loaded" || m.status === "loading",

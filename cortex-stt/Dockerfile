@@ -14,11 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-ARG CARGO_FEATURES=all-engines,vad-silero
-# GGML_NATIVE=OFF prevents whisper.cpp from compiling with -march=native,
-# which would embed build-machine CPU instructions (e.g. AVX-512) and cause
-# SIGILL crashes on targets that lack them.
-ENV GGML_NATIVE=OFF
+ARG CARGO_FEATURES=default
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
 # ==============================================================================

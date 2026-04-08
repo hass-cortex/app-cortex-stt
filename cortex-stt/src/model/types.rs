@@ -72,10 +72,7 @@ impl ModelInfo {
             disk_usage_bytes,
             is_loaded: false,
             is_recommended: false,
-            uses_gpu: match def.engine_type {
-                EngineType::Whisper => cfg!(feature = "whisper-cuda"),
-                _ => cfg!(feature = "ort-cuda"),
-            },
+            uses_gpu: cfg!(feature = "cuda"),
         }
     }
 

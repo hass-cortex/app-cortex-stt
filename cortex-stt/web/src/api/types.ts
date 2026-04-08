@@ -11,6 +11,14 @@ export interface GpuEngines {
 	onnx: boolean;
 }
 
+export interface GpuInfo {
+	name: string;
+	memory_total_mb: number;
+	memory_used_mb: number;
+	memory_free_mb: number;
+	driver_version: string;
+}
+
 export interface SystemInfo {
 	cpu_count: number;
 	total_memory_mb: number;
@@ -18,6 +26,7 @@ export interface SystemInfo {
 	has_avx: boolean;
 	has_avx2: boolean;
 	cuda_available: boolean;
+	gpu_info: GpuInfo | null;
 	gpu_engines: GpuEngines;
 	os: string;
 	arch: string;
@@ -171,13 +180,11 @@ export interface AppSettings {
 	pool_size: number;
 	max_loaded_models: number;
 	idle_timeout_secs: number | null;
-	transcription_timeout_secs: number;
+	transcription_timeout_secs: number | null;
 	save_audio: boolean;
 	preload_default_model: boolean;
 	audio_retention: RetentionPolicy;
 	record_retention: RetentionPolicy;
-	cors_allowed_origins: string[];
-	log_level: string;
 	timezone: string;
 	device_overrides: Record<string, ComputeDevice>;
 }

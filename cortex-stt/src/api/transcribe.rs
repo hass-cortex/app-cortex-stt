@@ -84,7 +84,39 @@ fn normalize_language(lang: Option<String>) -> Option<String> {
 }
 
 /// Run transcription on the engine and return the response.
+///
+/// If `transcription_timeout_secs` is set in settings, the entire operation
+/// (model acquire + inference) is bounded by that timeout.
 async fn run_transcription(
+    state: &AppState,
+    model: &str,
+    samples: Vec<f32>,
+    options: TranscribeOptions,
+    duration_ms: u64,
+) -> Result<TranscribeResponse, crate::error::AsrError> {
+    let timeout_secs = state
+        .db
+        .load_settings()
+        .await
+        .ok()
+        .and_then(|s| s.transcription_timeout_secs);
+
+    let fut = run_transcription_inner(state, model, samples, options, duration_ms);
+
+    match timeout_secs {
+        Some(secs) => {
+            tokio::time::timeout(Duration::from_secs(secs), fut)
+                .await
+                .map_err(|_| crate::error::AsrError::InferenceTimeout {
+                    model_id: model.to_string(),
+                    timeout_secs: secs,
+                })?
+        }
+        None => fut.await,
+    }
+}
+
+async fn run_transcription_inner(
     state: &AppState,
     model: &str,
     samples: Vec<f32>,

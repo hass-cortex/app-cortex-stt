@@ -1,7 +1,6 @@
 import { HardwareCard } from "@/components/dashboard/hardware-card";
 import { MetricsCard } from "@/components/dashboard/metrics-card";
 import { ModelStatusCard } from "@/components/dashboard/model-status-card";
-import { StorageCard } from "@/components/dashboard/storage-card";
 
 export function DashboardPage() {
 	return (
@@ -12,10 +11,11 @@ export function DashboardPage() {
 			</div>
 
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-				<HardwareCard />
+				<div className="md:col-span-2">
+					<HardwareCard />
+				</div>
 				<ModelStatusCard />
 				<MetricsCard />
-				<StorageCard />
 			</div>
 		</div>
 	);

@@ -48,25 +48,19 @@ pub struct Settings {
     pub max_loaded_models: usize,
     /// None = keep models loaded forever; Some(n) = unload after n seconds idle.
     pub idle_timeout_secs: Option<u64>,
-    pub transcription_timeout_secs: u64,
+    /// None = no timeout; Some(n) = abort transcription after n seconds.
+    pub transcription_timeout_secs: Option<u64>,
     pub save_audio: bool,
     pub audio_retention: RetentionPolicy,
     pub record_retention: RetentionPolicy,
     #[serde(default)]
     pub preload_default_model: bool,
-    pub cors_allowed_origins: Vec<String>,
-    #[serde(default = "default_log_level")]
-    pub log_level: String,
     /// Timezone for display. "auto" = browser detection, or IANA timezone (e.g., "Asia/Taipei")
     #[serde(default = "default_timezone")]
     pub timezone: String,
     /// Per-model compute device override. Key = model_id.
     #[serde(default)]
     pub device_overrides: HashMap<String, ComputeDevice>,
-}
-
-fn default_log_level() -> String {
-    "info".into()
 }
 
 fn default_timezone() -> String {
@@ -80,13 +74,11 @@ impl Default for Settings {
             pool_size: 1,
             max_loaded_models: 3,
             idle_timeout_secs: Some(300),
-            transcription_timeout_secs: 120,
+            transcription_timeout_secs: Some(300),
             save_audio: true,
             preload_default_model: false,
             audio_retention: RetentionPolicy::Days(7),
             record_retention: RetentionPolicy::Days(30),
-            cors_allowed_origins: vec![],
-            log_level: default_log_level(),
             timezone: default_timezone(),
             device_overrides: HashMap::new(),
         }

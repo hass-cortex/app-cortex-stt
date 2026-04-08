@@ -4,7 +4,7 @@ build_from:
   amd64: ghcr.io/hassio-addons/debian-base:9.2.0
 
 args:
-  CARGO_FEATURES: 'all-engines,vad-silero'
+  CARGO_FEATURES: 'default'
 
 labels:
   org.opencontainers.image.title: Cortex STT Server

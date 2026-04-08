@@ -1,4 +1,4 @@
-import { cleanupHistory, deleteHistoryRecord, getHistoryDetail, listHistory } from "@/api/history";
+import { deleteAllHistory, deleteHistoryRecord, getHistoryDetail, listHistory } from "@/api/history";
 import { subscribeSSE } from "@/api/client";
 import type { HistoryFilters } from "@/api/types";
 import { queryKeys } from "@/lib/constants";
@@ -45,10 +45,10 @@ export function useDeleteHistoryRecord() {
 	});
 }
 
-export function useCleanupHistory() {
+export function useDeleteAllHistory() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: cleanupHistory,
+		mutationFn: deleteAllHistory,
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
 		},
