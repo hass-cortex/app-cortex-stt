@@ -196,6 +196,9 @@ function HistoryRow({
 				<div className="text-right shrink-0 hidden sm:block">
 					<p className="text-xs text-text-secondary">{formatDuration(record.audio_duration_ms)}</p>
 					<p className="text-xs text-text-muted">{formatDuration(record.inference_ms)} inference</p>
+					{record.model_load_ms > 0 && (
+						<p className="text-xs text-amber-500">{formatDuration(record.model_load_ms)} load</p>
+					)}
 					<p className="text-xs text-text-muted">{record.device?.toUpperCase() ?? "CPU"}</p>
 				</div>
 
@@ -243,6 +246,12 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 					<span className="text-text-muted">Inference Time</span>
 					<p className="text-text-primary">{formatDuration(record.inference_ms)}</p>
 				</div>
+				{record.model_load_ms > 0 && (
+					<div>
+						<span className="text-text-muted">Model Load Time</span>
+						<p className="text-amber-500">{formatDuration(record.model_load_ms)}</p>
+					</div>
+				)}
 				<div>
 					<span className="text-text-muted">RTF</span>
 					<p className="text-text-primary">

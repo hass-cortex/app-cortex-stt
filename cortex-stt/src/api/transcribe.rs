@@ -52,6 +52,7 @@ pub struct TranscribeResponse {
     pub model: String,
     pub duration_ms: u64,
     pub inference_ms: u64,
+    pub model_load_ms: u64,
     pub device: String,
 }
 
@@ -90,7 +91,9 @@ async fn run_transcription(
     options: TranscribeOptions,
     duration_ms: u64,
 ) -> Result<TranscribeResponse, crate::error::AsrError> {
+    let acquire_start = Instant::now();
     let mut guard = state.engine_manager.acquire(model).await?;
+    let model_load_ms = acquire_start.elapsed().as_millis() as u64;
 
     let device = guard.device().to_string();
     let model_owned = model.to_string();
@@ -118,6 +121,7 @@ async fn run_transcription(
         model: model_owned,
         duration_ms,
         inference_ms,
+        model_load_ms,
         device,
     })
 }
@@ -168,6 +172,7 @@ async fn save_to_history(
         model_id: model.to_string(),
         audio_duration_ms: response.duration_ms as i64,
         inference_ms: response.inference_ms as i64,
+        model_load_ms: response.model_load_ms as i64,
         text: response.text.clone(),
         segments_json,
         audio_path: audio_path_str,

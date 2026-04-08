@@ -45,6 +45,7 @@ async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
                 model_id: "whisper-small".into(),
                 audio_duration_ms: 3000,
                 inference_ms: 200,
+                model_load_ms: 0,
                 text: format!("test transcription {i}"),
                 segments_json: "[]".into(),
                 audio_path: None,

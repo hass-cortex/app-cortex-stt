@@ -110,6 +110,7 @@ export interface TranscriptionRecord {
 	model_id: string;
 	audio_duration_ms: number;
 	inference_ms: number;
+	model_load_ms: number;
 	text: string;
 	segments_json: string | null;
 	audio_path: string | null;

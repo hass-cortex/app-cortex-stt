@@ -39,6 +39,7 @@ pub struct CreateRecord {
     pub model_id: String,
     pub audio_duration_ms: i64,
     pub inference_ms: i64,
+    pub model_load_ms: i64,
     pub text: String,
     pub segments_json: String,
     pub audio_path: Option<String>,
@@ -58,6 +59,7 @@ pub struct TranscriptionRecord {
     pub model_id: String,
     pub audio_duration_ms: i64,
     pub inference_ms: i64,
+    pub model_load_ms: i64,
     pub text: String,
     pub segments_json: String,
     pub audio_path: Option<String>,
@@ -87,6 +89,7 @@ impl Database {
         let model_id = rec.model_id.clone();
         let audio_duration_ms = rec.audio_duration_ms;
         let inference_ms = rec.inference_ms;
+        let model_load_ms = rec.model_load_ms;
         let text = rec.text.clone();
         let segments_json = rec.segments_json.clone();
         let audio_path = rec.audio_path.clone();
@@ -99,8 +102,8 @@ impl Database {
         self.connection()
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     params![
                         id_clone,
                         source,
@@ -108,6 +111,7 @@ impl Database {
                         model_id,
                         audio_duration_ms,
                         inference_ms,
+                        model_load_ms,
                         text,
                         segments_json,
                         audio_path,
@@ -132,7 +136,7 @@ impl Database {
         self.connection()
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
                      FROM records WHERE id = ?1",
                 )?;
 
@@ -177,7 +181,7 @@ impl Database {
         self.connection()
             .call(move |conn| {
                 let mut sql = String::from(
-                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
+                    "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
                      FROM records WHERE 1=1",
                 );
                 let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -480,12 +484,13 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         model_id: row.get(4)?,
         audio_duration_ms: row.get(5)?,
         inference_ms: row.get(6)?,
-        text: row.get(7)?,
-        segments_json: row.get(8)?,
-        audio_path: row.get(9)?,
-        has_error: row.get::<_, i32>(10)? != 0,
-        error_message: row.get(11)?,
-        api_key_id: row.get(12)?,
-        device: row.get(13)?,
+        model_load_ms: row.get(7)?,
+        text: row.get(8)?,
+        segments_json: row.get(9)?,
+        audio_path: row.get(10)?,
+        has_error: row.get::<_, i32>(11)? != 0,
+        error_message: row.get(12)?,
+        api_key_id: row.get(13)?,
+        device: row.get(14)?,
     })
 }

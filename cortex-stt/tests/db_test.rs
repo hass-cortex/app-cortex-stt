@@ -8,6 +8,7 @@ fn sample_record() -> CreateRecord {
         model_id: "whisper-tiny".to_string(),
         audio_duration_ms: 3200,
         inference_ms: 450,
+        model_load_ms: 0,
         text: "hello world".to_string(),
         segments_json: "[]".to_string(),
         audio_path: None,
