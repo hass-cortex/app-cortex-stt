@@ -58,6 +58,7 @@ impl Database {
                 model_id TEXT NOT NULL,
                 audio_duration_ms INTEGER NOT NULL,
                 inference_ms INTEGER NOT NULL,
+                model_load_ms INTEGER NOT NULL DEFAULT 0,
                 text TEXT NOT NULL,
                 segments_json TEXT NOT NULL DEFAULT '[]',
                 audio_path TEXT,
@@ -121,25 +122,6 @@ impl Database {
                 if !has_device {
                     conn.execute_batch(
                         "ALTER TABLE records ADD COLUMN device TEXT NOT NULL DEFAULT 'cpu';",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
-
-        // Migration: add model_load_ms column to records
-        self.conn
-            .call(|conn| {
-                let has_col: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='model_load_ms'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_col {
-                    conn.execute_batch(
-                        "ALTER TABLE records ADD COLUMN model_load_ms INTEGER NOT NULL DEFAULT 0;",
                     )?;
                 }
                 Ok(())
