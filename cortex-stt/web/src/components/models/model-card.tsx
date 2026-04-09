@@ -44,7 +44,7 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 	const isLoaded = model.is_loaded;
 
 	return (
-		<Card className={`flex flex-col ${isLoaded ? "border-l-2 border-accent" : ""}`}>
+		<Card className={`flex flex-col ${isLoaded ? "border-2 border-success" : ""}`}>
 			{/* Header */}
 			<div className="flex items-start justify-between mb-3">
 				<div className="min-w-0">
@@ -59,7 +59,6 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 				<Badge>{formatMB(model.size_mb)}</Badge>
 				{model.uses_gpu && <Badge variant="accent">GPU</Badge>}
 				{!model.uses_gpu && <Badge variant="default">CPU</Badge>}
-				{isLoaded && <Badge variant="success">Loaded</Badge>}
 				{model.status === "error" && <Badge variant="error">Error</Badge>}
 			</div>
 
