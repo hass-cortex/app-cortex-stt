@@ -135,15 +135,6 @@ impl EngineManager {
             }
         }
 
-        // Evict LRU if at capacity.
-        {
-            let pools = self.pools.read().await;
-            if pools.len() >= config.max_loaded_models {
-                drop(pools);
-                self.evict_lru(model_id).await;
-            }
-        }
-
         // Build the pool while holding a read lock on factories.
         let pool = {
             let factories = self.factories.read().await;
@@ -183,6 +174,21 @@ impl EngineManager {
         }
 
         let mut pools = self.pools.write().await;
+        // Final eviction under write lock to handle concurrent loads.
+        while pools.len() >= config.max_loaded_models {
+            let lru_id = pools
+                .iter()
+                .filter(|(id, _)| id.as_str() != model_id)
+                .min_by_key(|(_, loaded)| loaded.last_used)
+                .map(|(id, _)| id.clone());
+            match lru_id {
+                Some(id) => {
+                    info!(model_id = %id, "evicting LRU model");
+                    pools.remove(&id);
+                }
+                None => break,
+            }
+        }
         pools.insert(
             model_id.to_string(),
             LoadedModel {
@@ -192,21 +198,6 @@ impl EngineManager {
         );
 
         Ok(())
-    }
-
-    /// Evict the least-recently-used model, excluding `exclude_id`.
-    async fn evict_lru(&self, exclude_id: &str) {
-        let mut pools = self.pools.write().await;
-        let lru_id = pools
-            .iter()
-            .filter(|(id, _)| id.as_str() != exclude_id)
-            .min_by_key(|(_, loaded)| loaded.last_used)
-            .map(|(id, _)| id.clone());
-
-        if let Some(id) = lru_id {
-            info!(model_id = %id, "evicting LRU model");
-            pools.remove(&id);
-        }
     }
 
     /// Unload a specific model, freeing its pool resources.
