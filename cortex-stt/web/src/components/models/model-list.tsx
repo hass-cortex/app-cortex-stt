@@ -76,7 +76,10 @@ export function ModelList() {
 		return true;
 	});
 
-	const downloaded = filtered.filter((m) => isDownloaded(m.status) || isInProgress(m.status));
+	const loaded = filtered.filter((m) => m.status === "loaded");
+	const downloaded = filtered.filter(
+		(m) => (isDownloaded(m.status) || isInProgress(m.status)) && m.status !== "loaded",
+	);
 	const available = filtered.filter((m) => !isDownloaded(m.status) && !isInProgress(m.status));
 
 	return (
@@ -112,6 +115,20 @@ export function ModelList() {
 				/>
 			) : (
 				<>
+					{/* Loaded models */}
+					{loaded.length > 0 && (
+						<div className="space-y-3">
+							<h2 className="text-sm font-semibold text-text-secondary">
+								Loaded ({loaded.length})
+							</h2>
+							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+								{loaded.map((model) => (
+									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
+								))}
+							</div>
+						</div>
+					)}
+
 					{/* Downloaded models */}
 					{downloaded.length > 0 && (
 						<div className="space-y-3">

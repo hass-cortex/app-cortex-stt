@@ -3,9 +3,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/components/ui/toast";
+import { useLoadModel, useUnloadModel } from "@/hooks/use-engine";
 import { useCancelDownload, useDeleteModel, useDownloadModel } from "@/hooks/use-models";
 import { formatMB } from "@/lib/format";
-import { Clock, Download, Trash2, X } from "lucide-react";
+import { Clock, Download, Play, PowerOff, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { DownloadProgressBar } from "./download-progress";
 import { ScoreBar } from "./score-bar";
@@ -20,6 +21,8 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 	const downloadMutation = useDownloadModel();
 	const deleteMutation = useDeleteModel();
 	const cancelMutation = useCancelDownload();
+	const loadMutation = useLoadModel();
+	const unloadMutation = useUnloadModel();
 
 	const [showAllLangs, setShowAllLangs] = useState(false);
 
@@ -38,7 +41,7 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 	const isLoaded = model.status === "loaded";
 
 	return (
-		<Card className="flex flex-col">
+		<Card className={`flex flex-col ${isLoaded ? "border-l-2 border-accent" : ""}`}>
 			{/* Header */}
 			<div className="flex items-start justify-between mb-3">
 				<div className="min-w-0">
@@ -144,7 +147,42 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 						Cancel
 					</Button>
 				)}
-				{isDownloaded && (
+				{isDownloaded && !isLoaded && (
+					<Button
+						size="sm"
+						variant="ghost"
+						icon={<Play size={14} />}
+						onClick={() =>
+							loadMutation.mutate(
+								{ modelId: model.id },
+								{
+									onSuccess: () => toast(`${model.name} loaded`, "success"),
+									onError: (err) => toast(`Load failed: ${err.message}`, "error"),
+								},
+							)
+						}
+						loading={loadMutation.isPending}
+					>
+						Load
+					</Button>
+				)}
+				{isLoaded && (
+					<Button
+						size="sm"
+						variant="ghost"
+						icon={<PowerOff size={14} />}
+						onClick={() =>
+							unloadMutation.mutate(model.id, {
+								onSuccess: () => toast(`${model.name} unloaded`, "success"),
+								onError: (err) => toast(`Unload failed: ${err.message}`, "error"),
+							})
+						}
+						loading={unloadMutation.isPending}
+					>
+						Unload
+					</Button>
+				)}
+				{isDownloaded && !isLoaded && (
 					<Button
 						size="sm"
 						variant="danger"
@@ -158,7 +196,6 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 							}
 						}}
 						loading={deleteMutation.isPending}
-						disabled={isLoaded}
 					>
 						Delete
 					</Button>
