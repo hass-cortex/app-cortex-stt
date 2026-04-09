@@ -458,16 +458,21 @@ async fn download_task(
             }
 
             // Unwrap single-directory nesting (e.g. archive contains dir/dir/files).
-            // Only consider directories — ignores loose files like macOS resource forks.
+            // Only unwrap when the level contains exactly one entry AND it is a directory.
+            // This prevents drilling past a top-level dir that contains both files and subdirs.
             let mut source_dir = tmp_dir.clone();
             loop {
-                let subdirs: Vec<_> = std::fs::read_dir(&source_dir)
+                let entries: Vec<_> = std::fs::read_dir(&source_dir)
                     .map_err(AsrError::Io)?
                     .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
                     .collect();
-                if subdirs.len() == 1 {
-                    source_dir = subdirs[0].path();
+                if entries.len() == 1
+                    && entries[0]
+                        .file_type()
+                        .map(|ft| ft.is_dir())
+                        .unwrap_or(false)
+                {
+                    source_dir = entries[0].path();
                 } else {
                     break;
                 }
