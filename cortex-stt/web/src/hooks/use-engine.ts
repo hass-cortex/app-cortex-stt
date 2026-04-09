@@ -16,6 +16,7 @@ export function useSetDefaultModel() {
 		mutationFn: (modelId: string) => setDefaultModel(modelId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.engine.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
 		},
 	});
 }

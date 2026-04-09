@@ -76,9 +76,9 @@ export function ModelList() {
 		return true;
 	});
 
-	const loaded = filtered.filter((m) => m.status === "loaded");
+	const loaded = filtered.filter((m) => m.is_loaded);
 	const downloaded = filtered.filter(
-		(m) => (isDownloaded(m.status) || isInProgress(m.status)) && m.status !== "loaded",
+		(m) => (isDownloaded(m.status) || isInProgress(m.status)) && !m.is_loaded,
 	);
 	const available = filtered.filter((m) => !isDownloaded(m.status) && !isInProgress(m.status));
 

@@ -37,8 +37,11 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 	const isQueued = model.status === "queued";
 	const isDownloading = model.status === "downloading";
 	const isDownloaded =
-		model.status === "downloaded" || model.status === "loaded" || model.status === "loading";
-	const isLoaded = model.status === "loaded";
+		model.status === "downloaded" ||
+		model.status === "loaded" ||
+		model.status === "loading" ||
+		model.status === "custom";
+	const isLoaded = model.is_loaded;
 
 	return (
 		<Card className={`flex flex-col ${isLoaded ? "border-l-2 border-accent" : ""}`}>
