@@ -28,6 +28,7 @@ export function useLoadModel() {
 			loadModel(modelId, poolSize),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.engine.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
 		},
 	});
 }
@@ -38,6 +39,7 @@ export function useUnloadModel() {
 		mutationFn: (modelId: string) => unloadModel(modelId),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.engine.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
 		},
 	});
 }
