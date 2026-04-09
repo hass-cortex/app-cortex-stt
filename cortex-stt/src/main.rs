@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_manager = EngineManager::new(engine_config);
 
     // Spawn background idle model watcher.
-    engine_manager.spawn_idle_watcher();
+    engine_manager.spawn_idle_watcher().await;
 
     // Register engine factories for downloaded registry models.
     let model_dir_path = config.model_dir();

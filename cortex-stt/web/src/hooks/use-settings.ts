@@ -21,6 +21,7 @@ export function useUpdateSettings() {
 		},
 		onSuccess: (data) => {
 			queryClient.setQueryData(queryKeys.settings.all, data);
+			queryClient.invalidateQueries({ queryKey: queryKeys.engine.all });
 		},
 	});
 }

@@ -174,7 +174,11 @@ impl EngineManager {
         }
 
         let mut pools = self.pools.write().await;
-        // Final eviction under write lock to handle concurrent loads.
+        // Re-check: another concurrent load may have inserted this model.
+        if pools.contains_key(model_id) {
+            return Ok(());
+        }
+        // Evict LRU under write lock to handle concurrent loads.
         while pools.len() >= config.max_loaded_models {
             let lru_id = pools
                 .iter()
@@ -233,11 +237,12 @@ impl EngineManager {
     ///
     /// The task runs until the returned [`tokio::task::JoinHandle`] is
     /// aborted or the `Arc<EngineManager>` is the last strong reference.
-    pub fn spawn_idle_watcher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub async fn spawn_idle_watcher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let manager = Arc::downgrade(self);
+        let check_interval = self.config.read().await.idle_check_interval;
 
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(10));
+            let mut ticker = tokio::time::interval(check_interval);
             loop {
                 ticker.tick().await;
 
