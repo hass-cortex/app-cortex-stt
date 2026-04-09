@@ -274,8 +274,8 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 			)}
 
 			{/* Transcript text */}
-			<div className="p-3 bg-surface-3 rounded-lg">
-				<p className="text-sm text-text-primary whitespace-pre-wrap">
+			<div className="p-3 bg-surface-3 rounded-lg select-text">
+				<p className="text-sm text-text-primary whitespace-pre-wrap cursor-text">
 					{record.text || <span className="text-text-muted italic">Empty transcript</span>}
 				</p>
 			</div>
