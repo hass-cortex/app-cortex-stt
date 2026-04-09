@@ -276,6 +276,25 @@ pub fn builtin_models() -> Vec<ModelDefinition> {
             quantization: "int8",
             disabled: false,
         },
+        ModelDefinition {
+            id: "funasr-nano-int8".to_string(),
+            name: "Fun-ASR-Nano (INT8)".to_string(),
+            description: "FunAudioLLM Fun-ASR-Nano 2512, INT8 quantised, CTC-only mode — Chinese, English, Japanese".to_string(),
+            engine_type: EngineType::SenseVoice,
+            filename: "funasr-nano-int8".to_string(),
+            is_directory: true,
+            url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17.tar.bz2".to_string(),
+            sha256: String::new(),
+            archive_dir_name: "sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17".to_string(),
+            size_mb: 179,
+            accuracy_score: 0.82,
+            speed_score: 0.78,
+            supported_languages: langs(&["zh", "en", "ja"]),
+            requires_cuda: false,
+            requires_avx: true,
+            quantization: "int8",
+            disabled: false,
+        },
         // ── GigaAM models ──────────────────────────────────────────────
         ModelDefinition {
             id: "gigaam-v3-int8".to_string(),
@@ -389,7 +408,7 @@ mod tests {
     #[test]
     fn builtin_models_has_expected_count() {
         let models = builtin_models();
-        assert_eq!(models.len(), 15);
+        assert_eq!(models.len(), 16);
     }
 
     #[test]
