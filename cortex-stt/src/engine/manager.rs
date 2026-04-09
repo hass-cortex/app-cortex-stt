@@ -54,7 +54,7 @@ struct LoadedModel {
 /// An optional background task unloads models that have been idle longer
 /// than [`EngineManagerConfig::idle_timeout`].
 pub struct EngineManager {
-    config: EngineManagerConfig,
+    config: RwLock<EngineManagerConfig>,
     factories: RwLock<HashMap<String, SharedEngineFactory>>,
     pools: RwLock<HashMap<String, LoadedModel>>,
 }
@@ -63,10 +63,17 @@ impl EngineManager {
     /// Create a new engine manager with the given configuration.
     pub fn new(config: EngineManagerConfig) -> Arc<Self> {
         Arc::new(Self {
-            config,
+            config: RwLock::new(config),
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Update the runtime configuration. Changes take effect on the next
+    /// acquire / load / idle-check cycle — already-loaded pools are not resized.
+    pub async fn update_config(&self, f: impl FnOnce(&mut EngineManagerConfig)) {
+        let mut config = self.config.write().await;
+        f(&mut config);
     }
 
     /// Register a factory for the given model ID.
@@ -86,6 +93,8 @@ impl EngineManager {
     /// LRU model if at capacity). Returns a [`PoolGuard`] providing
     /// exclusive access to one engine instance.
     pub async fn acquire(&self, model_id: &str) -> Result<PoolGuard, AsrError> {
+        let acquire_timeout = self.config.read().await.acquire_timeout;
+
         // Fast path: model already loaded.
         {
             let mut pools = self.pools.write().await;
@@ -93,7 +102,7 @@ impl EngineManager {
                 loaded.last_used = Instant::now();
                 let pool = loaded.pool.clone();
                 drop(pools);
-                return pool.acquire(self.config.acquire_timeout).await;
+                return pool.acquire(acquire_timeout).await;
             }
         }
 
@@ -110,11 +119,14 @@ impl EngineManager {
         let pool = loaded.pool.clone();
         drop(pools);
 
-        pool.acquire(self.config.acquire_timeout).await
+        pool.acquire(acquire_timeout).await
     }
 
     /// Load a model pool, evicting the LRU model if at capacity.
     async fn load_model(&self, model_id: &str) -> Result<(), AsrError> {
+        // Snapshot config for this load operation.
+        let config = self.config.read().await.clone();
+
         // Check if another task loaded it while we were waiting.
         {
             let pools = self.pools.read().await;
@@ -126,7 +138,7 @@ impl EngineManager {
         // Evict LRU if at capacity.
         {
             let pools = self.pools.read().await;
-            if pools.len() >= self.config.max_loaded_models {
+            if pools.len() >= config.max_loaded_models {
                 drop(pools);
                 self.evict_lru(model_id).await;
             }
@@ -142,15 +154,15 @@ impl EngineManager {
                 })?;
             let factory_ref = Arc::clone(factory);
             drop(factories);
-            ModelPool::new(&factory_ref, self.config.pool_size)?
+            ModelPool::new(&factory_ref, config.pool_size)?
         };
 
-        info!(model_id = %model_id, pool_size = self.config.pool_size, "model loaded");
+        info!(model_id = %model_id, pool_size = config.pool_size, "model loaded");
 
         // Warmup: run a dummy inference to warm caches.
         {
             let warmup_pool = pool.clone();
-            let warmup_timeout = self.config.acquire_timeout;
+            let warmup_timeout = config.acquire_timeout;
             match warmup_pool.acquire(warmup_timeout).await {
                 Ok(mut guard) => {
                     let warmup_samples = vec![0.0f32; 16000]; // 1 second of silence
@@ -232,20 +244,21 @@ impl EngineManager {
     /// aborted or the `Arc<EngineManager>` is the last strong reference.
     pub fn spawn_idle_watcher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let manager = Arc::downgrade(self);
-        let interval = self.config.idle_check_interval;
-        let Some(idle_timeout) = self.config.idle_timeout else {
-            debug!("idle timeout is None, models will stay loaded forever");
-            return tokio::spawn(async {});
-        };
 
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
+            let mut ticker = tokio::time::interval(Duration::from_secs(10));
             loop {
                 ticker.tick().await;
 
                 let Some(mgr) = manager.upgrade() else {
                     debug!("engine manager dropped, idle watcher exiting");
                     return;
+                };
+
+                // Re-read config each tick so changes take effect immediately.
+                let idle_timeout = match mgr.config.read().await.idle_timeout {
+                    Some(d) => d,
+                    None => continue, // keep loaded forever
                 };
 
                 let to_unload = {

@@ -101,6 +101,22 @@ async fn update_settings(
         let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
         api_err
     })?;
+
+    // Sync engine-relevant settings to the runtime engine manager.
+    let max_loaded = settings.max_loaded_models;
+    let pool_size = settings.pool_size;
+    let idle_timeout = settings
+        .idle_timeout_secs
+        .map(std::time::Duration::from_secs);
+    state
+        .engine_manager
+        .update_config(|cfg| {
+            cfg.max_loaded_models = max_loaded;
+            cfg.pool_size = pool_size;
+            cfg.idle_timeout = idle_timeout;
+        })
+        .await;
+
     Ok(Json(settings))
 }
 
