@@ -138,6 +138,7 @@ export interface TranscriptionSegment {
 export interface HistoryFilters {
 	source?: TranscriptionSource;
 	model?: string;
+	text?: string;
 	from?: string;
 	to?: string;
 	has_error?: boolean;

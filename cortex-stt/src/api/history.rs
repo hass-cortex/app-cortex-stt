@@ -20,6 +20,7 @@ use crate::state::AppState;
 pub struct HistoryQuery {
     pub source: Option<String>,
     pub model: Option<String>,
+    pub text: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
     pub limit: Option<i64>,
@@ -38,6 +39,7 @@ async fn list_history(
     let filter = ListRecordsFilter {
         source,
         model_id: query.model,
+        text: query.text,
         from: query.from,
         to: query.to,
         limit: Some(query.limit.unwrap_or(50)),

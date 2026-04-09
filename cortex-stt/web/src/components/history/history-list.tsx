@@ -98,6 +98,13 @@ export function HistoryList() {
 					onChange={(e) => updateFilter("model", e.target.value)}
 					className="sm:w-40"
 				/>
+				<Input
+					type="text"
+					placeholder="Search text..."
+					value={filters.text ?? ""}
+					onChange={(e) => updateFilter("text", e.target.value)}
+					className="sm:w-48"
+				/>
 			</div>
 
 			{/* Results */}

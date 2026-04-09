@@ -74,6 +74,7 @@ pub struct TranscriptionRecord {
 pub struct ListRecordsFilter {
     pub source: Option<TranscriptionSource>,
     pub model_id: Option<String>,
+    pub text: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
     pub limit: Option<i64>,
@@ -173,6 +174,7 @@ impl Database {
         // Clone all filter values into owned types for the move closure.
         let source = filter.source;
         let model_id = filter.model_id.clone();
+        let text = filter.text.clone();
         let from = filter.from.clone();
         let to = filter.to.clone();
         let limit = filter.limit;
@@ -195,6 +197,11 @@ impl Database {
                 if let Some(model_id) = &model_id {
                     sql.push_str(&format!(" AND model_id LIKE ?{idx}"));
                     param_values.push(Box::new(format!("%{model_id}%")));
+                    idx += 1;
+                }
+                if let Some(text) = &text {
+                    sql.push_str(&format!(" AND text LIKE ?{idx}"));
+                    param_values.push(Box::new(format!("%{text}%")));
                     idx += 1;
                 }
                 if let Some(from) = &from {

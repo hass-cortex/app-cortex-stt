@@ -6,6 +6,7 @@ export function listHistory(filters?: HistoryFilters): Promise<TranscriptionReco
 	const params: Record<string, string> = {};
 	if (filters?.source) params.source = filters.source;
 	if (filters?.model) params.model = filters.model;
+	if (filters?.text) params.text = filters.text;
 	if (filters?.from) params.from = filters.from;
 	if (filters?.to) params.to = filters.to;
 	if (filters?.has_error !== undefined) params.has_error = String(filters.has_error);
