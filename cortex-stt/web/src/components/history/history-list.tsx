@@ -26,16 +26,6 @@ const errorOptions = [
 	{ value: "false", label: "Successful only" },
 ];
 
-/** Format source label for display */
-function formatSource(source: string): string {
-	switch (source) {
-		case "http_api":
-			return "HTTP API";
-		default:
-			return source;
-	}
-}
-
 /** Parse segments_json string into TranscriptionSegment array */
 function parseSegments(segmentsJson: string | null): TranscriptionSegment[] {
 	if (!segmentsJson) return [];
@@ -186,9 +176,7 @@ function HistoryRow({
 					</p>
 					<div className="flex items-center gap-2 mt-0.5">
 						<span className="text-xs text-text-muted">{formatTimestamp(record.timestamp, timezone)}</span>
-						<Badge variant="accent">
-							{formatSource(record.source)}
-						</Badge>
+						<span className="text-xs text-text-secondary">{formatDuration(record.inference_ms)}</span>
 						<span className="text-xs text-text-muted">{record.model_id}</span>
 					</div>
 				</div>

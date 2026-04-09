@@ -2,7 +2,6 @@
 export const ROUTES = {
 	DASHBOARD: "/",
 	MODELS: "/models",
-	ENGINE: "/engine",
 	HISTORY: "/history",
 	KEYS: "/keys",
 	SETTINGS: "/settings",

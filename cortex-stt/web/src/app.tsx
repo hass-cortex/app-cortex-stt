@@ -6,7 +6,6 @@ import { ToastProvider } from "./components/ui/toast";
 import { ROUTES } from "./lib/constants";
 import { ThemeProvider } from "./lib/theme";
 import { DashboardPage } from "./pages/dashboard";
-import { EnginePage } from "./pages/engine";
 import { HistoryPage } from "./pages/history";
 import { KeysPage } from "./pages/keys";
 import { ModelsPage } from "./pages/models";
@@ -33,7 +32,6 @@ export function App() {
 								<Route element={<AppLayout />}>
 									<Route index element={<DashboardPage />} />
 									<Route path={ROUTES.MODELS} element={<ModelsPage />} />
-									<Route path={ROUTES.ENGINE} element={<EnginePage />} />
 									<Route path={ROUTES.HISTORY} element={<HistoryPage />} />
 									<Route path={ROUTES.KEYS} element={<KeysPage />} />
 									<Route path={ROUTES.SETTINGS} element={<SettingsPage />} />

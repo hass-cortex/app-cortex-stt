@@ -4,7 +4,6 @@ import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 import {
 	ChevronLeft,
 	ChevronRight,
-	Cpu,
 	History,
 	Key,
 	LayoutDashboard,
@@ -24,7 +23,6 @@ interface NavItem {
 const navItems: NavItem[] = [
 	{ path: ROUTES.DASHBOARD, label: "Dashboard", icon: LayoutDashboard },
 	{ path: ROUTES.MODELS, label: "Models", icon: Package },
-	{ path: ROUTES.ENGINE, label: "Engine", icon: Cpu },
 	{ path: ROUTES.HISTORY, label: "History", icon: History },
 	{ path: ROUTES.KEYS, label: "API Keys", icon: Key },
 	{ path: ROUTES.SETTINGS, label: "Settings", icon: Settings },
