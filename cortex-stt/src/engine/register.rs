@@ -36,7 +36,12 @@ pub async fn register_downloaded_models(
         }
 
         let device = device_overrides.get(&def.id).cloned().unwrap_or_default();
-        let factory = create_factory(&def.engine_type, model_path.clone(), def.quantization, device);
+        let factory = create_factory(
+            &def.engine_type,
+            model_path.clone(),
+            def.quantization,
+            device,
+        );
         let Some(factory) = factory else {
             continue;
         };

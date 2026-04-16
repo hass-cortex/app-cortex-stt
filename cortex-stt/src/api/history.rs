@@ -12,8 +12,8 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use tokio_stream::Stream;
 
-use crate::api::error::ApiError;
 use crate::db::records::{ListRecordsFilter, TranscriptionRecord, TranscriptionSource};
+use crate::error::AsrError;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +30,7 @@ pub struct HistoryQuery {
 async fn list_history(
     State(state): State<Arc<AppState>>,
     Query(query): Query<HistoryQuery>,
-) -> Result<Json<Vec<TranscriptionRecord>>, ApiError> {
+) -> Result<Json<Vec<TranscriptionRecord>>, AsrError> {
     let source = query
         .source
         .as_deref()
@@ -46,65 +46,38 @@ async fn list_history(
         offset: query.offset,
     };
 
-    let records = state.db.list_records(&filter).await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
-
+    let records = state.db.list_records(&filter).await?;
     Ok(Json(records))
 }
 
 async fn get_history_record(
     State(state): State<Arc<AppState>>,
     Path(record_id): Path<String>,
-) -> Result<Json<TranscriptionRecord>, ApiError> {
+) -> Result<Json<TranscriptionRecord>, AsrError> {
     state
         .db
         .get_record(&record_id)
-        .await
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?
+        .await?
         .map(Json)
-        .ok_or_else(|| ApiError {
-            code: "RECORD_NOT_FOUND",
-            message: format!("record not found: {record_id}"),
-            model_id: None,
-        })
+        .ok_or(AsrError::RecordNotFound { record_id })
 }
 
 async fn get_history_audio(
     State(state): State<Arc<AppState>>,
     Path(record_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<impl IntoResponse, AsrError> {
     let record = state
         .db
         .get_record(&record_id)
-        .await
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?
-        .ok_or_else(|| ApiError {
-            code: "RECORD_NOT_FOUND",
-            message: format!("record not found: {record_id}"),
-            model_id: None,
+        .await?
+        .ok_or(AsrError::RecordNotFound {
+            record_id: record_id.clone(),
         })?;
 
-    let audio_filename = record.audio_path.ok_or_else(|| ApiError {
-        code: "NO_AUDIO",
-        message: "no audio stored for this record".into(),
-        model_id: None,
-    })?;
+    let audio_filename = record.audio_path.ok_or(AsrError::NoAudio { record_id })?;
 
     let audio_path = state.data_dir.join("audio").join(&audio_filename);
-
-    let data = tokio::fs::read(&audio_path).await.map_err(|e| ApiError {
-        code: "INTERNAL_ERROR",
-        message: format!("failed to read audio file: {e}"),
-        model_id: None,
-    })?;
+    let data = tokio::fs::read(&audio_path).await?;
 
     Ok((StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], data))
 }
@@ -112,7 +85,7 @@ async fn get_history_audio(
 async fn delete_history_record(
     State(state): State<Arc<AppState>>,
     Path(record_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, AsrError> {
     // Get record to find audio path for cleanup.
     if let Ok(Some(record)) = state.db.get_record(&record_id).await {
         if let Some(audio_filename) = &record.audio_path {
@@ -121,10 +94,7 @@ async fn delete_history_record(
         }
     }
 
-    state.db.delete_record(&record_id).await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+    state.db.delete_record(&record_id).await?;
 
     Ok(Json(serde_json::json!({"deleted": record_id})))
 }
@@ -137,32 +107,18 @@ struct CleanupRequest {
 async fn cleanup_history(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CleanupRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, AsrError> {
     let days = req.retention_days.unwrap_or(30);
 
     // Delete audio files first.
-    let audio_filenames = state
-        .db
-        .get_audio_paths_older_than_days(days)
-        .await
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?;
+    let audio_filenames = state.db.get_audio_paths_older_than_days(days).await?;
 
     let audio_dir = state.data_dir.join("audio");
     for filename in &audio_filenames {
         let _ = tokio::fs::remove_file(audio_dir.join(filename)).await;
     }
 
-    let deleted = state
-        .db
-        .cleanup_records_older_than_days(days)
-        .await
-        .map_err(|e| {
-            let (_, api_err) = (&e).into();
-            api_err
-        })?;
+    let deleted = state.db.cleanup_records_older_than_days(days).await?;
 
     Ok(Json(serde_json::json!({
         "deleted_records": deleted,
@@ -173,22 +129,16 @@ async fn cleanup_history(
 /// DELETE /api/history — delete all records and audio files.
 async fn delete_all_history(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<serde_json::Value>, AsrError> {
     // Collect audio paths before deleting records.
-    let audio_filenames = state.db.get_all_audio_paths().await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+    let audio_filenames = state.db.get_all_audio_paths().await?;
 
     let audio_dir = state.data_dir.join("audio");
     for filename in &audio_filenames {
         let _ = tokio::fs::remove_file(audio_dir.join(filename)).await;
     }
 
-    let deleted = state.db.delete_all_records().await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+    let deleted = state.db.delete_all_records().await?;
 
     Ok(Json(serde_json::json!({
         "deleted_records": deleted,

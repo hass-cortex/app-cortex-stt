@@ -116,6 +116,54 @@ impl From<&AsrError> for (StatusCode, ApiError) {
                     model_id: None,
                 },
             ),
+            AsrError::RecordNotFound { record_id } => (
+                StatusCode::NOT_FOUND,
+                ApiError {
+                    code: "RECORD_NOT_FOUND",
+                    message: err.to_string(),
+                    model_id: Some(record_id.clone()),
+                },
+            ),
+            AsrError::NoAudio { record_id } => (
+                StatusCode::NOT_FOUND,
+                ApiError {
+                    code: "NO_AUDIO",
+                    message: err.to_string(),
+                    model_id: Some(record_id.clone()),
+                },
+            ),
+            AsrError::JobNotFound { job_id } => (
+                StatusCode::NOT_FOUND,
+                ApiError {
+                    code: "JOB_NOT_FOUND",
+                    message: err.to_string(),
+                    model_id: Some(job_id.clone()),
+                },
+            ),
+            AsrError::JobNotComplete { job_id } => (
+                StatusCode::CONFLICT,
+                ApiError {
+                    code: "JOB_NOT_COMPLETE",
+                    message: err.to_string(),
+                    model_id: Some(job_id.clone()),
+                },
+            ),
+            AsrError::JobCancelled { job_id } => (
+                StatusCode::GONE,
+                ApiError {
+                    code: "JOB_CANCELLED",
+                    message: err.to_string(),
+                    model_id: Some(job_id.clone()),
+                },
+            ),
+            AsrError::JobFailed { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiError {
+                    code: "JOB_FAILED",
+                    message: err.to_string(),
+                    model_id: None,
+                },
+            ),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiError {
@@ -128,17 +176,27 @@ impl From<&AsrError> for (StatusCode, ApiError) {
     }
 }
 
+impl From<AsrError> for ApiError {
+    fn from(err: AsrError) -> Self {
+        let (_, api_err): (StatusCode, ApiError) = (&err).into();
+        api_err
+    }
+}
+
+impl IntoResponse for AsrError {
+    fn into_response(self) -> Response {
+        let (status, api_err): (StatusCode, ApiError) = (&self).into();
+        (status, axum::Json(api_err)).into_response()
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        // Determine status code from the error code string.
+        // Only two call sites hand-roll ApiError: auth_required() and
+        // invalid_api_key(); both map to UNAUTHORIZED. Everything else flows
+        // through `IntoResponse for AsrError`, which sets its own status.
         let status = match self.code {
             "AUTH_REQUIRED" | "INVALID_API_KEY" => StatusCode::UNAUTHORIZED,
-            "MODEL_NOT_FOUND" | "MODEL_FILE_NOT_FOUND" | "RECORD_NOT_FOUND" | "NO_AUDIO" => {
-                StatusCode::NOT_FOUND
-            }
-            "INFERENCE_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
-            "POOL_EXHAUSTED" => StatusCode::TOO_MANY_REQUESTS,
-            "DOWNLOAD_IN_PROGRESS" => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, axum::Json(self)).into_response()

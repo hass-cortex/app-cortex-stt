@@ -26,7 +26,9 @@ export function deleteHistoryRecord(id: string): Promise<void> {
 }
 
 /** Delete all transcription records and audio files */
-export function deleteAllHistory(): Promise<{ deleted_records: number; deleted_audio_files: number }> {
+export function deleteAllHistory(): Promise<{
+	deleted_records: number;
+	deleted_audio_files: number;
+}> {
 	return del<{ deleted_records: number; deleted_audio_files: number }>("/api/history");
 }
-

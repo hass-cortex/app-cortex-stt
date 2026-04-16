@@ -7,8 +7,9 @@ import {
 	scanCustomModels,
 } from "@/api/models";
 import type { DownloadProgress } from "@/api/types";
+import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 export function useModels() {
@@ -17,51 +18,36 @@ export function useModels() {
 		queryFn: listModels,
 		refetchInterval: (query) => {
 			const data = query.state.data;
-			return data?.some((m) => m.status === "downloading" || m.status === "queued")
-				? 2000
-				: false;
+			return data?.some((m) => m.status === "downloading" || m.status === "queued") ? 2000 : false;
 		},
 	});
 }
 
 export function useDownloadModel() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (modelId: string) => downloadModel(modelId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
-		},
+		invalidates: [queryKeys.models.all],
 	});
 }
 
 export function useCancelDownload() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (modelId: string) => cancelDownload(modelId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
-		},
+		invalidates: [queryKeys.models.all],
 	});
 }
 
 export function useDeleteModel() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (modelId: string) => deleteModel(modelId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
-			queryClient.invalidateQueries({ queryKey: queryKeys.engine.all });
-		},
+		invalidates: [queryKeys.models.all, queryKeys.engine.all],
 	});
 }
 
 export function useScanCustomModels() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: scanCustomModels,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.models.all });
-		},
+		invalidates: [queryKeys.models.all],
 	});
 }
 

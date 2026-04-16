@@ -1,9 +1,15 @@
-import { deleteAllHistory, deleteHistoryRecord, getHistoryDetail, listHistory } from "@/api/history";
 import { subscribeSSE } from "@/api/client";
+import {
+	deleteAllHistory,
+	deleteHistoryRecord,
+	getHistoryDetail,
+	listHistory,
+} from "@/api/history";
 import type { HistoryFilters } from "@/api/types";
+import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function useHistoryList(filters?: HistoryFilters) {
 	const queryClient = useQueryClient();
@@ -36,21 +42,15 @@ export function useHistoryDetail(id: string | null) {
 }
 
 export function useDeleteHistoryRecord() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (id: string) => deleteHistoryRecord(id),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
-		},
+		invalidates: [queryKeys.history.all],
 	});
 }
 
 export function useDeleteAllHistory() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: deleteAllHistory,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
-		},
+		invalidates: [queryKeys.history.all],
 	});
 }

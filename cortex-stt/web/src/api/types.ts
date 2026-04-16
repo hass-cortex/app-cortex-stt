@@ -59,7 +59,14 @@ export type ModelStatus =
 	| "loaded"
 	| "custom"
 	| "error";
-export type EngineType = "Whisper" | "Parakeet" | "SenseVoice" | "GigaAM" | "Moonshine" | "Canary" | "CohereTranscribe";
+export type EngineType =
+	| "Whisper"
+	| "Parakeet"
+	| "SenseVoice"
+	| "GigaAM"
+	| "Moonshine"
+	| "Canary"
+	| "CohereTranscribe";
 
 export interface ModelInfo {
 	id: string;
@@ -192,10 +199,8 @@ export interface AppSettings {
 
 // --- Errors ---
 
-export interface ApiError {
-	error: {
-		code: string;
-		message: string;
-		model_id?: string;
-	};
+export interface ApiErrorBody {
+	code: string;
+	message: string;
+	model_id?: string;
 }

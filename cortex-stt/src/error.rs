@@ -47,6 +47,24 @@ pub enum AsrError {
     #[error("service unavailable: {detail}")]
     ServiceUnavailable { detail: String },
 
+    #[error("record not found: {record_id}")]
+    RecordNotFound { record_id: String },
+
+    #[error("no audio stored for record: {record_id}")]
+    NoAudio { record_id: String },
+
+    #[error("job not found: {job_id}")]
+    JobNotFound { job_id: String },
+
+    #[error("job is still processing: {job_id}")]
+    JobNotComplete { job_id: String },
+
+    #[error("job was cancelled: {job_id}")]
+    JobCancelled { job_id: String },
+
+    #[error("job failed: {detail}")]
+    JobFailed { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

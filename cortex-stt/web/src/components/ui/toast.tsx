@@ -1,13 +1,5 @@
 import { AlertCircle, CheckCircle, Info, X, XCircle } from "lucide-react";
-import {
-	type ReactNode,
-	createContext,
-	createElement,
-	useCallback,
-	useContext,
-	useMemo,
-	useState,
-} from "react";
+import { type ReactNode, createContext, useCallback, useContext, useMemo, useState } from "react";
 
 type ToastVariant = "success" | "error" | "warning" | "info";
 
@@ -24,10 +16,10 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const icons: Record<ToastVariant, ReactNode> = {
-	success: createElement(CheckCircle, { size: 16, className: "text-success" }),
-	error: createElement(XCircle, { size: 16, className: "text-error" }),
-	warning: createElement(AlertCircle, { size: 16, className: "text-warning" }),
-	info: createElement(Info, { size: 16, className: "text-info" }),
+	success: <CheckCircle size={16} className="text-success" />,
+	error: <XCircle size={16} className="text-error" />,
+	warning: <AlertCircle size={16} className="text-warning" />,
+	info: <Info size={16} className="text-info" />,
 };
 
 const borderColors: Record<ToastVariant, string> = {
@@ -54,38 +46,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 	const value = useMemo(() => ({ toast }), [toast]);
 
-	return createElement(
-		ToastContext.Provider,
-		{ value },
-		children,
-		createElement(
-			"div",
-			{
-				className: "fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm",
-				"aria-live": "polite",
-			},
-			toasts.map((t) =>
-				createElement(
-					"div",
-					{
-						key: t.id,
-						className: `flex items-center gap-2.5 bg-surface-2 border border-border border-l-4 ${borderColors[t.variant]} rounded-lg px-3.5 py-2.5 shadow-lg`,
-					},
-					icons[t.variant],
-					createElement("p", { className: "flex-1 text-sm text-text-primary" }, t.message),
-					createElement(
-						"button",
-						{
-							type: "button",
-							onClick: () => dismiss(t.id),
-							className:
-								"p-0.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer",
-						},
-						createElement(X, { size: 14 }),
-					),
-				),
-			),
-		),
+	return (
+		<ToastContext.Provider value={value}>
+			{children}
+			<div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm" aria-live="polite">
+				{toasts.map((t) => (
+					<div
+						key={t.id}
+						className={`flex items-center gap-2.5 bg-surface-2 border border-border border-l-4 ${borderColors[t.variant]} rounded-lg px-3.5 py-2.5 shadow-lg`}
+					>
+						{icons[t.variant]}
+						<p className="flex-1 text-sm text-text-primary">{t.message}</p>
+						<button
+							type="button"
+							onClick={() => dismiss(t.id)}
+							className="p-0.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+						>
+							<X size={14} />
+						</button>
+					</div>
+				))}
+			</div>
+		</ToastContext.Provider>
 	);
 }
 

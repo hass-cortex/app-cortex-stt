@@ -4,7 +4,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useKeys, useRevokeKey } from "@/hooks/use-keys";
-import { formatRelativeTime, formatTimestamp } from "@/lib/format";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
+import { formatRelativeTime } from "@/lib/format";
+import { formatTimestamp } from "@/utils/time";
 import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
@@ -16,15 +18,13 @@ export function KeyList({ onGenerate }: KeyListProps) {
 	const { data: keys, isLoading, error } = useKeys();
 	const revokeMutation = useRevokeKey();
 	const { toast } = useToast();
+	const runRevoke = useMutationToast(revokeMutation, { success: "API key revoked" });
 	const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
 	const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
 	const handleRevoke = (id: string, name: string) => {
 		if (!window.confirm(`Revoke API key "${name}"? This cannot be undone.`)) return;
-		revokeMutation.mutate(id, {
-			onSuccess: () => toast("API key revoked", "success"),
-			onError: (err) => toast(`Failed: ${err.message}`, "error"),
-		});
+		runRevoke(id);
 	};
 
 	const toggleVisibility = (id: string) => {

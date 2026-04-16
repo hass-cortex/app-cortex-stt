@@ -5,8 +5,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { useToast } from "@/components/ui/toast";
 import { useDeleteHistoryRecord, useHistoryList } from "@/hooks/use-history";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings } from "@/hooks/use-settings";
 import { formatDuration } from "@/lib/format";
 import { formatTimestamp } from "@/utils/time";
@@ -122,11 +122,7 @@ export function HistoryList() {
 				<div className="space-y-1">
 					{expandedIds.size >= 2 && (
 						<div className="flex justify-end">
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => setExpandedIds(new Set())}
-							>
+							<Button size="sm" variant="ghost" onClick={() => setExpandedIds(new Set())}>
 								Collapse All
 							</Button>
 						</div>
@@ -160,7 +156,9 @@ function HistoryRow({
 	return (
 		<div
 			className={`rounded-lg border transition-colors ${
-				isExpanded ? "border-border bg-surface-1" : "border-transparent hover:border-border hover:bg-surface-2"
+				isExpanded
+					? "border-border bg-surface-1"
+					: "border-transparent hover:border-border hover:bg-surface-2"
 			}`}
 		>
 			{/* Summary row */}
@@ -182,15 +180,21 @@ function HistoryRow({
 						{record.text || <span className="text-text-muted italic">Empty</span>}
 					</p>
 					<div className="flex items-center gap-2 mt-0.5">
-						<span className="text-xs text-text-muted">{formatTimestamp(record.timestamp, timezone)}</span>
-						<span className="text-xs text-text-secondary">{formatDuration(record.inference_ms)}</span>
+						<span className="text-xs text-text-muted">
+							{formatTimestamp(record.timestamp, timezone)}
+						</span>
+						<span className="text-xs text-text-secondary">
+							{formatDuration(record.inference_ms)}
+						</span>
 						<span className="text-xs text-text-muted">{record.model_id}</span>
 					</div>
 				</div>
 
 				<div className="text-right shrink-0 hidden sm:block">
 					<p className="text-xs text-text-muted">{formatDuration(record.audio_duration_ms)}</p>
-					<p className="text-xs text-text-secondary">{formatDuration(record.inference_ms)} inference</p>
+					<p className="text-xs text-text-secondary">
+						{formatDuration(record.inference_ms)} inference
+					</p>
 					{record.model_load_ms > 0 && (
 						<p className="text-xs text-amber-500">{formatDuration(record.model_load_ms)} load</p>
 					)}
@@ -212,17 +216,14 @@ function HistoryRow({
 
 function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; timezone: string }) {
 	const deleteMutation = useDeleteHistoryRecord();
-	const { toast } = useToast();
+	const runDelete = useMutationToast(deleteMutation, { success: "Record deleted" });
 
 	const segments = parseSegments(record.segments_json);
 	const hasAudio = !!record.audio_path;
 
 	const handleDelete = () => {
 		if (!window.confirm("Delete this transcription record?")) return;
-		deleteMutation.mutate(record.id, {
-			onSuccess: () => toast("Record deleted", "success"),
-			onError: (err) => toast(`Failed: ${err.message}`, "error"),
-		});
+		runDelete(record.id);
 	};
 
 	return (

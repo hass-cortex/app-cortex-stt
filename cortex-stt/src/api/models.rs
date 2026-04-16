@@ -10,9 +10,9 @@ use axum::response::sse::{Event, Sse};
 use axum::routing::{delete, get, post};
 use tokio_stream::Stream;
 
-use crate::api::error::ApiError;
 use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::builtin_models;
+use crate::error::AsrError;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
 use crate::model::manager::QueuedDownloadRequest;
 use crate::state::AppState;
@@ -36,19 +36,12 @@ async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+) -> Result<impl IntoResponse, AsrError> {
     // Unload from engine if loaded.
     state.engine_manager.unload(&model_id).await;
 
     // Delete files from disk.
-    state
-        .model_manager
-        .delete_model(&model_id)
-        .await
-        .map_err(|e| {
-            let (status, api_err) = (&e).into();
-            (status, axum::Json(api_err))
-        })?;
+    state.model_manager.delete_model(&model_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -63,26 +56,18 @@ async fn scan_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn start_download(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+) -> Result<impl IntoResponse, AsrError> {
     // Check if already downloading or queued.
     if state.model_manager.is_downloading(&model_id).await {
-        let err = crate::error::AsrError::DownloadInProgress {
-            model_id: model_id.clone(),
-        };
-        let (status, api_err) = (&err).into();
-        return Err((status, axum::Json(api_err)));
+        return Err(AsrError::DownloadInProgress { model_id });
     }
 
     // Find the model definition in the built-in registry.
     let definition = builtin_models()
         .into_iter()
         .find(|d| d.id == model_id)
-        .ok_or_else(|| {
-            let err = crate::error::AsrError::ModelNotFound {
-                model_id: model_id.clone(),
-            };
-            let (status, api_err) = (&err).into();
-            (status, axum::Json(api_err))
+        .ok_or_else(|| AsrError::ModelNotFound {
+            model_id: model_id.clone(),
         })?;
 
     let dest_path = state.model_manager.model_dir().join(&definition.filename);
@@ -96,7 +81,7 @@ async fn start_download(
 
     // Try to claim a download slot; if full, request is queued automatically.
     if let Some(request) = state.model_manager.try_claim_download_slot(request).await {
-        let handle = download_model(
+        let handle = match download_model(
             &request.url,
             request.dest_path,
             &request.sha256,
@@ -105,15 +90,17 @@ async fn start_download(
             DownloadConfig::default(),
         )
         .await
-        .map_err(|e| {
-            // Release the claimed slot on failure.
-            let mgr = state.model_manager.clone();
-            tokio::spawn(async move {
-                mgr.release_download_slot().await;
-            });
-            let (status, api_err) = (&e).into();
-            (status, axum::Json(api_err))
-        })?;
+        {
+            Ok(h) => h,
+            Err(e) => {
+                // Release the claimed slot on failure.
+                let mgr = state.model_manager.clone();
+                tokio::spawn(async move {
+                    mgr.release_download_slot().await;
+                });
+                return Err(e);
+            }
+        };
 
         state
             .model_manager
@@ -134,15 +121,12 @@ async fn start_download(
 async fn download_progress(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, axum::Json<ApiError>)>
-{
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
     // Verify the model exists.
     if state.model_manager.get_model(&model_id).await.is_none() {
-        let err = crate::error::AsrError::ModelNotFound {
+        return Err(AsrError::ModelNotFound {
             model_id: model_id.clone(),
-        };
-        let (status, api_err) = (&err).into();
-        return Err((status, axum::Json(api_err)));
+        });
     }
 
     let manager = state.model_manager.clone();
@@ -192,15 +176,8 @@ async fn download_progress(
 async fn cancel_download_handler(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
-    let slot_released = state
-        .model_manager
-        .cancel_download(&model_id)
-        .await
-        .map_err(|e| {
-            let (status, api_err) = (&e).into();
-            (status, axum::Json(api_err))
-        })?;
+) -> Result<impl IntoResponse, AsrError> {
+    let slot_released = state.model_manager.cancel_download(&model_id).await?;
 
     // If an active slot was freed, start the next queued download.
     if slot_released {

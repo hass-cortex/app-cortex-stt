@@ -125,9 +125,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 					<LogOut size={18} className="shrink-0" />
 					{!isCollapsed && <span className="truncate">Sign out</span>}
 				</button>
-				{!isCollapsed && (
-					<p className="text-[10px] text-text-muted px-0.5">Cortex STT v0.1.0</p>
-				)}
+				{!isCollapsed && <p className="text-[10px] text-text-muted px-0.5">Cortex STT v0.1.0</p>}
 			</div>
 		</aside>
 	);

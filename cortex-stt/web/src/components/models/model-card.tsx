@@ -2,9 +2,9 @@ import type { ModelInfo, SystemInfo } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useToast } from "@/components/ui/toast";
 import { useLoadModel, useUnloadModel } from "@/hooks/use-engine";
 import { useCancelDownload, useDeleteModel, useDownloadModel } from "@/hooks/use-models";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { formatMB } from "@/lib/format";
 import { Clock, Download, Play, PowerOff, Trash2, X } from "lucide-react";
 import { useState } from "react";
@@ -17,12 +17,32 @@ interface ModelCardProps {
 }
 
 export function ModelCard({ model, systemInfo }: ModelCardProps) {
-	const { toast } = useToast();
 	const downloadMutation = useDownloadModel();
 	const deleteMutation = useDeleteModel();
 	const cancelMutation = useCancelDownload();
 	const loadMutation = useLoadModel();
 	const unloadMutation = useUnloadModel();
+
+	const runDownload = useMutationToast(downloadMutation, {
+		success: `Downloading ${model.name}...`,
+		error: "Download failed",
+	});
+	const runCancel = useMutationToast(cancelMutation, {
+		success: `${model.name} removed from queue`,
+		error: "Cancel failed",
+	});
+	const runLoad = useMutationToast(loadMutation, {
+		success: `${model.name} loaded`,
+		error: "Load failed",
+	});
+	const runUnload = useMutationToast(unloadMutation, {
+		success: `${model.name} unloaded`,
+		error: "Unload failed",
+	});
+	const runDelete = useMutationToast(deleteMutation, {
+		success: `${model.name} deleted`,
+		error: "Delete failed",
+	});
 
 	const [showAllLangs, setShowAllLangs] = useState(false);
 
@@ -114,36 +134,28 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 
 			{/* Actions */}
 			<div className="flex items-center gap-2 mt-auto pt-3 border-t border-border">
-				{!isDownloaded && !isDownloading && !isQueued && model.status !== "custom" && (
-					isIncompatible ? (
+				{!isDownloaded &&
+					!isDownloading &&
+					!isQueued &&
+					model.status !== "custom" &&
+					(isIncompatible ? (
 						<span className="text-xs text-text-muted">{incompatibleReasons.join(", ")}</span>
 					) : (
 						<Button
 							size="sm"
 							icon={<Download size={14} />}
-							onClick={() =>
-								downloadMutation.mutate(model.id, {
-									onSuccess: () => toast(`Downloading ${model.name}...`, "success"),
-									onError: (err) => toast(`Download failed: ${err.message}`, "error"),
-								})
-							}
+							onClick={() => runDownload(model.id)}
 							loading={downloadMutation.isPending}
 						>
 							Download
 						</Button>
-					)
-				)}
+					))}
 				{isQueued && (
 					<Button
 						size="sm"
 						variant="ghost"
 						icon={<X size={14} />}
-						onClick={() =>
-							cancelMutation.mutate(model.id, {
-								onSuccess: () => toast(`${model.name} removed from queue`, "success"),
-								onError: (err) => toast(`Cancel failed: ${err.message}`, "error"),
-							})
-						}
+						onClick={() => runCancel(model.id)}
 						loading={cancelMutation.isPending}
 					>
 						Cancel
@@ -154,15 +166,7 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 						size="sm"
 						variant="ghost"
 						icon={<Play size={14} />}
-						onClick={() =>
-							loadMutation.mutate(
-								{ modelId: model.id },
-								{
-									onSuccess: () => toast(`${model.name} loaded`, "success"),
-									onError: (err) => toast(`Load failed: ${err.message}`, "error"),
-								},
-							)
-						}
+						onClick={() => runLoad({ modelId: model.id })}
 						loading={loadMutation.isPending}
 					>
 						Load
@@ -173,12 +177,7 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 						size="sm"
 						variant="ghost"
 						icon={<PowerOff size={14} />}
-						onClick={() =>
-							unloadMutation.mutate(model.id, {
-								onSuccess: () => toast(`${model.name} unloaded`, "success"),
-								onError: (err) => toast(`Unload failed: ${err.message}`, "error"),
-							})
-						}
+						onClick={() => runUnload(model.id)}
 						loading={unloadMutation.isPending}
 					>
 						Unload
@@ -191,10 +190,7 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 						icon={<Trash2 size={14} />}
 						onClick={() => {
 							if (window.confirm(`Delete ${model.name}? This cannot be undone.`)) {
-								deleteMutation.mutate(model.id, {
-									onSuccess: () => toast(`${model.name} deleted`, "success"),
-									onError: (err) => toast(`Delete failed: ${err.message}`, "error"),
-								});
+								runDelete(model.id);
 							}
 						}}
 						loading={deleteMutation.isPending}

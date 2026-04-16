@@ -1,12 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
-import { useToast } from "@/components/ui/toast";
 import { useDeleteAllHistory } from "@/hooks/use-history";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { AlertTriangle, Trash2 } from "lucide-react";
 
 export function DangerZone() {
 	const deleteAllMutation = useDeleteAllHistory();
-	const { toast } = useToast();
+	const runDeleteAll = useMutationToast(deleteAllMutation, {
+		success: (data) =>
+			`Deleted ${data.deleted_records} records, ${data.deleted_audio_files} audio files`,
+		error: "Delete failed",
+	});
 
 	const handleDeleteAll = () => {
 		if (
@@ -16,14 +20,7 @@ export function DangerZone() {
 		) {
 			return;
 		}
-		deleteAllMutation.mutate(undefined, {
-			onSuccess: (data) =>
-				toast(
-					`Deleted ${data.deleted_records} records, ${data.deleted_audio_files} audio files`,
-					"success",
-				),
-			onError: (err) => toast(`Delete failed: ${err.message}`, "error"),
-		});
+		runDeleteAll(undefined);
 	};
 
 	return (
@@ -35,8 +32,8 @@ export function DangerZone() {
 					<div className="space-y-1">
 						<p className="text-sm font-medium text-text-primary">Delete All Records</p>
 						<p className="text-xs text-text-secondary">
-							Permanently delete all transcription records and audio files. This action
-							cannot be undone.
+							Permanently delete all transcription records and audio files. This action cannot be
+							undone.
 						</p>
 						<Button
 							variant="danger"

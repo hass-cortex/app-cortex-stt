@@ -1,7 +1,7 @@
+import { setApiKey } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { CortexLogo } from "@/components/ui/cortex-logo";
 import { Input } from "@/components/ui/input";
-import { setApiKey } from "@/api/client";
 import { type FormEvent, useState } from "react";
 
 interface LoginPageProps {
@@ -73,16 +73,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 						autoComplete="current-password"
 					/>
 
-					{error && (
-						<p className="text-sm text-error text-center">{error}</p>
-					)}
+					{error && <p className="text-sm text-error text-center">{error}</p>}
 
-					<Button
-						type="submit"
-						size="lg"
-						loading={loading}
-						className="w-full"
-					>
+					<Button type="submit" size="lg" loading={loading} className="w-full">
 						Sign in
 					</Button>
 				</form>

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { useToast } from "@/components/ui/toast";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
 import { Save } from "lucide-react";
 import { useState } from "react";
@@ -59,7 +59,7 @@ function RetentionRow({ label, policy, onChange }: RetentionRowProps) {
 export function RetentionSettings() {
 	const { data: settings } = useSettings();
 	const updateMutation = useUpdateSettings();
-	const { toast } = useToast();
+	const save = useMutationToast(updateMutation, { success: "Retention settings saved" });
 
 	const [saveAudio, setSaveAudio] = useState(settings?.save_audio ?? true);
 	const [audioRetention, setAudioRetention] = useState<RetentionPolicy>(
@@ -70,17 +70,11 @@ export function RetentionSettings() {
 	);
 
 	const handleSave = () => {
-		updateMutation.mutate(
-			{
-				save_audio: saveAudio,
-				audio_retention: audioRetention,
-				record_retention: recordRetention,
-			},
-			{
-				onSuccess: () => toast("Retention settings saved", "success"),
-				onError: (err) => toast(`Failed: ${err.message}`, "error"),
-			},
-		);
+		save({
+			save_audio: saveAudio,
+			audio_retention: audioRetention,
+			record_retention: recordRetention,
+		});
 	};
 
 	return (

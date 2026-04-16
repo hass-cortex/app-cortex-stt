@@ -73,7 +73,8 @@ export function HardwareCard() {
 							<div className="min-w-0">
 								<p className="text-sm text-text-primary">{data.gpu_info.name}</p>
 								<p className="text-xs text-text-muted">
-									{formatMB(data.gpu_info.memory_used_mb)} / {formatMB(data.gpu_info.memory_total_mb)} VRAM
+									{formatMB(data.gpu_info.memory_used_mb)} /{" "}
+									{formatMB(data.gpu_info.memory_total_mb)} VRAM
 								</p>
 							</div>
 						</div>
@@ -105,11 +106,7 @@ export function HardwareCard() {
 								<ProgressBar
 									value={storagePercent}
 									variant={
-										storagePercent > 90
-											? "error"
-											: storagePercent > 70
-												? "warning"
-												: "success"
+										storagePercent > 90 ? "error" : storagePercent > 70 ? "warning" : "success"
 									}
 									size="sm"
 								/>

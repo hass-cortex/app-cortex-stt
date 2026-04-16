@@ -6,7 +6,7 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
+use crate::error::AsrError;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -35,11 +35,8 @@ struct CreateKeyRequest {
 
 async fn list_keys(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<ApiKeyListItem>>, ApiError> {
-    let keys = state.db.list_api_keys().await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+) -> Result<Json<Vec<ApiKeyListItem>>, AsrError> {
+    let keys = state.db.list_api_keys().await?;
 
     let items: Vec<ApiKeyListItem> = keys
         .into_iter()
@@ -59,11 +56,8 @@ async fn list_keys(
 async fn create_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateKeyRequest>,
-) -> Result<(StatusCode, Json<ApiKeyCreated>), ApiError> {
-    let (record, raw_key) = state.db.create_api_key(&req.name).await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+) -> Result<(StatusCode, Json<ApiKeyCreated>), AsrError> {
+    let (record, raw_key) = state.db.create_api_key(&req.name).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -80,11 +74,8 @@ async fn create_key(
 async fn delete_key(
     State(state): State<Arc<AppState>>,
     Path(key_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    state.db.delete_api_key(&key_id).await.map_err(|e| {
-        let (_, api_err) = (&e).into();
-        api_err
-    })?;
+) -> Result<Json<serde_json::Value>, AsrError> {
+    state.db.delete_api_key(&key_id).await?;
 
     Ok(Json(serde_json::json!({"deleted": key_id})))
 }

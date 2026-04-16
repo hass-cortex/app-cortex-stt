@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::routing::{get, put};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
+use crate::error::AsrError;
 use crate::state::AppState;
 
 /// Compute device preference for a model.
@@ -85,22 +85,16 @@ impl Default for Settings {
     }
 }
 
-async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Settings>, ApiError> {
-    let settings = state.db.load_settings().await.map_err(|e| {
-        let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
-        api_err
-    })?;
+async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Settings>, AsrError> {
+    let settings = state.db.load_settings().await?;
     Ok(Json(settings))
 }
 
 async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(settings): Json<Settings>,
-) -> Result<Json<Settings>, ApiError> {
-    state.db.save_settings(&settings).await.map_err(|e| {
-        let (_, api_err) = <(axum::http::StatusCode, ApiError)>::from(&e);
-        api_err
-    })?;
+) -> Result<Json<Settings>, AsrError> {
+    state.db.save_settings(&settings).await?;
 
     // Sync engine-relevant settings to the runtime engine manager.
     let max_loaded = settings.max_loaded_models;

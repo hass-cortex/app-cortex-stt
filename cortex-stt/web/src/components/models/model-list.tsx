@@ -20,7 +20,9 @@ const engineOptions = [
 ];
 
 function isDownloaded(status: string): boolean {
-	return status === "downloaded" || status === "loaded" || status === "loading" || status === "custom";
+	return (
+		status === "downloaded" || status === "loaded" || status === "loading" || status === "custom"
+	);
 }
 
 function isInProgress(status: string): boolean {
@@ -41,7 +43,9 @@ export function ModelList() {
 		}
 		return [
 			{ value: "", label: "All languages" },
-			...Array.from(langs).sort().map((l) => ({ value: l, label: l })),
+			...Array.from(langs)
+				.sort()
+				.map((l) => ({ value: l, label: l })),
 		];
 	}, [models]);
 

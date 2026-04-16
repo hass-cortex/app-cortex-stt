@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/toast";
+import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
 import { Save } from "lucide-react";
 import { useState } from "react";
@@ -9,7 +9,7 @@ import { useState } from "react";
 export function EngineSettings() {
 	const { data: settings } = useSettings();
 	const updateMutation = useUpdateSettings();
-	const { toast } = useToast();
+	const save = useMutationToast(updateMutation, { success: "Engine settings saved" });
 
 	const currentIdle = settings?.idle_timeout_secs;
 	const [keepLoaded, setKeepLoaded] = useState(currentIdle === null || currentIdle === undefined);
@@ -20,17 +20,11 @@ export function EngineSettings() {
 	);
 
 	const handleSave = () => {
-		updateMutation.mutate(
-			{
-				idle_timeout_secs: keepLoaded ? null : Number.parseInt(idleTimeout, 10),
-				max_loaded_models: Number.parseInt(maxLoaded, 10) || 1,
-				transcription_timeout_secs: Number.parseInt(transcriptionTimeout, 10),
-			},
-			{
-				onSuccess: () => toast("Engine settings saved", "success"),
-				onError: (err) => toast(`Failed: ${err.message}`, "error"),
-			},
-		);
+		save({
+			idle_timeout_secs: keepLoaded ? null : Number.parseInt(idleTimeout, 10),
+			max_loaded_models: Number.parseInt(maxLoaded, 10) || 1,
+			transcription_timeout_secs: Number.parseInt(transcriptionTimeout, 10),
+		});
 	};
 
 	return (

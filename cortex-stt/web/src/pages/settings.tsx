@@ -1,5 +1,5 @@
-import { DefaultModelSettings } from "@/components/settings/default-model-settings";
 import { DangerZone } from "@/components/settings/danger-zone";
+import { DefaultModelSettings } from "@/components/settings/default-model-settings";
 import { EngineSettings } from "@/components/settings/engine-settings";
 import { RetentionSettings } from "@/components/settings/retention-settings";
 import { TimezoneSettings } from "@/components/settings/timezone-settings";

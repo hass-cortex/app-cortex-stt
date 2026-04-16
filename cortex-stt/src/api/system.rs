@@ -59,7 +59,11 @@ fn read_meminfo_kb(_field: &str) -> Option<u64> {
 }
 
 /// Try PATH first, then common install locations (WSL, CUDA toolkit).
-const NVIDIA_SMI_CANDIDATES: &[&str] = &["nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi", "/usr/bin/nvidia-smi"];
+const NVIDIA_SMI_CANDIDATES: &[&str] = &[
+    "nvidia-smi",
+    "/usr/lib/wsl/lib/nvidia-smi",
+    "/usr/bin/nvidia-smi",
+];
 
 /// Cached CUDA availability (static per process — CUDA doesn't appear/disappear at runtime).
 static CUDA_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

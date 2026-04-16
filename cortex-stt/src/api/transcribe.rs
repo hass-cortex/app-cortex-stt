@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
 use crate::api::auth::AuthKeyId;
-use crate::api::error::ApiError;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::audio::wav_writer::write_wav;
 use crate::db::records::{CreateRecord, TranscriptionSource};
 use crate::engine::traits::TranscribeOptions;
+use crate::error::AsrError;
 use crate::state::{AppState, AsyncJob, AsyncJobStatus};
 
 /// Query parameters for the sync transcribe endpoint.
@@ -57,8 +57,47 @@ pub struct TranscribeResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Audio decoding helper
+// Request preparation
 // ---------------------------------------------------------------------------
+
+/// Pre-processed transcription request, shared by sync / SSE / async handlers.
+struct PreparedTranscription {
+    samples: Vec<f32>,
+    duration_ms: u64,
+    options: TranscribeOptions,
+    model: String,
+    language: Option<String>,
+}
+
+/// Decode the audio body and build transcription options.
+fn prepare(
+    headers: &HeaderMap,
+    query: TranscribeQuery,
+    body: &Bytes,
+) -> Result<PreparedTranscription, AsrError> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("audio/wav");
+
+    let samples = decode_audio(content_type, body, query.sample_rate, query.channels)?;
+    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+
+    let model = query.model;
+    let language = query.language;
+    let options = TranscribeOptions {
+        language: normalize_language(language.clone()),
+        translate: query.translate,
+    };
+
+    Ok(PreparedTranscription {
+        samples,
+        duration_ms,
+        options,
+        model,
+        language,
+    })
+}
 
 /// Decode request body into f32 PCM samples at 16 kHz mono.
 fn decode_audio(
@@ -66,7 +105,7 @@ fn decode_audio(
     body: &Bytes,
     sample_rate: Option<u32>,
     channels: Option<u16>,
-) -> Result<Vec<f32>, crate::error::AsrError> {
+) -> Result<Vec<f32>, AsrError> {
     if content_type.starts_with("application/octet-stream") {
         let sr = sample_rate.unwrap_or(16_000);
         let ch = channels.unwrap_or(1);
@@ -93,7 +132,7 @@ async fn run_transcription(
     samples: Vec<f32>,
     options: TranscribeOptions,
     duration_ms: u64,
-) -> Result<TranscribeResponse, crate::error::AsrError> {
+) -> Result<TranscribeResponse, AsrError> {
     let timeout_secs = state
         .db
         .load_settings()
@@ -104,14 +143,12 @@ async fn run_transcription(
     let fut = run_transcription_inner(state, model, samples, options, duration_ms);
 
     match timeout_secs {
-        Some(secs) => {
-            tokio::time::timeout(Duration::from_secs(secs), fut)
-                .await
-                .map_err(|_| crate::error::AsrError::InferenceTimeout {
-                    model_id: model.to_string(),
-                    timeout_secs: secs,
-                })?
-        }
+        Some(secs) => tokio::time::timeout(Duration::from_secs(secs), fut)
+            .await
+            .map_err(|_| AsrError::InferenceTimeout {
+                model_id: model.to_string(),
+                timeout_secs: secs,
+            })?,
         None => fut.await,
     }
 }
@@ -122,7 +159,7 @@ async fn run_transcription_inner(
     samples: Vec<f32>,
     options: TranscribeOptions,
     duration_ms: u64,
-) -> Result<TranscribeResponse, crate::error::AsrError> {
+) -> Result<TranscribeResponse, AsrError> {
     let acquire_start = Instant::now();
     let mut guard = state.engine_manager.acquire(model).await?;
     let model_load_ms = acquire_start.elapsed().as_millis() as u64;
@@ -132,7 +169,7 @@ async fn run_transcription_inner(
     let inference_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options))
         .await
-        .map_err(|_| crate::error::AsrError::EnginePanic {
+        .map_err(|_| AsrError::EnginePanic {
             model_id: model_owned.clone(),
         })??;
     let inference_ms = inference_start.elapsed().as_millis() as u64;
@@ -222,6 +259,17 @@ async fn save_to_history(
     }
 }
 
+/// Look up a job by ID, returning [`AsrError::JobNotFound`] if absent.
+async fn fetch_job(state: &AppState, job_id: &str) -> Result<AsyncJob, AsrError> {
+    state
+        .job_store
+        .get(job_id)
+        .await
+        .ok_or_else(|| AsrError::JobNotFound {
+            job_id: job_id.to_string(),
+        })
+}
+
 // ---------------------------------------------------------------------------
 // SSE progress events (Task 8)
 // ---------------------------------------------------------------------------
@@ -285,42 +333,25 @@ async fn transcribe_sync(
     headers: HeaderMap,
     api_key_id: Option<String>,
     body: Bytes,
-) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/wav");
+) -> Result<axum::Json<TranscribeResponse>, AsrError> {
+    let prep = prepare(&headers, query, &body)?;
+    let samples_copy = prep.samples.clone();
 
-    let samples =
-        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
-            let (status, api_error) = (&e).into();
-            (status, axum::Json(api_error))
-        })?;
-
-    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
-
-    let model = query.model.clone();
-    let language = query.language.clone();
-
-    let options = TranscribeOptions {
-        language: normalize_language(query.language),
-        translate: query.translate,
-    };
-
-    let samples_copy = samples.clone();
-    let response = run_transcription(&state, &model, samples, options, duration_ms)
-        .await
-        .map_err(|e| {
-            let (status, api_error) = (&e).into();
-            (status, axum::Json(api_error))
-        })?;
+    let response = run_transcription(
+        &state,
+        &prep.model,
+        prep.samples,
+        prep.options,
+        prep.duration_ms,
+    )
+    .await?;
 
     let device = response.device.clone();
     save_to_history(
         &state,
         TranscriptionSource::HttpApi,
-        &model,
-        &language,
+        &prep.model,
+        &prep.language,
         &samples_copy,
         &response,
         api_key_id,
@@ -341,33 +372,16 @@ async fn transcribe_sse(
     headers: HeaderMap,
     api_key_id: Option<String>,
     body: Bytes,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, axum::Json<ApiError>)>
-{
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/wav");
-
-    let samples =
-        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
-            let (status, api_error) = (&e).into();
-            (status, axum::Json(api_error))
-        })?;
-
-    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
+    let prep = prepare(&headers, query, &body)?;
 
     // Calculate 5-second chunks at 16 kHz.
     let chunk_size = 16_000 * 5; // 5 seconds of samples
-    let total_chunks = samples.len().div_ceil(chunk_size);
+    let total_chunks = prep.samples.len().div_ceil(chunk_size);
 
-    let model = query.model.clone();
-    let language = query.language.clone();
-    let options = TranscribeOptions {
-        language: normalize_language(query.language),
-        translate: query.translate,
-    };
-
-    let samples_copy = samples.clone();
+    let samples_copy = prep.samples.clone();
+    let model = prep.model;
+    let language = prep.language;
 
     let stream = async_stream::stream! {
         let start = Instant::now();
@@ -387,7 +401,7 @@ async fn transcribe_sse(
         }
 
         // Run full inference on the complete audio.
-        match run_transcription(&state, &model, samples, options, duration_ms).await {
+        match run_transcription(&state, &model, prep.samples, prep.options, prep.duration_ms).await {
             Ok(response) => {
                 let device = response.device.clone();
                 save_to_history(
@@ -407,7 +421,7 @@ async fn transcribe_sse(
                 yield Ok(Event::default().event("result").data(data));
             }
             Err(e) => {
-                let (_, api_error): (StatusCode, ApiError) = (&e).into();
+                let (_, api_error): (StatusCode, crate::api::error::ApiError) = (&e).into();
                 let error = SseProgress::Error {
                     code: api_error.code.to_string(),
                     message: api_error.message,
@@ -439,28 +453,14 @@ async fn transcribe_async(
     headers: HeaderMap,
     auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
-) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), (StatusCode, axum::Json<ApiError>)> {
+) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), AsrError> {
     let api_key_id = auth_key.map(|ext| ext.0.0);
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/wav");
-
-    let samples =
-        decode_audio(content_type, &body, query.sample_rate, query.channels).map_err(|e| {
-            let (status, api_error) = (&e).into();
-            (status, axum::Json(api_error))
-        })?;
-
-    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+    let prep = prepare(&headers, query, &body)?;
 
     let job_id = uuid::Uuid::new_v4().to_string();
-    let model = query.model.clone();
-    let language = query.language.clone();
-
     let job = AsyncJob {
         id: job_id.clone(),
-        model: model.clone(),
+        model: prep.model.clone(),
         status: AsyncJobStatus::Processing,
         created_at: chrono::Utc::now(),
         completed_at: None,
@@ -470,13 +470,10 @@ async fn transcribe_async(
     // Spawn background task.
     let job_store = Arc::clone(&state.job_store);
     let state_inner = state.clone();
-    let options = TranscribeOptions {
-        language: normalize_language(query.language),
-        translate: query.translate,
-    };
     let job_id_bg = job_id.clone();
-
-    let samples_copy = samples.clone();
+    let samples_copy = prep.samples.clone();
+    let model = prep.model;
+    let language = prep.language;
 
     tokio::spawn(async move {
         // Check if job was cancelled before starting.
@@ -486,7 +483,15 @@ async fn transcribe_async(
             }
         }
 
-        match run_transcription(&state_inner, &model, samples, options, duration_ms).await {
+        match run_transcription(
+            &state_inner,
+            &model,
+            prep.samples,
+            prep.options,
+            prep.duration_ms,
+        )
+        .await
+        {
             Ok(response) => {
                 let device = response.device.clone();
                 save_to_history(
@@ -531,18 +536,8 @@ async fn transcribe_async(
 async fn get_job_status(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<String>,
-) -> Result<axum::Json<AsyncJob>, (StatusCode, axum::Json<ApiError>)> {
-    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            axum::Json(ApiError {
-                code: "JOB_NOT_FOUND",
-                message: format!("job not found: {job_id}"),
-                model_id: None,
-            }),
-        )
-    })?;
-
+) -> Result<axum::Json<AsyncJob>, AsrError> {
+    let job = fetch_job(&state, &job_id).await?;
     Ok(axum::Json(job))
 }
 
@@ -550,44 +545,14 @@ async fn get_job_status(
 async fn get_job_result(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<String>,
-) -> Result<axum::Json<TranscribeResponse>, (StatusCode, axum::Json<ApiError>)> {
-    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            axum::Json(ApiError {
-                code: "JOB_NOT_FOUND",
-                message: format!("job not found: {job_id}"),
-                model_id: None,
-            }),
-        )
-    })?;
+) -> Result<axum::Json<TranscribeResponse>, AsrError> {
+    let job = fetch_job(&state, &job_id).await?;
 
     match job.status {
         AsyncJobStatus::Completed { result } => Ok(axum::Json(result)),
-        AsyncJobStatus::Processing => Err((
-            StatusCode::CONFLICT,
-            axum::Json(ApiError {
-                code: "JOB_NOT_COMPLETE",
-                message: "job is still processing".to_string(),
-                model_id: None,
-            }),
-        )),
-        AsyncJobStatus::Failed { error } => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(ApiError {
-                code: "JOB_FAILED",
-                message: error,
-                model_id: None,
-            }),
-        )),
-        AsyncJobStatus::Cancelled => Err((
-            StatusCode::GONE,
-            axum::Json(ApiError {
-                code: "JOB_CANCELLED",
-                message: "job was cancelled".to_string(),
-                model_id: None,
-            }),
-        )),
+        AsyncJobStatus::Processing => Err(AsrError::JobNotComplete { job_id }),
+        AsyncJobStatus::Failed { error } => Err(AsrError::JobFailed { detail: error }),
+        AsyncJobStatus::Cancelled => Err(AsrError::JobCancelled { job_id }),
     }
 }
 
@@ -595,17 +560,8 @@ async fn get_job_result(
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, axum::Json<ApiError>)> {
-    let job = state.job_store.get(&job_id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            axum::Json(ApiError {
-                code: "JOB_NOT_FOUND",
-                message: format!("job not found: {job_id}"),
-                model_id: None,
-            }),
-        )
-    })?;
+) -> Result<StatusCode, AsrError> {
+    let job = fetch_job(&state, &job_id).await?;
 
     match job.status {
         AsyncJobStatus::Processing => {
@@ -621,13 +577,6 @@ async fn cancel_job(
             Ok(StatusCode::NO_CONTENT)
         }
     }
-}
-
-/// Convert an [`AsrError`] into an axum-compatible error tuple.
-#[allow(dead_code)]
-fn api_err(err: &crate::error::AsrError) -> (StatusCode, axum::Json<ApiError>) {
-    let (status, api_error) = err.into();
-    (status, axum::Json(api_error))
 }
 
 /// Routes for the transcription API.

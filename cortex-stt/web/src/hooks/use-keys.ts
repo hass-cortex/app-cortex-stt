@@ -1,6 +1,7 @@
 import { generateKey, listKeys, revokeKey } from "@/api/keys";
+import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 export function useKeys() {
 	return useQuery({
@@ -10,21 +11,15 @@ export function useKeys() {
 }
 
 export function useGenerateKey() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (name: string) => generateKey(name),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.keys.all });
-		},
+		invalidates: [queryKeys.keys.all],
 	});
 }
 
 export function useRevokeKey() {
-	const queryClient = useQueryClient();
-	return useMutation({
+	return useInvalidatingMutation({
 		mutationFn: (id: string) => revokeKey(id),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.keys.all });
-		},
+		invalidates: [queryKeys.keys.all],
 	});
 }

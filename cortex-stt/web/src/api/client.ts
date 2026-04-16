@@ -1,4 +1,4 @@
-import type { ApiError } from "./types";
+import type { ApiErrorBody } from "./types";
 
 const API_KEY_STORAGE_KEY = "cortex-stt-api-key";
 
@@ -43,9 +43,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 		let code = "UNKNOWN";
 		let message = `HTTP ${response.status}`;
 		try {
-			const body: ApiError = await response.json();
-			code = body.error.code;
-			message = body.error.message;
+			const body: ApiErrorBody = await response.json();
+			code = body.code;
+			message = body.message;
 		} catch {
 			// Non-JSON error body
 		}
@@ -121,7 +121,9 @@ export function subscribeSSE(
 ): () => void {
 	const base = `${getBaseUrl()}${path}`;
 	const key = getApiKey();
-	const url = key ? `${base}${base.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}` : base;
+	const url = key
+		? `${base}${base.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}`
+		: base;
 	const eventSource = new EventSource(url);
 
 	const handler = (event: MessageEvent) => {

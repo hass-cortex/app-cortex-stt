@@ -27,7 +27,9 @@ export function App() {
 			<ThemeProvider>
 				<ToastProvider>
 					<AuthGate>
-						<BrowserRouter basename={(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__ || ""}>
+						<BrowserRouter
+							basename={(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__ || ""}
+						>
 							<Routes>
 								<Route element={<AppLayout />}>
 									<Route index element={<DashboardPage />} />

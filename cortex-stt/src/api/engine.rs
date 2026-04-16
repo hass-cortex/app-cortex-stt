@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::ApiError;
+use crate::error::AsrError;
 use crate::state::AppState;
 
 /// Response body for GET /api/engine.
@@ -47,29 +47,21 @@ async fn engine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 async fn set_default_model(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<SetDefaultRequest>,
-) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+) -> Result<impl IntoResponse, AsrError> {
     // Verify the model exists.
-    let model = state.model_manager.get_model(&body.model_id).await;
-    if model.is_none() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            axum::Json(ApiError {
-                code: "MODEL_NOT_FOUND",
-                message: format!("model not found: {}", body.model_id),
-                model_id: Some(body.model_id),
-            }),
-        ));
+    if state
+        .model_manager
+        .get_model(&body.model_id)
+        .await
+        .is_none()
+    {
+        return Err(AsrError::ModelNotFound {
+            model_id: body.model_id,
+        });
     }
 
     // Persist to database.
-    state
-        .db
-        .set_default_model(&body.model_id)
-        .await
-        .map_err(|e| {
-            let (status, api_err) = (&e).into();
-            (status, axum::Json(api_err))
-        })?;
+    state.db.set_default_model(&body.model_id).await?;
 
     Ok((
         StatusCode::OK,
@@ -83,16 +75,9 @@ async fn set_default_model(
 async fn load_model(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<ModelActionRequest>,
-) -> Result<impl IntoResponse, (StatusCode, axum::Json<ApiError>)> {
+) -> Result<impl IntoResponse, AsrError> {
     // Acquire and immediately drop to trigger lazy loading.
-    state
-        .engine_manager
-        .acquire(&body.model_id)
-        .await
-        .map_err(|e| {
-            let (status, api_err) = (&e).into();
-            (status, axum::Json(api_err))
-        })?;
+    state.engine_manager.acquire(&body.model_id).await?;
 
     Ok((
         StatusCode::OK,

@@ -30,11 +30,51 @@ export function CortexLogo({ size = 24, className }: CortexLogoProps) {
 				strokeWidth="1.5"
 				strokeLinejoin="round"
 			/>
-			<line x1="10" y1="14" x2="10" y2="18" stroke="#BE123C" strokeWidth="1.5" strokeLinecap="round" />
-			<line x1="13" y1="12" x2="13" y2="20" stroke="#BE123C" strokeWidth="1.5" strokeLinecap="round" />
-			<line x1="16" y1="10" x2="16" y2="22" stroke="#BE123C" strokeWidth="1.5" strokeLinecap="round" />
-			<line x1="19" y1="12" x2="19" y2="20" stroke="#BE123C" strokeWidth="1.5" strokeLinecap="round" />
-			<line x1="22" y1="14" x2="22" y2="18" stroke="#BE123C" strokeWidth="1.5" strokeLinecap="round" />
+			<line
+				x1="10"
+				y1="14"
+				x2="10"
+				y2="18"
+				stroke="#BE123C"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<line
+				x1="13"
+				y1="12"
+				x2="13"
+				y2="20"
+				stroke="#BE123C"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<line
+				x1="16"
+				y1="10"
+				x2="16"
+				y2="22"
+				stroke="#BE123C"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<line
+				x1="19"
+				y1="12"
+				x2="19"
+				y2="20"
+				stroke="#BE123C"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<line
+				x1="22"
+				y1="14"
+				x2="22"
+				y2="18"
+				stroke="#BE123C"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
 		</svg>
 	);
 }

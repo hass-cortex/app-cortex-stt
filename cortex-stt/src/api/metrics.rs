@@ -6,8 +6,8 @@ use axum::extract::State;
 use axum::routing::get;
 use serde::Serialize;
 
-use crate::api::error::ApiError;
 use crate::db::records::TranscriptionSource;
+use crate::error::AsrError;
 use crate::state::AppState;
 
 /// Aggregate metrics about the service.
@@ -27,53 +27,22 @@ pub struct Metrics {
     pub uptime_secs: u64,
 }
 
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>, ApiError> {
-    let map_err = |e: &crate::error::AsrError| -> ApiError {
-        let (_, api_err) = e.into();
-        api_err
-    };
-
-    let total = state
-        .db
-        .count_records(None)
-        .await
-        .map_err(|e| map_err(&e))?;
+async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>, AsrError> {
+    let total = state.db.count_records(None).await?;
     let http_count = state
         .db
         .count_records(Some(TranscriptionSource::HttpApi))
-        .await
-        .map_err(|e| map_err(&e))?;
-    let today_transcriptions = state
-        .db
-        .count_records_today(None)
-        .await
-        .map_err(|e| map_err(&e))?;
-    let total_audio_duration_ms = state
-        .db
-        .total_audio_duration_ms()
-        .await
-        .map_err(|e| map_err(&e))?;
-    let today_audio_duration_ms = state
-        .db
-        .today_audio_duration_ms()
-        .await
-        .map_err(|e| map_err(&e))?;
-    let avg_inference_ms = state.db.avg_inference_ms().await.map_err(|e| map_err(&e))?;
-    let error_count = state
-        .db
-        .count_errors(false)
-        .await
-        .map_err(|e| map_err(&e))?;
-    let today_error_count = state.db.count_errors(true).await.map_err(|e| map_err(&e))?;
+        .await?;
+    let today_transcriptions = state.db.count_records_today(None).await?;
+    let total_audio_duration_ms = state.db.total_audio_duration_ms().await?;
+    let today_audio_duration_ms = state.db.today_audio_duration_ms().await?;
+    let avg_inference_ms = state.db.avg_inference_ms().await?;
+    let error_count = state.db.count_errors(false).await?;
+    let today_error_count = state.db.count_errors(true).await?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
     let total_models = state.model_manager.list_models().await.len();
-    let api_keys_count = state
-        .db
-        .list_api_keys()
-        .await
-        .map_err(|e| map_err(&e))?
-        .len();
+    let api_keys_count = state.db.list_api_keys().await?.len();
 
     let uptime_secs = state.started_at.elapsed().as_secs();
 

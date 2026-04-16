@@ -29,12 +29,6 @@ export function formatAudioTime(seconds: number): string {
 	return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** Format ISO timestamp to locale string */
-export function formatTimestamp(iso: string): string {
-	if (!iso) return "—";
-	return new Date(iso).toLocaleString();
-}
-
 /** Format relative time (e.g., "2 minutes ago") */
 export function formatRelativeTime(iso: string): string {
 	const diff = Date.now() - new Date(iso).getTime();
