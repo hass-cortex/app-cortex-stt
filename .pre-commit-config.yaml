@@ -28,6 +28,23 @@ repos:
         files: ^cortex-stt/(src|tests)/.*\.rs$|^cortex-stt/Cargo\.(toml|lock)$
         pass_filenames: false
 
+      - id: cargo-test
+        name: cargo test
+        entry: bash -c 'cd cortex-stt && cargo test'
+        language: system
+        stages: [pre-push]
+        files: ^cortex-stt/(src|tests)/.*\.rs$|^cortex-stt/Cargo\.(toml|lock)$
+        pass_filenames: false
+
+      # Requires: cargo install --locked cargo-deny
+      - id: cargo-deny
+        name: cargo deny check
+        entry: bash -c 'cd cortex-stt && cargo deny check'
+        language: system
+        stages: [pre-push]
+        files: ^cortex-stt/(Cargo\.(toml|lock)|deny\.toml)$
+        pass_filenames: false
+
       - id: bun-lint
         name: bun lint (biome)
         entry: bash -c 'cd cortex-stt/web && bun run lint'

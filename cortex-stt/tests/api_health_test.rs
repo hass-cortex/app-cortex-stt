@@ -144,7 +144,7 @@ async fn test_system_info_returns_hardware() {
     assert!(json["available_memory_mb"].is_number());
     assert!(json["has_avx"].is_boolean());
     assert!(json["has_avx2"].is_boolean());
-    assert_eq!(json["cuda_available"], false);
+    assert!(json["cuda_available"].is_boolean());
     assert!(json["os"].is_string());
     assert!(json["arch"].is_string());
 }

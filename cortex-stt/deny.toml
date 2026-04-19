@@ -1,16 +1,15 @@
-# cargo-deny configuration
+# cargo-deny configuration (schema v2)
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# Deny any crate with known security advisories
-vulnerability = "deny"
-unmaintained = "warn"
+version = 2
 yanked = "warn"
-notice = "warn"
 
 [licenses]
-# List of allowed licenses
-unlicensed = "deny"
+version = 2
+# Keep a broad allow list even if a particular license isn't used today —
+# a dep update could pull one in without warning.
+unused-allowed-license = "allow"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -18,19 +17,13 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
     "BSL-1.0",
-    "OpenSSL",
     "MPL-2.0",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "deny"
 confidence-threshold = 0.8
-
-[[licenses.exceptions]]
-# Allow specific crates with other licenses
-allow = ["OpenSSL"]
-name = "ring"
 
 [bans]
 multiple-versions = "warn"
