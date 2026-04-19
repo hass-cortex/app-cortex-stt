@@ -30,7 +30,7 @@ jobs:
             runner: ubuntu-24.04-arm
             artifact: cortex-stt-aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
     name: Build Web UI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -89,7 +89,7 @@ jobs:
       matrix:
         variant: [cpu, cuda]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download binary artifact
         uses: actions/download-artifact@v4
@@ -141,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-binary, build-web, docker]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
