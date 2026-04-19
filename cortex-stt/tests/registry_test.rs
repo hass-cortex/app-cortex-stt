@@ -64,5 +64,5 @@ fn all_models_have_supported_languages() {
 
 #[test]
 fn model_count_matches_expected() {
-    assert_eq!(builtin_models().len(), 15, "expected 15 builtin models");
+    assert_eq!(builtin_models().len(), 16, "expected 16 builtin models");
 }
