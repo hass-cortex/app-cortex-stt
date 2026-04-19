@@ -21,7 +21,7 @@
 - [ ] `cargo test` passes
 - [ ] `cargo clippy -- -D warnings` clean
 - [ ] `cargo fmt --check` clean
-- [ ] Web UI builds (`cd web && npm run build`)
+- [ ] Web UI builds (`cd web && bun run build`)
 - [ ] Manual testing (describe below)
 
 <!-- Describe manual testing performed, if any -->

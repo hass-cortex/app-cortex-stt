@@ -20,13 +20,8 @@ RUN cargo build --release --features "${CARGO_FEATURES}"
 # ==============================================================================
 # Stage 2: Build web UI
 # ==============================================================================
-FROM node:22-bookworm-slim AS web-builder
+FROM oven/bun:1.3.0-debian AS web-builder
 WORKDIR /web
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl unzip bash \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s "bun-v1.3.0"
 
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile

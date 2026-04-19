@@ -7,8 +7,7 @@ Thank you for your interest in contributing!
 ### Prerequisites
 
 - Rust (stable, see `rust-toolchain.toml`)
-- Node.js 22+ (for Web UI)
-- npm (for Web UI dependencies)
+- [Bun](https://bun.sh) 1.3+ (for Web UI)
 
 ### Build
 
@@ -19,9 +18,9 @@ cargo test
 
 # Web UI
 cd web
-npm install
-npm run dev    # Development server at http://localhost:5173
-npm run build  # Production build
+bun install
+bun run dev    # Development server at http://localhost:5173
+bun run build  # Production build
 ```
 
 ### Code Quality
@@ -34,8 +33,8 @@ cargo deny check
 
 # Web UI
 cd web
-npx biome check .
-npx tsc --noEmit
+bun run lint
+bun run typecheck
 ```
 
 ## Commit Convention
@@ -71,7 +70,7 @@ test: add pool eviction edge case tests
    cargo clippy -- -D warnings
    cargo test
    cargo deny check
-   cd web && npx biome check . && npx tsc --noEmit && npm run build
+   cd web && bun run lint && bun run typecheck && bun run build
    ```
 4. Write a clear PR description using the template
 5. Request review

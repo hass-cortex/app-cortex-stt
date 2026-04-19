@@ -43,10 +43,11 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build release binary
+        working-directory: cortex-stt
         run: |
           cargo build --release --features all-engines,vad-silero
           strip target/release/cortex-stt || true
-          cp target/release/cortex-stt ${{ matrix.artifact }}
+          cp target/release/cortex-stt ../${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -60,21 +61,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          bun-version: "1.3.0"
 
       - name: Install and build
-        working-directory: web
+        working-directory: cortex-stt/web
         run: |
-          npm ci
-          npm run build
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Package web UI
-        run: tar -czf cortex-stt-web.tar.gz -C web/dist .
+        run: tar -czf cortex-stt-web.tar.gz -C cortex-stt/web/dist .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
