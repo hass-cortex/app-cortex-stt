@@ -1,0 +1,44 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+        exclude: ^cortex-stt/(tsconfig.*\.json|biome\.json)$
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'cd cortex-stt && cargo fmt --check'
+        language: system
+        files: ^cortex-stt/.*\.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cd cortex-stt && cargo clippy --all-targets -- -D warnings'
+        language: system
+        stages: [pre-push]
+        files: ^cortex-stt/(src|tests)/.*\.rs$|^cortex-stt/Cargo\.(toml|lock)$
+        pass_filenames: false
+
+      - id: bun-lint
+        name: bun lint (biome)
+        entry: bash -c 'cd cortex-stt/web && bun run lint'
+        language: system
+        files: ^cortex-stt/web/.*\.(ts|tsx|js|jsx|json)$
+        pass_filenames: false
+
+      - id: bun-typecheck
+        name: bun typecheck
+        entry: bash -c 'cd cortex-stt/web && bun run typecheck'
+        language: system
+        stages: [pre-push]
+        files: ^cortex-stt/web/.*\.(ts|tsx)$|^cortex-stt/web/tsconfig.*\.json$
+        pass_filenames: false
