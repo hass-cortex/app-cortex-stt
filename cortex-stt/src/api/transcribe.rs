@@ -202,6 +202,7 @@ async fn run_transcription_inner(
 ///
 /// When the `save_audio` setting is disabled, the DB record is still
 /// created but no WAV file is written to disk.
+#[allow(clippy::too_many_arguments)]
 async fn save_to_history(
     state: &AppState,
     source: TranscriptionSource,

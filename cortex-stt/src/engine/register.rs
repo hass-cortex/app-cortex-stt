@@ -98,6 +98,7 @@ fn create_factory(
             compute_device,
         )),
 
+        #[cfg(not(all(feature = "whisper", feature = "onnx")))]
         _ => {
             tracing::debug!(engine_type = ?engine_type, "Engine type not compiled, skipping");
             None

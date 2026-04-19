@@ -165,9 +165,11 @@ mod tests {
 
     #[test]
     fn settings_full_roundtrip() {
-        let mut settings = Settings::default();
-        settings.audio_retention = RetentionPolicy::DiskLimitMb(2048);
-        settings.record_retention = RetentionPolicy::Count(500);
+        let settings = Settings {
+            audio_retention: RetentionPolicy::DiskLimitMb(2048),
+            record_retention: RetentionPolicy::Count(500),
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&settings).unwrap();
         let parsed: Settings = serde_json::from_str(&json).unwrap();
