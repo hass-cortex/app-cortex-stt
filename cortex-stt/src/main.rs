@@ -72,12 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Ensure pre-configured API key exists.
+    // Ensure pre-configured API key exists. Keys provided via --api-key or the
+    // `API_KEY` env var (set from the `discovery_api_key` addon option) are
+    // marked system-managed so the Admin UI can surface them read-only.
     if let Some(ref api_key) = config.api_key {
-        if db.verify_api_key(api_key).await?.is_none() {
-            db.ensure_api_key("admin", api_key).await?;
-            tracing::info!("Pre-configured API key registered");
-        }
+        db.ensure_api_key("home-assistant-discovery", api_key, true)
+            .await?;
+        tracing::info!("Pre-configured Home Assistant discovery API key registered");
     }
 
     // Create model manager.

@@ -129,6 +129,27 @@ impl Database {
             .await
             .map_err(map_db_err)?;
 
+        // Migration: add system column to api_keys
+        //   system=1 marks keys managed by the addon (e.g. Supervisor discovery
+        //   bootstrap key). Clients cannot delete system keys via the admin UI.
+        self.conn
+            .call(|conn| {
+                let has_col: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='system'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_col {
+                    conn.execute_batch(
+                        "ALTER TABLE api_keys ADD COLUMN system INTEGER NOT NULL DEFAULT 0;",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
         Ok(())
     }
 

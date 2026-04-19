@@ -17,6 +17,8 @@ struct ApiKeyListItem {
     last4: String,
     created_at: String,
     last_used_at: Option<String>,
+    /// Addon-managed keys: the Admin UI must hide delete actions for these.
+    system: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +49,7 @@ async fn list_keys(
             last4: k.last4,
             created_at: k.created_at,
             last_used_at: k.last_used_at,
+            system: k.system,
         })
         .collect();
 

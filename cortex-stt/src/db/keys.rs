@@ -14,6 +14,9 @@ pub struct ApiKeyRecord {
     pub last4: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
+    /// System-managed keys (`true`) cannot be deleted via the admin UI.
+    /// Used by the Supervisor-discovery bootstrap key.
+    pub system: bool,
 }
 
 impl ApiKeyRecord {
@@ -25,6 +28,7 @@ impl ApiKeyRecord {
             last4: row.get(3)?,
             created_at: row.get(4)?,
             last_used_at: row.get(5)?,
+            system: row.get::<_, i64>(6)? != 0,
         })
     }
 }
@@ -88,7 +92,7 @@ impl Database {
 
                 // Read back to get server-generated created_at
                 let record = conn.query_row(
-                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys WHERE id = ?1",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at, system FROM api_keys WHERE id = ?1",
                     params![id_clone],
                     ApiKeyRecord::from_row,
                 )?;
@@ -118,7 +122,7 @@ impl Database {
                 }
 
                 let record = conn.query_row(
-                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys WHERE key_hash = ?1",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at, system FROM api_keys WHERE key_hash = ?1",
                     params![key_hash],
                     ApiKeyRecord::from_row,
                 )?;
@@ -134,7 +138,7 @@ impl Database {
         self.connection()
             .call(|conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, name, raw_key, last4, created_at, last_used_at FROM api_keys ORDER BY created_at DESC",
+                    "SELECT id, name, raw_key, last4, created_at, last_used_at, system FROM api_keys ORDER BY system DESC, created_at DESC",
                 )?;
 
                 let rows = stmt.query_map([], ApiKeyRecord::from_row)?;
@@ -150,25 +154,39 @@ impl Database {
     }
 
     /// Ensure a specific raw API key exists in the database.
-    /// Used for pre-configured keys (--api-key / API_KEY env).
-    pub async fn ensure_api_key(&self, name: &str, raw_key: &str) -> Result<(), AsrError> {
+    ///
+    /// Used for pre-configured keys (--api-key / API_KEY env). If `system` is
+    /// true the key is marked as addon-managed and cannot be deleted via the
+    /// admin UI. Existing rows (matched by hash) are **upgraded** to the given
+    /// name/system flag — this lets the addon reclaim ownership of a key that
+    /// was initially created as a user key.
+    pub async fn ensure_api_key(
+        &self,
+        name: &str,
+        raw_key: &str,
+        system: bool,
+    ) -> Result<(), AsrError> {
         let key_hash = hash_key(raw_key);
         let name_owned = name.to_string();
         let raw_key_owned = raw_key.to_string();
+        let system_flag: i64 = if system { 1 } else { 0 };
 
         self.connection()
             .call(move |conn| {
                 // Check if this hash already exists
-                let exists: bool = conn
+                let existing_id: Option<String> = conn
                     .query_row(
-                        "SELECT COUNT(*) FROM api_keys WHERE key_hash = ?1",
+                        "SELECT id FROM api_keys WHERE key_hash = ?1",
                         params![key_hash],
-                        |row| row.get::<_, i64>(0),
+                        |row| row.get::<_, String>(0),
                     )
-                    .map(|c| c > 0)
-                    .unwrap_or(false);
+                    .ok();
 
-                if exists {
+                if let Some(id) = existing_id {
+                    conn.execute(
+                        "UPDATE api_keys SET name = ?1, system = ?2 WHERE id = ?3",
+                        params![name_owned, system_flag, id],
+                    )?;
                     return Ok(());
                 }
 
@@ -180,8 +198,8 @@ impl Database {
                 };
 
                 conn.execute(
-                    "INSERT INTO api_keys (id, name, key_hash, last4, raw_key) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![id, name_owned, key_hash, last4, raw_key_owned],
+                    "INSERT INTO api_keys (id, name, key_hash, last4, raw_key, system) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![id, name_owned, key_hash, last4, raw_key_owned, system_flag],
                 )?;
 
                 Ok(())
@@ -191,16 +209,38 @@ impl Database {
     }
 
     /// Delete an API key by id. Returns true if a row was deleted.
+    ///
+    /// System keys (addon-managed) are protected: attempting to delete one
+    /// returns [`AsrError::Forbidden`] without touching the row.
     pub async fn delete_api_key(&self, id: &str) -> Result<bool, AsrError> {
         let id_owned = id.to_string();
 
-        self.connection()
+        let result: Result<bool, AsrError> = self
+            .connection()
             .call(move |conn| {
-                let deleted =
-                    conn.execute("DELETE FROM api_keys WHERE id = ?1", params![id_owned])?;
-                Ok(deleted > 0)
+                let is_system: Option<i64> = conn
+                    .query_row(
+                        "SELECT system FROM api_keys WHERE id = ?1",
+                        params![id_owned],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok();
+
+                match is_system {
+                    None => Ok(Ok(false)),
+                    Some(1) => Ok(Err(AsrError::Forbidden(
+                        "system-managed API keys cannot be deleted".to_string(),
+                    ))),
+                    Some(_) => {
+                        let deleted =
+                            conn.execute("DELETE FROM api_keys WHERE id = ?1", params![id_owned])?;
+                        Ok(Ok(deleted > 0))
+                    }
+                }
             })
             .await
-            .map_err(map_db_err)
+            .map_err(map_db_err)?;
+
+        result
     }
 }

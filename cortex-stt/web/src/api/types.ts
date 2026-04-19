@@ -162,6 +162,8 @@ export interface ApiKey {
 	last4: string;
 	created_at: string;
 	last_used_at: string | null;
+	/** Addon-managed keys (e.g. Home Assistant discovery bootstrap) — read-only. */
+	system: boolean;
 }
 
 export interface GeneratedKey {

@@ -16,6 +16,8 @@ ingress_stream: true
 panel_icon: mdi:microphone-message
 panel_title: Cortex STT
 panel_admin: true
+discovery:
+  - cortex_stt
 ports:
   8769/tcp: null
 ports_description:
@@ -27,5 +29,7 @@ map:
     read_only: false
 options:
   log_level: info
+  discovery_api_key: ""
 schema:
   log_level: list(trace|debug|info|warning|error|fatal)
+  discovery_api_key: password?

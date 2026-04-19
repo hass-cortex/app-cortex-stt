@@ -164,6 +164,14 @@ impl From<&AsrError> for (StatusCode, ApiError) {
                     model_id: None,
                 },
             ),
+            AsrError::Forbidden(_) => (
+                StatusCode::FORBIDDEN,
+                ApiError {
+                    code: "FORBIDDEN",
+                    message: err.to_string(),
+                    model_id: None,
+                },
+            ),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiError {

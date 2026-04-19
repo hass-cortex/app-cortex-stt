@@ -7,7 +7,7 @@ import { useKeys, useRevokeKey } from "@/hooks/use-keys";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { formatRelativeTime } from "@/lib/format";
 import { formatTimestamp } from "@/utils/time";
-import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Key, Lock, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface KeyListProps {
@@ -115,7 +115,20 @@ export function KeyList({ onGenerate }: KeyListProps) {
 								const isCopied = copiedKey === key.id;
 								return (
 									<tr key={key.id} className="border-b border-border/50 hover:bg-surface-3/50">
-										<td className="py-2.5 px-3 font-medium text-text-primary">{key.name}</td>
+										<td className="py-2.5 px-3 font-medium text-text-primary">
+											<div className="flex items-center gap-1.5">
+												<span>{key.name}</span>
+												{key.system && (
+													<span
+														className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-surface-3 text-text-muted"
+														title="Managed by the addon — edit via the Configuration tab."
+													>
+														<Lock size={9} />
+														Managed
+													</span>
+												)}
+											</div>
+										</td>
 										<td className="py-2.5 px-3">
 											<div className="flex items-center gap-1.5">
 												<code className="text-xs text-text-muted font-mono select-all">
@@ -154,14 +167,16 @@ export function KeyList({ onGenerate }: KeyListProps) {
 											{key.last_used_at ? formatRelativeTime(key.last_used_at) : "Never"}
 										</td>
 										<td className="py-2.5 px-3 text-right">
-											<Button
-												variant="ghost"
-												size="sm"
-												icon={<Trash2 size={14} />}
-												onClick={() => handleRevoke(key.id, key.name)}
-												loading={revokeMutation.isPending}
-												className="text-error hover:text-error"
-											/>
+											{!key.system && (
+												<Button
+													variant="ghost"
+													size="sm"
+													icon={<Trash2 size={14} />}
+													onClick={() => handleRevoke(key.id, key.name)}
+													loading={revokeMutation.isPending}
+													className="text-error hover:text-error"
+												/>
+											)}
 										</td>
 									</tr>
 								);

@@ -20,6 +20,12 @@ export DATA_DIR="/data"
 export MODEL_DIR="/share/cortex-stt/models"
 export STATIC_DIR="/app/web/dist"
 
+# Register the bootstrap API key used for Home Assistant Supervisor discovery.
+DISCOVERY_API_KEY="$(bashio::config 'discovery_api_key')"
+if bashio::var.has_value "${DISCOVERY_API_KEY}"; then
+    export API_KEY="${DISCOVERY_API_KEY}"
+fi
+
 bashio::log.info "Starting Cortex STT Server"
 bashio::log.info "Log level: ${RUST_LOG}"
 bashio::log.info "Data directory: ${DATA_DIR}"

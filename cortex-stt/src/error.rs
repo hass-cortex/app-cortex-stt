@@ -41,6 +41,9 @@ pub enum AsrError {
     #[error("invalid API key")]
     InvalidApiKey,
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("model already downloading: {model_id}")]
     DownloadInProgress { model_id: String },
 

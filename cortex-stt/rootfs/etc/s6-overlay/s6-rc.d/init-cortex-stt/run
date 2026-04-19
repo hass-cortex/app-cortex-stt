@@ -26,5 +26,15 @@ fi
 # Data and model directories
 mkdir -p /share/cortex-stt/models /data/audio
 
+# Ensure the Home Assistant discovery API key is set in the addon's options.
+# Admins can rotate it from the app's Configuration tab — clearing the field
+# causes this script to regenerate a fresh key on the next restart.
+if ! bashio::config.has_value 'discovery_api_key'; then
+    GENERATED_KEY="$(head -c 32 /dev/urandom | base64 | tr -d '=+/\n')"
+    bashio::addon.option 'discovery_api_key' "${GENERATED_KEY}"
+    bashio::addon.options > /data/options.json
+    bashio::log.info "Generated bootstrap API key for Home Assistant discovery"
+fi
+
 # Permissions
 chown -R cortex-stt:cortex-stt /data /share/cortex-stt/models 2>/dev/null || true
