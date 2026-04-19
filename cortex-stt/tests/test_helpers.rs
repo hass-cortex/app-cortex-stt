@@ -1,4 +1,9 @@
 //! Shared test helpers for integration tests.
+//!
+//! Each integration test binary includes this module via `mod test_helpers;`
+//! but may only use a subset of items — silence dead_code warnings from the
+//! consumer's perspective.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
