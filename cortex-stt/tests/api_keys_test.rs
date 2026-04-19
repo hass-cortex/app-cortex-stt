@@ -104,7 +104,7 @@ async fn test_delete_api_key() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/keys/{}", record.id))
+                .uri(format!("/api/keys/{}", record.id))
                 .body(Body::empty())
                 .unwrap(),
         )

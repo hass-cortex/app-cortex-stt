@@ -189,7 +189,7 @@ async fn test_sync_transcribe_resamples_48khz() {
     // Resampled from 48 kHz to 16 kHz: ~16000 samples => ~1000 ms
     let duration = json["duration_ms"].as_u64().unwrap();
     assert!(
-        duration >= 900 && duration <= 1100,
+        (900..=1100).contains(&duration),
         "expected ~1000ms duration after resample, got {duration}ms"
     );
 }

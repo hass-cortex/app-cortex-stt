@@ -122,7 +122,7 @@ async fn test_get_single_history_record() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/api/history/{}", ids[0]))
+                .uri(format!("/api/history/{}", ids[0]))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -150,7 +150,7 @@ async fn test_delete_history_record() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(&format!("/api/history/{}", ids[0]))
+                .uri(format!("/api/history/{}", ids[0]))
                 .body(Body::empty())
                 .unwrap(),
         )
