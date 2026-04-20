@@ -1,8 +1,8 @@
+import { Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useHealth } from "@/hooks/use-system";
-import { Layers } from "lucide-react";
 
 export function QueueCard() {
 	const { data: health, isLoading } = useHealth();

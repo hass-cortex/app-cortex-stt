@@ -1,8 +1,8 @@
+import { AlertTriangle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { useDeleteAllHistory } from "@/hooks/use-history";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
-import { AlertTriangle, Trash2 } from "lucide-react";
 
 export function DangerZone() {
 	const deleteAllMutation = useDeleteAllHistory();

@@ -28,12 +28,11 @@ export function AppLayout() {
 			{drawerOpen && (
 				<div className="fixed inset-0 z-40 lg:hidden">
 					{/* Backdrop */}
-					<div
+					<button
+						type="button"
+						aria-label="Close drawer"
 						className="fixed inset-0 bg-black/50"
 						onClick={closeDrawer}
-						onKeyDown={(e) => {
-							if (e.key === "Escape") closeDrawer();
-						}}
 					/>
 
 					{/* Drawer panel */}

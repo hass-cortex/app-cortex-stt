@@ -1,7 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { getEngineStatus, loadModel, setDefaultModel, unloadModel } from "@/api/engine";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { POLL_INTERVALS, queryKeys } from "@/lib/constants";
-import { useQuery } from "@tanstack/react-query";
 
 export function useEngineStatus() {
 	return useQuery({

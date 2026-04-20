@@ -1,5 +1,5 @@
-import { useToast } from "@/components/ui/toast";
 import type { UseMutationResult } from "@tanstack/react-query";
+import { useToast } from "@/components/ui/toast";
 
 type Message<TData> = string | ((data: TData) => string);
 

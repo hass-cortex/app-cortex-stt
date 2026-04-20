@@ -1,11 +1,11 @@
+import { Check, Copy } from "lucide-react";
+import { useState } from "react";
 import type { GeneratedKey } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { useGenerateKey } from "@/hooks/use-keys";
-import { Check, Copy } from "lucide-react";
-import { useState } from "react";
 
 interface GenerateKeyModalProps {
 	open: boolean;

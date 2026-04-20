@@ -1,7 +1,7 @@
+import { X } from "lucide-react";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { useCancelDownload, useDownloadProgress } from "@/hooks/use-models";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { X } from "lucide-react";
 
 interface DownloadProgressProps {
 	modelId: string;

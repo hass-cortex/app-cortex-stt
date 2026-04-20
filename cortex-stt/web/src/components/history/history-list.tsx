@@ -1,3 +1,5 @@
+import { AlertCircle, ChevronDown, ChevronRight, History, Mic, Trash2 } from "lucide-react";
+import { useState } from "react";
 import type { HistoryFilters, TranscriptionRecord, TranscriptionSegment } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,8 +12,6 @@ import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings } from "@/hooks/use-settings";
 import { formatDuration } from "@/lib/format";
 import { formatTimestamp } from "@/utils/time";
-import { AlertCircle, ChevronDown, ChevronRight, History, Mic, Trash2 } from "lucide-react";
-import { useState } from "react";
 import { AudioPlayer } from "./audio-player";
 import { SegmentTimeline } from "./segment-timeline";
 

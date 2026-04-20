@@ -1,5 +1,5 @@
-import { LoginPage } from "@/pages/login";
 import { useEffect, useState } from "react";
+import { LoginPage } from "@/pages/login";
 
 const API_KEY_STORAGE_KEY = "cortex-stt-api-key";
 

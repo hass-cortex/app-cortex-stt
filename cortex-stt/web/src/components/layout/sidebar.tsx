@@ -1,6 +1,3 @@
-import { setApiKey } from "@/api/client";
-import { CortexLogo } from "@/components/ui/cortex-logo";
-import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 import {
 	ChevronLeft,
 	ChevronRight,
@@ -13,6 +10,9 @@ import {
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { NavLink } from "react-router";
+import { setApiKey } from "@/api/client";
+import { CortexLogo } from "@/components/ui/cortex-logo";
+import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 
 interface NavItem {
 	path: string;

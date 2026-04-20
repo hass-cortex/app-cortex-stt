@@ -1,3 +1,5 @@
+import { Save } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -6,8 +8,6 @@ import { useSetDefaultModel } from "@/hooks/use-engine";
 import { useModels } from "@/hooks/use-models";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
-import { Save } from "lucide-react";
-import { useState } from "react";
 
 export function DefaultModelSettings() {
 	const { data: models } = useModels();

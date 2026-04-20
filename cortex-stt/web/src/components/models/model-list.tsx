@@ -1,11 +1,11 @@
+import { Package } from "lucide-react";
+import { useMemo, useState } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useModels } from "@/hooks/use-models";
 import { useSystemInfo } from "@/hooks/use-system";
-import { Package } from "lucide-react";
-import { useMemo, useState } from "react";
 import { ModelCard } from "./model-card";
 
 const engineOptions = [

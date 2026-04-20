@@ -1,10 +1,10 @@
+import { Cpu, Database, HardDrive, MemoryStick, Mic, Monitor, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Spinner } from "@/components/ui/spinner";
 import { useStorageInfo, useSystemInfo } from "@/hooks/use-system";
 import { formatBytes, formatMB } from "@/lib/format";
-import { Cpu, Database, HardDrive, MemoryStick, Mic, Monitor, Package } from "lucide-react";
 
 export function HardwareCard() {
 	const { data, isLoading } = useSystemInfo();

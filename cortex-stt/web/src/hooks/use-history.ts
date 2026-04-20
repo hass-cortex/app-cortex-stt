@@ -1,3 +1,5 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { subscribeSSE } from "@/api/client";
 import {
 	deleteAllHistory,
@@ -8,8 +10,6 @@ import {
 import type { HistoryFilters } from "@/api/types";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
 
 export function useHistoryList(filters?: HistoryFilters) {
 	const queryClient = useQueryClient();

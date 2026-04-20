@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle, Info, X, XCircle } from "lucide-react";
-import { type ReactNode, createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
 
 type ToastVariant = "success" | "error" | "warning" | "info";
 
