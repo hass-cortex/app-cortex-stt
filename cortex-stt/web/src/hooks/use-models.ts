@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { subscribeSSE } from "@/api/client";
 import {
 	cancelDownload,
@@ -9,8 +11,6 @@ import {
 import type { DownloadProgress } from "@/api/types";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
 
 export function useModels() {
 	return useQuery({

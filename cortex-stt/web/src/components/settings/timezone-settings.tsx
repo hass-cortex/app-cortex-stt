@@ -1,11 +1,11 @@
+import { Save } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
 import { COMMON_TIMEZONES, getBrowserTimezone } from "@/utils/time";
-import { Save } from "lucide-react";
-import { useState } from "react";
 
 export function TimezoneSettings() {
 	const { data: settings } = useSettings();

@@ -1,8 +1,8 @@
+import { BarChart3, Clock, Mic, XCircle } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useMetrics } from "@/hooks/use-system";
 import { formatDuration, formatNumber } from "@/lib/format";
-import { BarChart3, Clock, Mic, XCircle } from "lucide-react";
 
 interface StatItemProps {
 	icon: typeof Mic;

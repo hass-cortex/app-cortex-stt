@@ -1,6 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { getHealth, getMetrics, getStorageInfo, getSystemInfo } from "@/api/system";
 import { POLL_INTERVALS, queryKeys } from "@/lib/constants";
-import { useQuery } from "@tanstack/react-query";
 
 export function useHealth() {
 	return useQuery({

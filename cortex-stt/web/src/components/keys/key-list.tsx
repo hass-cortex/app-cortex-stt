@@ -1,3 +1,5 @@
+import { Check, Copy, Eye, EyeOff, Key, Lock, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -7,8 +9,6 @@ import { useKeys, useRevokeKey } from "@/hooks/use-keys";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { formatRelativeTime } from "@/lib/format";
 import { formatTimestamp } from "@/utils/time";
-import { Check, Copy, Eye, EyeOff, Key, Lock, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
 
 interface KeyListProps {
 	onGenerate: () => void;

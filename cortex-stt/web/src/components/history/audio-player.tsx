@@ -1,7 +1,7 @@
-import { audioUrl } from "@/api/client";
-import { formatAudioTime } from "@/lib/format";
 import { Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { audioUrl } from "@/api/client";
+import { formatAudioTime } from "@/lib/format";
 
 interface AudioPlayerProps {
 	recordId: string;
@@ -156,7 +156,6 @@ export function AudioPlayer({ recordId, durationMs }: AudioPlayerProps) {
 					{playing ? <Pause size={16} /> : <Play size={16} />}
 				</button>
 
-				{/* biome-ignore lint/a11y/useKeyWithClickEvents: canvas waveform seeking is supplementary to play/pause button */}
 				<canvas
 					ref={canvasRef}
 					className="flex-1 h-12 cursor-pointer rounded"

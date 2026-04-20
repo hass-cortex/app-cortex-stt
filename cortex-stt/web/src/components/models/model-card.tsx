@@ -1,3 +1,5 @@
+import { Clock, Download, Play, PowerOff, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import type { ModelInfo, SystemInfo } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,8 +8,6 @@ import { useLoadModel, useUnloadModel } from "@/hooks/use-engine";
 import { useCancelDownload, useDeleteModel, useDownloadModel } from "@/hooks/use-models";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { formatMB } from "@/lib/format";
-import { Clock, Download, Play, PowerOff, Trash2, X } from "lucide-react";
-import { useState } from "react";
 import { DownloadProgressBar } from "./download-progress";
 import { ScoreBar } from "./score-bar";
 

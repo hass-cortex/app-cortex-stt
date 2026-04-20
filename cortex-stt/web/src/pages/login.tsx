@@ -1,8 +1,8 @@
+import { type FormEvent, useState } from "react";
 import { setApiKey } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { CortexLogo } from "@/components/ui/cortex-logo";
 import { Input } from "@/components/ui/input";
-import { type FormEvent, useState } from "react";
 
 interface LoginPageProps {
 	onLogin: () => void;

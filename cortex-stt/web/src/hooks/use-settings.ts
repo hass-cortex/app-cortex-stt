@@ -1,7 +1,7 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSettings, updateSettings } from "@/api/settings";
 import type { AppSettings } from "@/api/types";
 import { queryKeys } from "@/lib/constants";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function useSettings() {
 	return useQuery({

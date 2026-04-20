@@ -1,6 +1,6 @@
+import { useState } from "react";
 import { GenerateKeyModal } from "@/components/keys/generate-key-modal";
 import { KeyList } from "@/components/keys/key-list";
-import { useState } from "react";
 
 export function KeysPage() {
 	const [showGenerate, setShowGenerate] = useState(false);

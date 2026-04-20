@@ -1,9 +1,9 @@
+import { Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useEngineStatus } from "@/hooks/use-engine";
 import { useHealth } from "@/hooks/use-system";
-import { Server } from "lucide-react";
 
 export function ModelStatusCard() {
 	const { data, isLoading } = useEngineStatus();

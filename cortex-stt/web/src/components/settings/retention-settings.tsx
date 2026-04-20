@@ -1,3 +1,5 @@
+import { Save } from "lucide-react";
+import { useState } from "react";
 import type { RetentionPolicy, RetentionPolicyType } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -5,8 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
-import { Save } from "lucide-react";
-import { useState } from "react";
 
 const policyOptions = [
 	{ value: "Days", label: "Days" },

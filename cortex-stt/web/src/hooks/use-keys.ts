@@ -1,7 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { generateKey, listKeys, revokeKey } from "@/api/keys";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
-import { useQuery } from "@tanstack/react-query";
 
 export function useKeys() {
 	return useQuery({
