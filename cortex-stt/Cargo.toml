@@ -43,7 +43,7 @@ toml = "0.8"
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
 
 # STT engine (optional — tests use mock)
-transcribe-rs = { version = "0.3.5", optional = true }
+transcribe-rs = { version = "0.3.11", optional = true }
 
 
 [dev-dependencies]
