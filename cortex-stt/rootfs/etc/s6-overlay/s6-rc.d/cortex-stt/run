@@ -1,0 +1,34 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Cortex STT Server — Main service
+# ==============================================================================
+
+LOG_LEVEL="$(bashio::config 'log_level')"
+
+case "${LOG_LEVEL}" in
+    trace)   export RUST_LOG="trace" ;;
+    debug)   export RUST_LOG="debug" ;;
+    info)    export RUST_LOG="info" ;;
+    warning) export RUST_LOG="warn" ;;
+    error)   export RUST_LOG="error" ;;
+    fatal)   export RUST_LOG="error" ;;
+    *)       export RUST_LOG="info" ;;
+esac
+
+export DATA_DIR="/data"
+export MODEL_DIR="/share/cortex-stt/models"
+export STATIC_DIR="/app/web/dist"
+
+# Register the bootstrap API key used for Home Assistant Supervisor discovery.
+DISCOVERY_API_KEY="$(bashio::config 'discovery_api_key')"
+if bashio::var.has_value "${DISCOVERY_API_KEY}"; then
+    export API_KEY="${DISCOVERY_API_KEY}"
+fi
+
+bashio::log.info "Starting Cortex STT Server"
+bashio::log.info "Log level: ${RUST_LOG}"
+bashio::log.info "Data directory: ${DATA_DIR}"
+bashio::log.info "Model directory: ${MODEL_DIR}"
+
+exec gosu cortex-stt /app/cortex-stt

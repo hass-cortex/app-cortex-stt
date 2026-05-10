@@ -1,0 +1,34 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Sends Supervisor discovery information to Home Assistant.
+# Payload: { host, port, api_key } for the cortex_stt integration.
+# ==============================================================================
+declare config
+
+api_key="$(bashio::config 'discovery_api_key')"
+if ! bashio::var.has_value "${api_key}"; then
+    bashio::log.error "discovery_api_key option is empty — discovery skipped"
+    exit 0
+fi
+
+# Wait for the HTTP API to accept connections.
+for _ in $(seq 1 60); do
+    if curl -sf "http://localhost:8769/health" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+config=$(\
+    bashio::var.json \
+        host "$(hostname)" \
+        port "^8769" \
+        api_key "${api_key}" \
+)
+
+if bashio::discovery "cortex_stt" "${config}" > /dev/null; then
+    bashio::log.info "Sent discovery info to Home Assistant."
+else
+    bashio::log.error "Discovery message to Home Assistant failed!"
+fi

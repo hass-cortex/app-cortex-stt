@@ -1,0 +1,50 @@
+---
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/cortex-stt"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+    # Wait N days after a release before opening a PR — avoid 0-day regressions
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      # Minor/patch bumps only — majors get their own PR for manual review
+      rust-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "bun"
+    directory: "/cortex-stt/web"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      web-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+/* --- Theme: CSS Custom Properties --- */
+
+:root {
+	/* Light theme (default) */
+	--surface-0: #f5f5f5;
+	--surface-1: #ffffff;
+	--surface-2: #ffffff;
+	--surface-3: #e8e8ed;
+	--border: #d4d4d8;
+	--text-primary: #1e1e2e;
+	--text-secondary: #4c4f69;
+	--text-muted: #9ca0b0;
+	--accent: #1e66f5;
+	--accent-hover: #04a5e5;
+	--success: #40a02b;
+	--warning: #df8e1d;
+	--error: #d20f39;
+	--info: #209fb5;
+}
+
+.dark {
+	--surface-0: #11111b;
+	--surface-1: #181825;
+	--surface-2: #1e1e2e;
+	--surface-3: #313244;
+	--border: #45475a;
+	--text-primary: #cdd6f4;
+	--text-secondary: #a6adc8;
+	--text-muted: #6c7086;
+	--accent: #89b4fa;
+	--accent-hover: #74c7ec;
+	--success: #a6e3a1;
+	--warning: #f9e2af;
+	--error: #f38ba8;
+	--info: #89dceb;
+}
+
+@theme inline {
+	--color-surface-0: var(--surface-0);
+	--color-surface-1: var(--surface-1);
+	--color-surface-2: var(--surface-2);
+	--color-surface-3: var(--surface-3);
+	--color-border: var(--border);
+	--color-text-primary: var(--text-primary);
+	--color-text-secondary: var(--text-secondary);
+	--color-text-muted: var(--text-muted);
+	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
+	--color-success: var(--success);
+	--color-warning: var(--warning);
+	--color-error: var(--error);
+	--color-info: var(--info);
+}
+
+/* --- Base Styles --- */
+
+body {
+	background-color: var(--surface-0);
+	color: var(--text-primary);
+	font-family: "Inter", system-ui, -apple-system, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling for dark theme */
+.dark ::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+.dark ::-webkit-scrollbar-track {
+	background: var(--surface-1);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+	background: var(--text-muted);
+}
