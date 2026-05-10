@@ -1,7 +1,7 @@
 ---
 name: Cortex STT
 description: Multi-engine speech-to-text service with Whisper, Parakeet, SenseVoice, and more
-version: "0.1.1"
+version: "dev"
 slug: cortex_stt
 url: https://github.com/hass-cortex/repository
 arch:

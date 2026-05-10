@@ -206,6 +206,7 @@ service in `rootfs/`. Triggers:
    by the Admin UI's "Re-announce to Home Assistant" button.
 
 Both call `cortex_stt::api::discovery::announce(&state)` which:
+
 - Reads `SUPERVISOR_TOKEN` from env (else returns `NotInSupervisor`).
 - Picks the system-managed API key (DB row with `system=true` and name
   `home-assistant-discovery`, fallback to first system row).
