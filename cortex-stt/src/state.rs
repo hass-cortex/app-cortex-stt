@@ -92,6 +92,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub default_model: String,
     pub version: String,
+    pub http_port: u16,
     pub started_at: Instant,
     /// Broadcast channel for notifying SSE clients of new history records.
     pub history_tx: broadcast::Sender<()>,

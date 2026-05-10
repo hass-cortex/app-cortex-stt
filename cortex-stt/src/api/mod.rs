@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod discovery;
 pub mod engine;
 pub mod error;
 pub mod health;

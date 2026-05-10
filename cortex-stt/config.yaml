@@ -1,7 +1,7 @@
 ---
 name: Cortex STT
 description: Multi-engine speech-to-text service with Whisper, Parakeet, SenseVoice, and more
-version: "dev"
+version: "0.1.1"
 slug: cortex_stt
 url: https://github.com/hass-cortex/repository
 arch:
@@ -10,6 +10,7 @@ startup: services
 init: false
 homeassistant: "2026.3.0"
 timeout: 300
+hassio_api: true
 ingress: true
 ingress_port: 8769
 ingress_stream: true

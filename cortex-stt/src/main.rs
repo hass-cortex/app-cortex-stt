@@ -7,6 +7,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::middleware;
 use cortex_stt::api::auth::auth_middleware;
+use cortex_stt::api::discovery::discovery_routes;
 use cortex_stt::api::engine::engine_routes;
 use cortex_stt::api::health::health_routes;
 use cortex_stt::api::history::history_routes;
@@ -171,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_dir: config.data_dir.clone(),
         default_model,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        http_port: config.http_port,
         started_at: std::time::Instant::now(),
         history_tx,
     });
@@ -193,6 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(key_routes())
         .merge(settings_routes())
         .merge(metrics_routes())
+        .merge(discovery_routes())
         .layer(middleware::from_fn(move |req, next| {
             auth_middleware(req, next, db.clone())
         }));
@@ -200,7 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .with_state(state)
+        .with_state(state.clone())
         .layer(CorsLayer::permissive());
 
     // Serve web UI static files with SPA fallback routing.
@@ -252,6 +255,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_addr = format!("{}:{}", config.http_host, config.http_port);
     let http_listener = TcpListener::bind(&http_addr).await?;
     tracing::info!("HTTP server listening on {http_addr}");
+
+    // Best-effort discovery announce to the Home Assistant Supervisor. Replaces
+    // the bashio-based `rootfs/discovery/run` service. Errors are logged but
+    // never fatal — users can re-trigger via POST /api/discovery/announce.
+    {
+        let announce_state = state.clone();
+        tokio::spawn(async move {
+            match cortex_stt::api::discovery::announce(&announce_state).await {
+                Ok(resp) => tracing::info!(
+                    host = %resp.host,
+                    port = resp.port,
+                    uuid = ?resp.uuid,
+                    "Discovery announce sent to Home Assistant Supervisor",
+                ),
+                Err(cortex_stt::api::discovery::DiscoveryError::NotInSupervisor) => {
+                    tracing::debug!("Not running under Supervisor; skipping discovery announce");
+                }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "Discovery announce failed; manual retry available at POST /api/discovery/announce",
+                ),
+            }
+        });
+    }
 
     // Run HTTP server.
     axum::serve(http_listener, app).await?;

@@ -1,6 +1,6 @@
 [package]
 name = "cortex-stt"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Multi-engine speech-to-text HTTP service powered by transcribe-rs"
 license = "MIT"
@@ -31,7 +31,7 @@ rubato = "0.16"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"
-reqwest = { version = "0.12", features = ["stream"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
 tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 async-stream = "0.3"
@@ -41,6 +41,7 @@ tar = "0.4"
 bzip2 = "0.5"
 toml = "0.8"
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
+gethostname = "0.5"
 
 # STT engine (optional — tests use mock)
 transcribe-rs = { version = "0.3.5", optional = true }

@@ -57,6 +57,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         data_dir,
         default_model: "whisper-small".to_string(),
         version: "0.0.0-test".to_string(),
+        http_port: 0,
         started_at: std::time::Instant::now(),
         history_tx: tokio::sync::broadcast::channel(16).0,
     });

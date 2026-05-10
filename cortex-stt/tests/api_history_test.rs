@@ -26,6 +26,7 @@ async fn create_test_state() -> Arc<AppState> {
         data_dir: tmp.path().to_path_buf(),
         default_model: "whisper-small".to_string(),
         version: "0.0.0-test".to_string(),
+        http_port: 0,
         started_at: std::time::Instant::now(),
         history_tx: tokio::sync::broadcast::channel(16).0,
     })

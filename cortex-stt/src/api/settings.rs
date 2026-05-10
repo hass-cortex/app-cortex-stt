@@ -72,8 +72,8 @@ impl Default for Settings {
         Self {
             default_model: "whisper-small".into(),
             pool_size: 1,
-            max_loaded_models: 3,
-            idle_timeout_secs: Some(300),
+            max_loaded_models: 1,
+            idle_timeout_secs: None,
             transcription_timeout_secs: Some(300),
             save_audio: true,
             preload_default_model: false,

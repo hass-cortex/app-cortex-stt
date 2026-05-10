@@ -1,6 +1,7 @@
 import { DangerZone } from "@/components/settings/danger-zone";
 import { DefaultModelSettings } from "@/components/settings/default-model-settings";
 import { EngineSettings } from "@/components/settings/engine-settings";
+import { HomeAssistantSettings } from "@/components/settings/home-assistant-settings";
 import { RetentionSettings } from "@/components/settings/retention-settings";
 import { TimezoneSettings } from "@/components/settings/timezone-settings";
 import { Spinner } from "@/components/ui/spinner";
@@ -31,6 +32,7 @@ export function SettingsPage() {
 				<EngineSettings />
 				<RetentionSettings />
 				<TimezoneSettings />
+				<HomeAssistantSettings />
 			</div>
 
 			<DangerZone />

@@ -38,15 +38,15 @@ pub struct AppConfig {
     pub pool_size: usize,
 
     /// Maximum number of simultaneously loaded models
-    #[arg(long, env = "MAX_LOADED_MODELS", default_value_t = 3)]
+    #[arg(long, env = "MAX_LOADED_MODELS", default_value_t = 1)]
     pub max_loaded_models: usize,
 
     /// Idle timeout in seconds before unloading a model (0 = never)
-    #[arg(long, env = "IDLE_TIMEOUT", default_value_t = 300)]
+    #[arg(long, env = "IDLE_TIMEOUT", default_value_t = 0)]
     pub idle_timeout_secs: u64,
 
     /// Transcription timeout in seconds
-    #[arg(long, env = "TRANSCRIPTION_TIMEOUT", default_value_t = 120)]
+    #[arg(long, env = "TRANSCRIPTION_TIMEOUT", default_value_t = 300)]
     pub transcription_timeout_secs: u64,
 
     /// Pool acquire timeout in seconds

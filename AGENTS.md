@@ -42,7 +42,7 @@ API plus a React admin UI.
     ├── DOCS.md                HA App Store documentation page
     ├── icon.png, logo.png     addon icons (HA App Store + sidebar)
     ├── translations/en.yaml   addon UI translations
-    ├── rootfs/                s6-overlay services + discovery
+    ├── rootfs/                s6-overlay services (init oneshot + cortex-stt main)
     ├── .cargo/config.toml     GGML_NATIVE=OFF (avoid SIGILL on non-AVX-512 hosts)
     ├── .dockerignore
     ├── Cargo.toml/.lock       Rust workspace root (single crate)
@@ -112,6 +112,7 @@ src/
 │   ├── history.rs    transcription history (incl. live SSE)
 │   ├── metrics.rs    aggregate stats
 │   ├── system.rs     system + storage info
+│   ├── discovery.rs  Supervisor /discovery announce (startup task + manual trigger)
 │   └── health.rs     /health (no auth)
 ├── engine/           model lifecycle
 │   ├── traits.rs     SpeechEngine trait (the abstraction)
@@ -186,10 +187,37 @@ the real download → transcribe pipeline (not run in CI).
 | GET       | `/api/system`                        | System info                                                 |
 | GET       | `/api/storage`                       | Storage info                                                |
 | GET       | `/api/metrics`                       | Aggregate metrics                                           |
+| POST      | `/api/discovery/announce`            | Send Supervisor `/discovery` announce (manual re-trigger)   |
 | GET       | `/health`                            | Health check (no auth)                                      |
 
 All `/api/*` routes require Bearer auth. The first API key is created on
 first run via `--api-key` env or auto-generated `discovery_api_key`.
+
+## Home Assistant Discovery
+
+Discovery announce to Supervisor `/discovery` is implemented in
+`src/api/discovery.rs` (Rust) — there is **no** bashio-based `discovery/run`
+service in `rootfs/`. Triggers:
+
+1. **Startup** (auto): `main.rs` spawns a best-effort `tokio::spawn` after the
+   HTTP listener binds. Failures log a warning but never fatal — the addon keeps
+   serving requests.
+2. **Manual** (on demand): `POST /api/discovery/announce` (Bearer auth). Used
+   by the Admin UI's "Re-announce to Home Assistant" button.
+
+Both call `cortex_stt::api::discovery::announce(&state)` which:
+- Reads `SUPERVISOR_TOKEN` from env (else returns `NotInSupervisor`).
+- Picks the system-managed API key (DB row with `system=true` and name
+  `home-assistant-discovery`, fallback to first system row).
+- Posts `{service: "cortex_stt", config: {host, port, api_key}}` where `host`
+  comes from `gethostname` and `port` from `state.http_port` (so a custom
+  `--http-port` is correctly announced).
+- Maps Supervisor 4xx/5xx into `DiscoveryError::SupervisorRejected{status, body}`
+  — unlike `bashio::discovery`, real HTTP status codes propagate.
+
+The integration's `async_step_hassio` consumes `discovery_info.config['host']`
+and `['port']` (no scheme) to build `http://<host>:<port>` and authenticates
+with `['api_key']`.
 
 ## Adding a New Model
 
