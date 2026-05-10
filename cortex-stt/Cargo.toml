@@ -38,7 +38,7 @@ async-stream = "0.3"
 url = "2"
 flate2 = "1"
 tar = "0.4"
-bzip2 = "0.5"
+bzip2 = "0.6"
 toml = "0.8"
 tikv-jemallocator = { version = "0.6", features = ["background_threads"] }
 
