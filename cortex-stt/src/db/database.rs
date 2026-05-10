@@ -1,0 +1,160 @@
+use std::path::Path;
+
+use tokio_rusqlite::Connection;
+
+use crate::error::AsrError;
+
+/// The concrete error type returned by `conn.call()` when closures use `rusqlite::Error`.
+pub(crate) type CallError = tokio_rusqlite::Error<rusqlite::Error>;
+
+/// Map a [`CallError`] to [`AsrError::DatabaseError`].
+pub(crate) fn map_db_err(e: CallError) -> AsrError {
+    AsrError::DatabaseError {
+        detail: e.to_string(),
+    }
+}
+
+/// Async SQLite database wrapper backed by a dedicated background thread.
+pub struct Database {
+    conn: Connection,
+}
+
+impl Database {
+    /// Open a database at the given file path, creating it if needed.
+    pub async fn open(path: &Path) -> Result<Self, AsrError> {
+        let conn = Connection::open(path)
+            .await
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        let db = Self { conn };
+        db.run_migrations().await?;
+        Ok(db)
+    }
+
+    /// Open an in-memory database (useful for tests).
+    pub async fn open_in_memory() -> Result<Self, AsrError> {
+        let conn = Connection::open_in_memory()
+            .await
+            .map_err(|e| AsrError::DatabaseError {
+                detail: e.to_string(),
+            })?;
+        let db = Self { conn };
+        db.run_migrations().await?;
+        Ok(db)
+    }
+
+    /// Run all schema migrations.
+    async fn run_migrations(&self) -> Result<(), AsrError> {
+        self.conn
+            .call(|conn| {
+                conn.execute_batch(
+                    "
+            CREATE TABLE IF NOT EXISTS records (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                source TEXT NOT NULL,
+                language TEXT,
+                model_id TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                inference_ms INTEGER NOT NULL,
+                model_load_ms INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL,
+                segments_json TEXT NOT NULL DEFAULT '[]',
+                audio_path TEXT,
+                has_error INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                api_key_id TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
+            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
+
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                last4 TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_used_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            ",
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Migration: add raw_key column to api_keys
+        self.conn
+            .call(|conn| {
+                let has_col: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='raw_key'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_col {
+                    conn.execute_batch(
+                        "ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Migration: add device column to records
+        self.conn
+            .call(|conn| {
+                let has_device: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='device'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_device {
+                    conn.execute_batch(
+                        "ALTER TABLE records ADD COLUMN device TEXT NOT NULL DEFAULT 'cpu';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Migration: add system column to api_keys
+        //   system=1 marks keys managed by the addon (e.g. Supervisor discovery
+        //   bootstrap key). Clients cannot delete system keys via the admin UI.
+        self.conn
+            .call(|conn| {
+                let has_col: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='system'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_col {
+                    conn.execute_batch(
+                        "ALTER TABLE api_keys ADD COLUMN system INTEGER NOT NULL DEFAULT 0;",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        Ok(())
+    }
+
+    /// Access the inner `tokio_rusqlite::Connection` for running queries.
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+}

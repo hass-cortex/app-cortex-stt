@@ -1,0 +1,4 @@
+[env]
+# Prevent whisper.cpp from compiling with -march=native.
+# Native instructions (e.g. AVX-512) cause SIGILL on targets that lack them.
+GGML_NATIVE = "OFF"

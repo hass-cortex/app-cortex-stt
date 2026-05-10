@@ -1,0 +1,20 @@
+# Default owner for everything
+* @bthndncr
+
+# Rust core
+/src/ @bthndncr
+/Cargo.toml @bthndncr
+/Cargo.lock @bthndncr
+
+# Web UI
+/web/ @bthndncr
+
+# Deployment
+/Dockerfile @bthndncr
+/rootfs/ @bthndncr
+/deploy/ @bthndncr
+/config.yaml @bthndncr
+/build.yaml @bthndncr
+
+# CI/CD
+/.github/ @bthndncr

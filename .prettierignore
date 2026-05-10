@@ -1,0 +1,10 @@
+# Skip Prettier on Rust + addon source. hassio-addons app-ci runs Prettier on
+# the entire repo by default; we don't use Prettier as a primary formatter
+# (rustfmt + biome handle their respective stacks), so ignore everything
+# except the markdown / config files Prettier reasonably owns.
+cortex-stt/src/
+cortex-stt/tests/
+cortex-stt/web/
+cortex-stt/Cargo.lock
+.github/
+images/

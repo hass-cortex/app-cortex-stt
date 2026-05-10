@@ -1,0 +1,81 @@
+---
+name: CI
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  # Prevent whisper.cpp from compiling with -march=native (avoids SIGILL on targets lacking AVX-512)
+  GGML_NATIVE: 'OFF'
+
+jobs:
+  rust-check:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cortex-stt
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry + build
+        uses: actions/cache@v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cortex-stt/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Check licenses and advisories
+        run: cargo deny check
+
+  web-check:
+    name: Web UI checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cortex-stt/web
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.0"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Build
+        run: bun run build

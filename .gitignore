@@ -1,0 +1,20 @@
+cortex-stt/target/
+cortex-stt/web/node_modules/
+cortex-stt/web/dist/
+cortex-stt/data/
+cortex-stt/docs/superpowers/
+.env
+*.log
+*.tsbuildinfo
+
+# Private local instructions (Claude Code)
+CLAUDE.local.md
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
+*.tmp

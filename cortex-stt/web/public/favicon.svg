@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <!-- Cortex STT Server favicon -->
+  <!-- Concept: Hex Server Crystal (scaled from 128x128 main icon, bars reduced 7→5 for 16-32px legibility) -->
+  <rect width="32" height="32" rx="6" fill="#FFFFFF"/>
+  <path d="M16 3 L27.5 9.5 L27.5 22.5 L16 29 L4.5 22.5 L4.5 9.5 Z" stroke="#BE123C" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+  <line x1="10" y1="14" x2="10" y2="18" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="13" y1="12" x2="13" y2="20" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="16" y1="10" x2="16" y2="22" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="19" y1="12" x2="19" y2="20" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="22" y1="14" x2="22" y2="18" stroke="#BE123C" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
