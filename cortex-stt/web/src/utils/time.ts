@@ -1,9 +1,25 @@
 /**
+ * Parse a backend timestamp into a `Date` in UTC.
+ *
+ * Backend timestamps arrive in one of two shapes:
+ *   1. SQLite `datetime('now')` → `"YYYY-MM-DD HH:MM:SS"` — UTC but no `Z`
+ *   2. Chrono `Utc::now()` via serde_json → RFC3339 with `Z`
+ *
+ * `new Date(s)` would interpret form (1) as *local time*, drifting by the
+ * browser's UTC offset (e.g. 8 hours on TPE). Append `Z` when missing so
+ * both forms parse as UTC. All frontend timestamp consumers must go
+ * through this helper, not raw `new Date(...)`.
+ */
+export function parseUTC(timestamp: string): Date {
+	return new Date(timestamp.endsWith("Z") ? timestamp : `${timestamp}Z`);
+}
+
+/**
  * Format a UTC timestamp string for display in the given timezone.
  * Defaults to "auto" (browser timezone) when no timezone is provided.
  */
 export function formatTimestamp(utcTimestamp: string, timezone = "auto"): string {
-	const date = new Date(utcTimestamp.endsWith("Z") ? utcTimestamp : `${utcTimestamp}Z`);
+	const date = parseUTC(utcTimestamp);
 	const tz = timezone === "auto" ? getBrowserTimezone() : timezone;
 	return date.toLocaleString("default", {
 		timeZone: tz,

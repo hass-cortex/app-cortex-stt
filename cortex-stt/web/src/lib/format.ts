@@ -1,3 +1,5 @@
+import { parseUTC } from "@/utils/time";
+
 /** Format bytes to human readable (e.g., "1.5 GB") */
 export function formatBytes(bytes: number): string {
 	if (bytes === 0) return "0 B";
@@ -31,7 +33,7 @@ export function formatAudioTime(seconds: number): string {
 
 /** Format relative time (e.g., "2 minutes ago") */
 export function formatRelativeTime(iso: string): string {
-	const diff = Date.now() - new Date(iso).getTime();
+	const diff = Date.now() - parseUTC(iso).getTime();
 	const seconds = Math.floor(diff / 1000);
 
 	if (seconds < 60) return "just now";
