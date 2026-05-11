@@ -9,16 +9,26 @@ API plus a React admin UI.
 > `cortex-stt/` subdir = Rust backend + React frontend + Dockerfile +
 > rootfs.
 >
-> **Distribution**: `gh release create` on `hass-cortex/app-cortex-stt` →
-> `deploy.yaml` (hassio-addons/workflows app-deploy) builds multi-arch
-> images → `ghcr.io/hass-cortex/cortex_stt/amd64` → dispatches
-> `repository_dispatch` to `hass-cortex/repository` (catalog) → HA
-> Supervisor pulls the image when users install.
+> **Distribution**: git-tag push on `hass-cortex/app-cortex-stt` →
+> `release.yml` builds binaries and creates a GitHub Release (auto-marked
+> prerelease when the tag contains `-`, e.g. `0.1.4-beta.1`) →
+> `deploy.yaml` (hassio-addons/workflows `app-deploy.yaml@v2.0.6`) builds
+> multi-arch images → pushes `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>` →
+> dispatches `repository_dispatch` to one or both catalogs based on the
+> prerelease flag. Stable tags dispatch to **`hass-cortex/repository`**
+> and **`hass-cortex/repository-beta`**; prerelease tags dispatch to
+> `hass-cortex/repository-beta` only. Each catalog's
+> `repository-updater.yaml` filters releases per its `.apps.yml`
+> `channel:` field (`stable` vs `beta`) and writes `cortex-stt/config.yaml`.
+>
+> See the workspace-level [`docs/release/`](../docs/release/README.md)
+> for the full pipeline diagram, end-user install paths, and the
+> maintainer runbook (cutting beta then stable, troubleshooting).
 >
 > **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt)
 > HACS integration (HA STT platform). Standalone Docker / LXC / systemd
-> distribution was removed before 0.1.0; HA addon is the only supported
-> channel.
+> packaging was removed before 0.1.0; the HA app is the only supported
+> distribution form.
 
 ## Repository Layout
 
