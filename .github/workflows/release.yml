@@ -84,6 +84,10 @@ jobs:
           token: ${{ secrets.DISPATCH_TOKEN }}
           name: ${{ github.ref_name }}
           generate_release_notes: true
+          # Auto-mark semver pre-release tags (e.g. 0.1.4-beta.1) as
+          # prerelease so hassio-addons app-deploy.yaml routes them to
+          # repository-beta only, leaving the stable catalog untouched.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             artifacts/cortex-stt-x86_64-unknown-linux-gnu/cortex-stt-x86_64-unknown-linux-gnu
             artifacts/cortex-stt-web/cortex-stt-web.tar.gz
