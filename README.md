@@ -19,9 +19,7 @@ Home Assistant app providing multi-engine speech-to-text with Whisper, Parakeet,
 
 ## Installation
 
-[![Open your Home Assistant instance and add this repository to the App Store.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhass-cortex%2Frepository)
-
-Click the button above, or manually: **Settings → Apps → App Store → ⋮ → Repositories → Add `https://github.com/hass-cortex/repository`**. After the repository loads, install **Cortex STT** from the list.
+See [cortex-stt/DOCS.md](cortex-stt/DOCS.md) for full install, configuration, discovery, and troubleshooting instructions.
 
 ## Acknowledgements
 

@@ -15,6 +15,7 @@ use crate::engine::registry::builtin_models;
 use crate::error::AsrError;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
 use crate::model::manager::QueuedDownloadRequest;
+use crate::model::types::DownloadPhase;
 use crate::state::AppState;
 
 /// GET /api/models — list all models with status.
@@ -102,10 +103,50 @@ async fn start_download(
             }
         };
 
+        let progress_rx = handle.progress_rx;
         state
             .model_manager
             .set_download_handle(model_id.clone(), handle.task_handle)
             .await;
+
+        // Auto-register the engine factory when the download finishes so the
+        // model is usable without restarting the addon. Watches the download
+        // progress channel; exits silently on Failed or channel close.
+        let watch_state = state.clone();
+        let watch_model = model_id.clone();
+        let mut rx = progress_rx;
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    return;
+                }
+                let status = rx.borrow().status.clone();
+                match status {
+                    DownloadPhase::Completed => {
+                        let device_overrides = watch_state
+                            .db
+                            .load_settings()
+                            .await
+                            .ok()
+                            .map(|s| s.device_overrides)
+                            .unwrap_or_default();
+                        crate::engine::register::register_downloaded_models(
+                            &watch_state.engine_manager,
+                            watch_state.model_manager.model_dir(),
+                            &device_overrides,
+                        )
+                        .await;
+                        tracing::info!(
+                            model = %watch_model,
+                            "Engine factory registered after download",
+                        );
+                        return;
+                    }
+                    DownloadPhase::Failed => return,
+                    _ => continue,
+                }
+            }
+        });
     }
 
     Ok((
