@@ -1,6 +1,6 @@
 [package]
 name = "cortex-stt"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Multi-engine speech-to-text HTTP service powered by transcribe-rs"
 license = "MIT"

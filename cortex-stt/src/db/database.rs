@@ -46,6 +46,9 @@ impl Database {
 
     /// Run all schema migrations.
     async fn run_migrations(&self) -> Result<(), AsrError> {
+        // Step 1: ensure tables exist. Indexes are created later so that
+        // ALTER TABLE column-add migrations below can populate columns the
+        // indexes reference before the index is created.
         self.conn
             .call(|conn| {
                 conn.execute_batch(
@@ -67,10 +70,6 @@ impl Database {
                 api_key_id TEXT
             );
 
-            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
-            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
-
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -84,6 +83,43 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            ",
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Migration: backfill `source` on records tables predating its
+        // introduction. Without this, CREATE INDEX idx_records_source below
+        // would fail with "no such column: source" on upgraded installs.
+        self.conn
+            .call(|conn| {
+                let has_col: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='source'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_col {
+                    conn.execute_batch(
+                        "ALTER TABLE records ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Step 2: create indexes once all referenced columns are guaranteed
+        // to exist.
+        self.conn
+            .call(|conn| {
+                conn.execute_batch(
+                    "
+            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
+            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
             ",
                 )?;
                 Ok(())
