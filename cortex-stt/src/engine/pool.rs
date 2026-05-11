@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,9 +23,16 @@ pub struct ModelPool {
 }
 
 struct ModelPoolInner {
+    /// Stable identifier of the model these instances serve. Used for
+    /// error reporting so callers see a meaningful model_id instead of a
+    /// placeholder.
+    model_id: Arc<str>,
     /// Each slot holds an engine behind a Mutex. The Option is always `Some`
     /// while the pool is alive — we never take ownership permanently.
     instances: Vec<Mutex<Option<Box<dyn SpeechEngine>>>>,
+    /// FIFO of currently-free instance indices. Paired with `semaphore` so
+    /// every successful `acquire` is guaranteed to find an index.
+    free_indices: Mutex<VecDeque<usize>>,
     semaphore: Arc<Semaphore>,
     /// Factory used to rebuild engine instances after a panic.
     factory: SharedEngineFactory,
@@ -33,14 +41,14 @@ struct ModelPoolInner {
 /// RAII guard granting exclusive access to one pooled engine instance.
 ///
 /// The engine is accessible through [`transcribe`](Self::transcribe).
-/// When the guard is dropped, the semaphore permit is released and the
-/// engine becomes available for other callers.
+/// When the guard is dropped, the index is returned to the pool's free list
+/// and the semaphore permit is released, unblocking the next waiter.
 pub struct PoolGuard {
-    /// Reference to the pool internals (keeps the Vec alive).
     pool: Arc<ModelPoolInner>,
-    /// Index into `pool.instances` that this guard owns.
     index: usize,
-    /// Owned permit — released on drop, unblocking the next waiter.
+    /// Field order matters: `_permit` is declared after `pool`/`index` so it
+    /// drops last, ensuring the index is returned to the free list before
+    /// another waiter can acquire a permit.
     _permit: OwnedSemaphorePermit,
 }
 
@@ -52,23 +60,39 @@ impl std::fmt::Debug for PoolGuard {
     }
 }
 
+impl Drop for PoolGuard {
+    fn drop(&mut self) {
+        self.pool
+            .free_indices
+            .lock()
+            .expect("free_indices mutex poisoned")
+            .push_back(self.index);
+    }
+}
+
 impl ModelPool {
     /// Create a new pool of `size` engine instances built by `factory`.
     ///
-    /// All instances are eagerly created during construction. The factory
-    /// is borrowed — the caller retains ownership so it can be reused
-    /// (e.g., to recreate the pool after eviction). Returns an error if
-    /// any factory invocation fails.
-    pub fn new(factory: &SharedEngineFactory, size: usize) -> Result<Self, AsrError> {
+    /// `model_id` is recorded on the pool so errors surfaced from the pool
+    /// or from any guard reference the actual model, not a placeholder.
+    pub fn new(
+        factory: &SharedEngineFactory,
+        size: usize,
+        model_id: impl Into<Arc<str>>,
+    ) -> Result<Self, AsrError> {
         let mut instances = Vec::with_capacity(size);
         for _ in 0..size {
             let engine = factory()?;
             instances.push(Mutex::new(Some(engine)));
         }
 
+        let free_indices = (0..size).collect::<VecDeque<usize>>();
+
         Ok(Self {
             inner: Arc::new(ModelPoolInner {
+                model_id: model_id.into(),
                 instances,
+                free_indices: Mutex::new(free_indices),
                 semaphore: Arc::new(Semaphore::new(size)),
                 factory: Arc::clone(factory),
             }),
@@ -84,26 +108,21 @@ impl ModelPool {
         let permit = tokio::time::timeout(timeout, self.inner.semaphore.clone().acquire_owned())
             .await
             .map_err(|_| AsrError::PoolAcquireTimeout {
-                model_id: "unknown".to_string(),
+                model_id: self.inner.model_id.to_string(),
                 timeout_secs: timeout.as_secs(),
             })?
             .map_err(|_| AsrError::ModelNotLoaded {
-                model_id: "unknown".to_string(),
+                model_id: self.inner.model_id.to_string(),
             })?;
 
-        // Find a free slot. With the semaphore guaranteeing we never exceed
-        // `size` concurrent guards, there is always at least one unlocked
-        // Mutex whose engine is not currently borrowed.
+        // Permit acquired → free_indices is non-empty by invariant.
         let index = self
             .inner
-            .instances
-            .iter()
-            .position(|slot| {
-                slot.try_lock()
-                    .map(|guard| guard.is_some())
-                    .unwrap_or(false)
-            })
-            .expect("semaphore permit acquired but no free slot found — bug in ModelPool");
+            .free_indices
+            .lock()
+            .expect("free_indices mutex poisoned")
+            .pop_front()
+            .expect("semaphore permit acquired but free list is empty — bug in ModelPool");
 
         Ok(PoolGuard {
             pool: Arc::clone(&self.inner),
@@ -114,25 +133,16 @@ impl ModelPool {
 }
 
 impl PoolGuard {
-    /// Returns the compute device of the pooled engine instance.
-    pub fn device(&self) -> &str {
+    /// Returns the compute device of the pooled engine instance as an owned
+    /// `String` (e.g., "cpu", "cuda", "cuda:0"). The value comes directly
+    /// from the engine's `device()` implementation.
+    pub fn device(&self) -> String {
         let lock = self.pool.instances[self.index]
             .lock()
             .expect("engine mutex poisoned");
         match lock.as_ref() {
-            Some(engine) => {
-                // SAFETY: The device string is stable for the lifetime of the engine.
-                // We need to extend the lifetime past the MutexGuard.
-                let device: &str = engine.device();
-                // Copy to avoid lifetime issue with the lock guard.
-                // Return a static str for known values.
-                match device {
-                    "cpu" => "cpu",
-                    "cuda" => "cuda",
-                    _ => "cpu",
-                }
-            }
-            None => "cpu",
+            Some(engine) => engine.device().to_string(),
+            None => "unknown".to_string(),
         }
     }
 
@@ -149,8 +159,8 @@ impl PoolGuard {
         let mut lock = self.pool.instances[self.index]
             .lock()
             .expect("engine mutex poisoned");
-        let engine = lock.as_mut().ok_or(AsrError::ModelNotLoaded {
-            model_id: "unknown".to_string(),
+        let engine = lock.as_mut().ok_or_else(|| AsrError::ModelNotLoaded {
+            model_id: self.pool.model_id.to_string(),
         })?;
 
         let result =
@@ -159,9 +169,8 @@ impl PoolGuard {
         match result {
             Ok(inner) => inner,
             Err(_) => {
-                warn!("engine panicked, rebuilding instance");
+                warn!(model_id = %self.pool.model_id, "engine panicked, rebuilding instance");
 
-                // Discard the panicked engine and attempt to rebuild.
                 *lock = match (self.pool.factory)() {
                     Ok(new_engine) => Some(new_engine),
                     Err(rebuild_err) => {
@@ -171,9 +180,96 @@ impl PoolGuard {
                 };
 
                 Err(AsrError::EnginePanic {
-                    model_id: "unknown".to_string(),
+                    model_id: self.pool.model_id.to_string(),
                 })
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for `ModelPool`. Kept here (not in `tests/`) so they can
+    //! access private fields like `PoolGuard::index` directly without
+    //! exposing test-only accessors on the public API.
+
+    use super::*;
+    use crate::engine::traits::{
+        EngineCapabilities, SpeechEngine, TranscribeOptions, TranscriptionResult,
+    };
+
+    struct MockEngine;
+
+    impl SpeechEngine for MockEngine {
+        fn capabilities(&self) -> EngineCapabilities {
+            EngineCapabilities {
+                name: "mock".into(),
+                languages: vec!["en".into()],
+                supports_translation: false,
+            }
+        }
+
+        fn transcribe(
+            &mut self,
+            _samples: &[f32],
+            _options: &TranscribeOptions,
+        ) -> Result<TranscriptionResult, AsrError> {
+            Ok(TranscriptionResult {
+                text: "ok".into(),
+                segments: vec![],
+            })
+        }
+    }
+
+    fn mock_factory() -> SharedEngineFactory {
+        Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+    }
+
+    /// Regression: two concurrent guards on a pool_size=2 pool must occupy
+    /// distinct slot indices. The previous `try_lock`-based implementation
+    /// could hand out the same index twice when no `transcribe()` had been
+    /// called yet, defeating the parallelism the pool exists to provide.
+    #[tokio::test]
+    async fn concurrent_guards_use_distinct_slots() {
+        let factory = mock_factory();
+        let pool = ModelPool::new(&factory, 2, "test-model").unwrap();
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+
+        let (a, b) = tokio::join!(
+            async move { pool_a.acquire(Duration::from_secs(5)).await.unwrap() },
+            async move { pool_b.acquire(Duration::from_secs(5)).await.unwrap() },
+        );
+
+        assert_ne!(a.index, b.index);
+    }
+
+    /// After a guard is dropped, its slot must be reusable.
+    #[tokio::test]
+    async fn slot_recycled_after_drop() {
+        let factory = mock_factory();
+        let pool = ModelPool::new(&factory, 1, "test-model").unwrap();
+
+        let g1 = pool.acquire(Duration::from_secs(5)).await.unwrap();
+        let idx = g1.index;
+        drop(g1);
+
+        let g2 = pool.acquire(Duration::from_secs(5)).await.unwrap();
+        assert_eq!(g2.index, idx);
+    }
+
+    /// Errors surfaced through the pool reference the configured model_id,
+    /// not a "unknown" placeholder.
+    #[tokio::test]
+    async fn acquire_timeout_reports_real_model_id() {
+        let factory = mock_factory();
+        let pool = ModelPool::new(&factory, 1, "my-model").unwrap();
+        let _g = pool.acquire(Duration::from_secs(5)).await.unwrap();
+
+        let err = pool.acquire(Duration::from_millis(50)).await.unwrap_err();
+        match err {
+            AsrError::PoolAcquireTimeout { model_id, .. } => assert_eq!(model_id, "my-model"),
+            other => panic!("expected PoolAcquireTimeout, got {other:?}"),
         }
     }
 }

@@ -40,7 +40,7 @@ fn mock_factory(name: &str) -> SharedEngineFactory {
 #[tokio::test]
 async fn test_pool_acquire_and_transcribe() {
     let factory = mock_factory("test");
-    let pool = ModelPool::new(&factory, 1).unwrap();
+    let pool = ModelPool::new(&factory, 1, "test-model").unwrap();
     let mut guard = pool.acquire(Duration::from_secs(5)).await.unwrap();
     let result = guard
         .transcribe(&[0.0; 16000], &TranscribeOptions::default())
@@ -51,7 +51,7 @@ async fn test_pool_acquire_and_transcribe() {
 #[tokio::test]
 async fn test_pool_concurrent_access_queues() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&factory, 1).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 1, "test-model").unwrap());
     let call_count = Arc::new(AtomicU32::new(0));
     let count2 = call_count.clone();
 
@@ -75,7 +75,7 @@ async fn test_pool_concurrent_access_queues() {
 #[tokio::test]
 async fn test_pool_acquire_timeout() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&factory, 1).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 1, "test-model").unwrap());
     let _guard = pool.acquire(Duration::from_secs(5)).await.unwrap();
 
     let pool2 = pool.clone();
@@ -91,7 +91,7 @@ async fn test_pool_acquire_timeout() {
 #[tokio::test]
 async fn test_pool_size_two() {
     let factory = mock_factory("test");
-    let pool = Arc::new(ModelPool::new(&factory, 2).unwrap());
+    let pool = Arc::new(ModelPool::new(&factory, 2, "test-model").unwrap());
     let _guard1 = pool.acquire(Duration::from_secs(5)).await.unwrap();
     let _guard2 = pool.acquire(Duration::from_secs(5)).await.unwrap();
 }

@@ -21,7 +21,7 @@ async fn create_test_state() -> Arc<AppState> {
         engine_manager,
         model_manager,
         db,
-        job_store: Arc::new(JobStore::new()),
+        job_store: Arc::new(JobStore::with_defaults()),
         data_dir: tmp.path().to_path_buf(),
         default_model: "whisper-small".to_string(),
         version: "0.0.0-test".to_string(),

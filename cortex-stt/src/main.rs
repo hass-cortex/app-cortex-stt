@@ -22,7 +22,7 @@ use cortex_stt::config::AppConfig;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::model::manager::ModelManager;
-use cortex_stt::state::{AppState, JobStore};
+use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create job store for async transcription jobs.
-    let job_store = Arc::new(JobStore::new());
+    let job_store = Arc::new(JobStore::with_defaults());
 
     // Create broadcast channel for live history SSE updates.
     let (history_tx, _) = tokio::sync::broadcast::channel(100);
@@ -179,6 +179,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn background retention cleanup (hourly).
     let _cleanup_handle = spawn_retention_cleanup(db.clone(), config.data_dir.clone());
+
+    // Spawn background job-store sweeper (every 60s) to enforce TTL +
+    // max_jobs on async transcription jobs.
+    let _job_sweeper_handle = spawn_job_sweeper(state.job_store.clone());
 
     // Build Axum router.
 

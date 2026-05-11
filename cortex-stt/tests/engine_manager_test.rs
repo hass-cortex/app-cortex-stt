@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
@@ -30,6 +31,19 @@ impl SpeechEngine for MockEngine {
 
 fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
     Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+}
+
+/// Factory that counts how many engine instances have been created.
+fn counting_factory(
+    counter: Arc<AtomicUsize>,
+) -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
+    Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+        // Small sleep so concurrent loaders have a chance to overlap if
+        // the load-coordination lock is broken.
+        std::thread::sleep(Duration::from_millis(20));
+        Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>)
+    })
 }
 
 #[tokio::test]
@@ -110,4 +124,55 @@ async fn test_manager_lru_eviction() {
     );
     assert!(manager.is_loaded("model-b").await);
     assert!(manager.is_loaded("model-c").await);
+}
+
+/// Regression: concurrent acquires for the *same* unloaded model must not
+/// each build their own pool. The per-model load lock should serialize so
+/// the factory is called exactly `pool_size` times, not `N * pool_size`.
+///
+/// Each spawned task drops its guard immediately so all five tasks can
+/// complete promptly — otherwise the tail tasks would block on pool
+/// permits and time out, masking whether the load lock actually worked.
+/// The `acquire_timeout` is also kept tight so the test fails fast if the
+/// regression returns.
+#[tokio::test]
+async fn test_concurrent_acquire_same_model_loads_once() {
+    let pool_size = 2;
+    let config = EngineManagerConfig {
+        max_loaded_models: 2,
+        pool_size,
+        acquire_timeout: Duration::from_millis(500),
+        idle_timeout: None,
+        idle_check_interval: Duration::from_secs(10),
+    };
+    let manager = EngineManager::new(config);
+    let counter = Arc::new(AtomicUsize::new(0));
+    manager
+        .register("model-x", counting_factory(counter.clone()))
+        .await;
+
+    // Spawn 5 concurrent acquires of the same model. Each task acquires
+    // and *immediately drops* its guard so other waiters can proceed
+    // before `acquire_timeout`.
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let m = manager.clone();
+        handles.push(tokio::spawn(async move {
+            let _guard = m
+                .acquire("model-x")
+                .await
+                .unwrap_or_else(|e| panic!("task {i} failed to acquire within timeout: {e:?}"));
+            // _guard drops here, returning the slot to the pool.
+        }));
+    }
+    for h in handles {
+        h.await.expect("acquire task panicked or was cancelled");
+    }
+
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        pool_size,
+        "factory should be called exactly pool_size times — once per slot in a single pool"
+    );
+    assert_eq!(manager.loaded_count().await, 1);
 }

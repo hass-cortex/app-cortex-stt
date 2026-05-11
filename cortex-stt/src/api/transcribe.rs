@@ -16,9 +16,15 @@ use crate::api::auth::AuthKeyId;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::audio::wav_writer::write_wav;
 use crate::db::records::{CreateRecord, TranscriptionSource};
+use crate::engine::pool::PoolGuard;
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
 use crate::state::{AppState, AsyncJob, AsyncJobStatus};
+
+/// Heuristic threshold: a pool acquire that took longer than this is
+/// treated as a cold load rather than a queue wait. A hot acquire on an
+/// already-loaded pool returns within microseconds.
+const COLD_LOAD_THRESHOLD_MS: u64 = 100;
 
 /// Query parameters for the sync transcribe endpoint.
 #[derive(Debug, Deserialize)]
@@ -52,7 +58,16 @@ pub struct TranscribeResponse {
     pub model: String,
     pub duration_ms: u64,
     pub inference_ms: u64,
+    /// Total time from request start to engine ready, including any cold
+    /// load. Kept as the sum of `pool_wait_ms + cold_load_ms` so existing
+    /// clients see the same number they always did.
     pub model_load_ms: u64,
+    /// Time waiting for a free pool slot when the model was already
+    /// loaded (hot path: ~0). Heuristic — see `COLD_LOAD_THRESHOLD_MS`.
+    pub pool_wait_ms: u64,
+    /// Time spent loading the model from disk + warmup, when this request
+    /// triggered the lazy load. Hot path: 0.
+    pub cold_load_ms: u64,
     pub device: String,
 }
 
@@ -62,7 +77,9 @@ pub struct TranscribeResponse {
 
 /// Pre-processed transcription request, shared by sync / SSE / async handlers.
 struct PreparedTranscription {
-    samples: Vec<f32>,
+    /// PCM samples at 16 kHz mono. `Arc<[f32]>` so the same buffer can be
+    /// shared with the history writer without allocating a second copy.
+    samples: Arc<[f32]>,
     duration_ms: u64,
     options: TranscribeOptions,
     model: String,
@@ -91,7 +108,7 @@ fn prepare(
     };
 
     Ok(PreparedTranscription {
-        samples,
+        samples: Arc::from(samples),
         duration_ms,
         options,
         model,
@@ -122,50 +139,50 @@ fn normalize_language(lang: Option<String>) -> Option<String> {
     lang.map(|l| l.split(['-', '_']).next().unwrap_or(&l).to_string())
 }
 
-/// Run transcription on the engine and return the response.
-///
-/// If `transcription_timeout_secs` is set in settings, the entire operation
-/// (model acquire + inference) is bounded by that timeout.
-async fn run_transcription(
+/// Acquire a pool slot for `model` and decompose the elapsed time into
+/// `pool_wait_ms` + `cold_load_ms` via a coarse heuristic: anything under
+/// `COLD_LOAD_THRESHOLD_MS` is treated as queue wait, anything longer as
+/// a cold load (file mmap / weight init).
+async fn acquire_engine(
     state: &AppState,
     model: &str,
-    samples: Vec<f32>,
-    options: TranscribeOptions,
-    duration_ms: u64,
-) -> Result<TranscribeResponse, AsrError> {
-    let timeout_secs = state
-        .db
-        .load_settings()
-        .await
-        .ok()
-        .and_then(|s| s.transcription_timeout_secs);
+) -> Result<(PoolGuard, AcquireMetrics), AsrError> {
+    let started = Instant::now();
+    let guard = state.engine_manager.acquire(model).await?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
 
-    let fut = run_transcription_inner(state, model, samples, options, duration_ms);
+    let metrics = if elapsed_ms < COLD_LOAD_THRESHOLD_MS {
+        AcquireMetrics {
+            pool_wait_ms: elapsed_ms,
+            cold_load_ms: 0,
+        }
+    } else {
+        AcquireMetrics {
+            pool_wait_ms: 0,
+            cold_load_ms: elapsed_ms,
+        }
+    };
 
-    match timeout_secs {
-        Some(secs) => tokio::time::timeout(Duration::from_secs(secs), fut)
-            .await
-            .map_err(|_| AsrError::InferenceTimeout {
-                model_id: model.to_string(),
-                timeout_secs: secs,
-            })?,
-        None => fut.await,
-    }
+    Ok((guard, metrics))
 }
 
-async fn run_transcription_inner(
-    state: &AppState,
-    model: &str,
-    samples: Vec<f32>,
-    options: TranscribeOptions,
-    duration_ms: u64,
-) -> Result<TranscribeResponse, AsrError> {
-    let acquire_start = Instant::now();
-    let mut guard = state.engine_manager.acquire(model).await?;
-    let model_load_ms = acquire_start.elapsed().as_millis() as u64;
+#[derive(Debug, Clone, Copy)]
+struct AcquireMetrics {
+    pool_wait_ms: u64,
+    cold_load_ms: u64,
+}
 
-    let device = guard.device().to_string();
-    let model_owned = model.to_string();
+/// Run inference on an already-acquired pool guard.
+async fn run_inference(
+    mut guard: PoolGuard,
+    samples: Arc<[f32]>,
+    options: TranscribeOptions,
+    model: String,
+    duration_ms: u64,
+    metrics: AcquireMetrics,
+) -> Result<TranscribeResponse, AsrError> {
+    let device = guard.device();
+    let model_owned = model.clone();
     let inference_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options))
         .await
@@ -190,9 +207,101 @@ async fn run_transcription_inner(
         model: model_owned,
         duration_ms,
         inference_ms,
-        model_load_ms,
+        model_load_ms: metrics.pool_wait_ms + metrics.cold_load_ms,
+        pool_wait_ms: metrics.pool_wait_ms,
+        cold_load_ms: metrics.cold_load_ms,
         device,
     })
+}
+
+/// A wall-clock deadline applied across the acquire + inference pipeline.
+///
+/// Using a single shared deadline (rather than separate `timeout`s on each
+/// phase) keeps the configured `transcription_timeout_secs` honest: the
+/// whole request is bounded once, regardless of how time is split between
+/// model acquisition and inference.
+#[derive(Clone, Copy)]
+struct RequestDeadline(Option<(tokio::time::Instant, u64)>);
+
+impl RequestDeadline {
+    /// Build a deadline starting *now* for the given total budget. `None`
+    /// means no timeout.
+    fn from_now(timeout_secs: Option<u64>) -> Self {
+        Self(timeout_secs.map(|s| (tokio::time::Instant::now() + Duration::from_secs(s), s)))
+    }
+
+    /// Run `fut` under the deadline. Converts a deadline expiry into
+    /// [`AsrError::InferenceTimeout`].
+    async fn enforce<F, T>(self, fut: F, model: &str) -> Result<T, AsrError>
+    where
+        F: std::future::Future<Output = Result<T, AsrError>>,
+    {
+        match self.0 {
+            Some((instant, total_secs)) => {
+                tokio::time::timeout_at(instant, fut).await.map_err(|_| {
+                    AsrError::InferenceTimeout {
+                        model_id: model.to_string(),
+                        timeout_secs: total_secs,
+                    }
+                })?
+            }
+            None => fut.await,
+        }
+    }
+}
+
+/// Settings consulted by the transcription pipeline. Loaded **once** per
+/// request so each handler performs at most one settings DB roundtrip,
+/// independent of how many phases (acquire + inference + history) consult
+/// them downstream.
+#[derive(Debug, Clone, Copy)]
+struct RequestSettings {
+    timeout_secs: Option<u64>,
+    save_audio: bool,
+}
+
+impl RequestSettings {
+    async fn load(state: &AppState) -> Self {
+        match state.db.load_settings().await {
+            Ok(s) => Self {
+                timeout_secs: s.transcription_timeout_secs,
+                save_audio: s.save_audio,
+            },
+            Err(_) => Self {
+                timeout_secs: None,
+                save_audio: true,
+            },
+        }
+    }
+}
+
+/// Run the full transcription pipeline (acquire + inference) under the
+/// caller-supplied deadline.
+async fn run_transcription(
+    state: &AppState,
+    model: &str,
+    samples: Arc<[f32]>,
+    options: TranscribeOptions,
+    duration_ms: u64,
+    deadline: RequestDeadline,
+) -> Result<TranscribeResponse, AsrError> {
+    let (guard, metrics) = deadline
+        .enforce(acquire_engine(state, model), model)
+        .await?;
+
+    deadline
+        .enforce(
+            run_inference(
+                guard,
+                samples,
+                options,
+                model.to_string(),
+                duration_ms,
+                metrics,
+            ),
+            model,
+        )
+        .await
 }
 
 /// Save transcription result to history (audio file + DB record).
@@ -212,14 +321,8 @@ async fn save_to_history(
     response: &TranscribeResponse,
     api_key_id: Option<String>,
     device: String,
+    save_audio: bool,
 ) {
-    let save_audio = state
-        .db
-        .load_settings()
-        .await
-        .map(|s| s.save_audio)
-        .unwrap_or(true);
-
     let record_id = uuid::Uuid::new_v4().to_string();
     let audio_path_str = if save_audio {
         let audio_dir = state.data_dir.join("audio");
@@ -272,22 +375,28 @@ async fn fetch_job(state: &AppState, job_id: &str) -> Result<AsyncJob, AsrError>
 }
 
 // ---------------------------------------------------------------------------
-// SSE progress events (Task 8)
+// SSE stage events
 // ---------------------------------------------------------------------------
 
-/// Server-Sent Event types for streaming transcription progress.
+/// Stage events emitted on the SSE stream. Each event represents a real
+/// pipeline milestone — `decoded` -> `engine_acquired` -> `inference_started`
+/// -> `result` (or `error`). This replaces the prior fake "chunk progress"
+/// loop, which yielded all progress events before inference even started.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
-enum SseProgress {
-    /// Intermediate progress update while processing audio chunks.
-    Progress {
-        /// Number of chunks processed so far.
-        chunks_processed: usize,
-        /// Total number of chunks.
-        total_chunks: usize,
-        /// Elapsed time in milliseconds.
-        elapsed_ms: u64,
+enum SseEvent {
+    /// Audio body decoded and resampled.
+    Decoded {
+        duration_ms: u64,
+        sample_count: usize,
     },
+    /// Engine pool slot acquired (and any cold load completed).
+    EngineAcquired {
+        pool_wait_ms: u64,
+        cold_load_ms: u64,
+    },
+    /// Inference call dispatched to the blocking pool.
+    InferenceStarted,
     /// Final transcription result.
     Result {
         #[serde(flatten)]
@@ -295,6 +404,23 @@ enum SseProgress {
     },
     /// An error occurred during transcription.
     Error { code: String, message: String },
+}
+
+impl SseEvent {
+    fn event_name(&self) -> &'static str {
+        match self {
+            SseEvent::Decoded { .. } => "decoded",
+            SseEvent::EngineAcquired { .. } => "engine_acquired",
+            SseEvent::InferenceStarted => "inference_started",
+            SseEvent::Result { .. } => "result",
+            SseEvent::Error { .. } => "error",
+        }
+    }
+}
+
+fn to_sse(event: &SseEvent) -> Event {
+    let data = serde_json::to_string(event).unwrap_or_default();
+    Event::default().event(event.event_name()).data(data)
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +462,8 @@ async fn transcribe_sync(
     body: Bytes,
 ) -> Result<axum::Json<TranscribeResponse>, AsrError> {
     let prep = prepare(&headers, query, &body)?;
-    let samples_copy = prep.samples.clone();
+    let settings = RequestSettings::load(&state).await;
+    let samples_for_history = Arc::clone(&prep.samples);
 
     let response = run_transcription(
         &state,
@@ -344,6 +471,7 @@ async fn transcribe_sync(
         prep.samples,
         prep.options,
         prep.duration_ms,
+        RequestDeadline::from_now(settings.timeout_secs),
     )
     .await?;
 
@@ -353,10 +481,11 @@ async fn transcribe_sync(
         TranscriptionSource::HttpApi,
         &prep.model,
         &prep.language,
-        &samples_copy,
+        &samples_for_history,
         &response,
         api_key_id,
         device,
+        settings.save_audio,
     )
     .await;
 
@@ -365,8 +494,7 @@ async fn transcribe_sync(
 
 /// SSE streaming transcription handler.
 ///
-/// Splits audio into 5-second chunks, emits progress events as each chunk
-/// is "processed", then runs full inference and emits the result.
+/// Emits real stage events at each pipeline milestone (no fake progress).
 async fn transcribe_sse(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TranscribeQuery>,
@@ -375,34 +503,62 @@ async fn transcribe_sse(
     body: Bytes,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
     let prep = prepare(&headers, query, &body)?;
+    let settings = RequestSettings::load(&state).await;
+    let samples_for_history = Arc::clone(&prep.samples);
+    let sample_count = prep.samples.len();
 
-    // Calculate 5-second chunks at 16 kHz.
-    let chunk_size = 16_000 * 5; // 5 seconds of samples
-    let total_chunks = prep.samples.len().div_ceil(chunk_size);
-
-    let samples_copy = prep.samples.clone();
     let model = prep.model;
     let language = prep.language;
 
+    // Compute the request-wide deadline *before* opening the SSE stream so
+    // the configured transcription timeout covers acquire + inference, not
+    // just inference. Without this, cold loads or queue waits could let an
+    // SSE request run far past the user's configured limit — a regression
+    // versus the sync/async paths.
+    let deadline = RequestDeadline::from_now(settings.timeout_secs);
+
     let stream = async_stream::stream! {
-        let start = Instant::now();
+        // Stage 1: audio decoded.
+        yield Ok(to_sse(&SseEvent::Decoded {
+            duration_ms: prep.duration_ms,
+            sample_count,
+        }));
 
-        // Emit progress events for each audio chunk.
-        for i in 0..total_chunks {
-            let progress = SseProgress::Progress {
-                chunks_processed: i + 1,
-                total_chunks,
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
-            let data = serde_json::to_string(&progress).unwrap_or_default();
-            yield Ok(Event::default().event("progress").data(data));
+        // Stage 2: acquire engine (may trigger cold load) — under deadline.
+        let (guard, metrics) = match deadline
+            .enforce(acquire_engine(&state, &model), &model)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                yield Ok(to_sse(&error_event(&e)));
+                return;
+            }
+        };
+        yield Ok(to_sse(&SseEvent::EngineAcquired {
+            pool_wait_ms: metrics.pool_wait_ms,
+            cold_load_ms: metrics.cold_load_ms,
+        }));
 
-            // Small yield to allow keep-alive and prevent starving the runtime.
-            tokio::task::yield_now().await;
-        }
+        // Stage 3: inference dispatched.
+        yield Ok(to_sse(&SseEvent::InferenceStarted));
 
-        // Run full inference on the complete audio.
-        match run_transcription(&state, &model, prep.samples, prep.options, prep.duration_ms).await {
+        // Stage 4: actual inference (same deadline).
+        let result = deadline
+            .enforce(
+                run_inference(
+                    guard,
+                    prep.samples,
+                    prep.options,
+                    model.clone(),
+                    prep.duration_ms,
+                    metrics,
+                ),
+                &model,
+            )
+            .await;
+
+        match result {
             Ok(response) => {
                 let device = response.device.clone();
                 save_to_history(
@@ -410,30 +566,30 @@ async fn transcribe_sse(
                     TranscriptionSource::HttpApi,
                     &model,
                     &language,
-                    &samples_copy,
+                    &samples_for_history,
                     &response,
                     api_key_id,
                     device,
+                    settings.save_audio,
                 )
                 .await;
-
-                let result = SseProgress::Result { response };
-                let data = serde_json::to_string(&result).unwrap_or_default();
-                yield Ok(Event::default().event("result").data(data));
+                yield Ok(to_sse(&SseEvent::Result { response }));
             }
             Err(e) => {
-                let (_, api_error): (StatusCode, crate::api::error::ApiError) = (&e).into();
-                let error = SseProgress::Error {
-                    code: api_error.code.to_string(),
-                    message: api_error.message,
-                };
-                let data = serde_json::to_string(&error).unwrap_or_default();
-                yield Ok(Event::default().event("error").data(data));
+                yield Ok(to_sse(&error_event(&e)));
             }
         }
     };
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+fn error_event(err: &AsrError) -> SseEvent {
+    let (_, api_error): (StatusCode, crate::api::error::ApiError) = err.into();
+    SseEvent::Error {
+        code: api_error.code.to_string(),
+        message: api_error.message,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +613,7 @@ async fn transcribe_async(
 ) -> Result<(StatusCode, axum::Json<AsyncJobCreated>), AsrError> {
     let api_key_id = auth_key.map(|ext| ext.0.0);
     let prep = prepare(&headers, query, &body)?;
+    let settings = RequestSettings::load(&state).await;
 
     let job_id = uuid::Uuid::new_v4().to_string();
     let job = AsyncJob {
@@ -472,7 +629,7 @@ async fn transcribe_async(
     let job_store = Arc::clone(&state.job_store);
     let state_inner = state.clone();
     let job_id_bg = job_id.clone();
-    let samples_copy = prep.samples.clone();
+    let samples_for_history = Arc::clone(&prep.samples);
     let model = prep.model;
     let language = prep.language;
 
@@ -490,6 +647,7 @@ async fn transcribe_async(
             prep.samples,
             prep.options,
             prep.duration_ms,
+            RequestDeadline::from_now(settings.timeout_secs),
         )
         .await
         {
@@ -500,10 +658,11 @@ async fn transcribe_async(
                     TranscriptionSource::HttpApi,
                     &model,
                     &language,
-                    &samples_copy,
+                    &samples_for_history,
                     &response,
                     api_key_id,
                     device,
+                    settings.save_audio,
                 )
                 .await;
 

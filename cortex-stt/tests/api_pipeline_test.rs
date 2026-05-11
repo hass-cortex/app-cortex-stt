@@ -53,7 +53,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         engine_manager,
         model_manager,
         db,
-        job_store: Arc::new(JobStore::new()),
+        job_store: Arc::new(JobStore::with_defaults()),
         data_dir,
         default_model: "whisper-small".to_string(),
         version: "0.0.0-test".to_string(),

@@ -57,6 +57,10 @@ pub struct EngineManager {
     config: RwLock<EngineManagerConfig>,
     factories: RwLock<HashMap<String, SharedEngineFactory>>,
     pools: RwLock<HashMap<String, LoadedModel>>,
+    /// Per-model load coordination locks. The first request to load a
+    /// given model_id acquires this lock; concurrent requests wait here
+    /// instead of racing to build duplicate pools.
+    load_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl EngineManager {
@@ -66,7 +70,21 @@ impl EngineManager {
             config: RwLock::new(config),
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
+            load_locks: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Get (or create) the per-model load coordination lock.
+    async fn load_lock_for(&self, model_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        if let Some(lock) = self.load_locks.read().await.get(model_id) {
+            return Arc::clone(lock);
+        }
+        let mut locks = self.load_locks.write().await;
+        Arc::clone(
+            locks
+                .entry(model_id.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
     }
 
     /// Update the runtime configuration. Changes take effect on the next
@@ -123,11 +141,17 @@ impl EngineManager {
     }
 
     /// Load a model pool, evicting the LRU model if at capacity.
+    ///
+    /// Serializes concurrent loads of the *same* model via a per-model
+    /// async mutex — two requests racing on `model_id` will not both
+    /// build a pool. Different model_ids still load in parallel.
     async fn load_model(&self, model_id: &str) -> Result<(), AsrError> {
-        // Snapshot config for this load operation.
-        let config = self.config.read().await.clone();
+        // Serialize against concurrent loaders of this same model.
+        let load_lock = self.load_lock_for(model_id).await;
+        let _guard = load_lock.lock().await;
 
-        // Check if another task loaded it while we were waiting.
+        // Re-check under the per-model lock: another loader may have
+        // finished while we were waiting.
         {
             let pools = self.pools.read().await;
             if pools.contains_key(model_id) {
@@ -135,18 +159,32 @@ impl EngineManager {
             }
         }
 
-        // Build the pool while holding a read lock on factories.
-        let pool = {
+        // Snapshot config for this load operation.
+        let config = self.config.read().await.clone();
+
+        // Build the pool on a blocking thread. Factory invocations can
+        // take seconds (mmap, weight init), so doing it inline would
+        // block the tokio worker and defeat any request-level timeout
+        // wrapped around `acquire`.
+        let factory_ref = {
             let factories = self.factories.read().await;
             let factory = factories
                 .get(model_id)
                 .ok_or_else(|| AsrError::ModelNotFound {
                     model_id: model_id.to_string(),
                 })?;
-            let factory_ref = Arc::clone(factory);
-            drop(factories);
-            ModelPool::new(&factory_ref, config.pool_size)?
+            Arc::clone(factory)
         };
+        let pool_size = config.pool_size;
+        let model_id_for_pool: Arc<str> = Arc::from(model_id);
+        let model_id_for_pool_clone = Arc::clone(&model_id_for_pool);
+        let pool = tokio::task::spawn_blocking(move || {
+            ModelPool::new(&factory_ref, pool_size, model_id_for_pool_clone)
+        })
+        .await
+        .map_err(|_| AsrError::EnginePanic {
+            model_id: model_id_for_pool.to_string(),
+        })??;
 
         info!(model_id = %model_id, pool_size = config.pool_size, "model loaded");
 
@@ -174,11 +212,10 @@ impl EngineManager {
         }
 
         let mut pools = self.pools.write().await;
-        // Re-check: another concurrent load may have inserted this model.
-        if pools.contains_key(model_id) {
-            return Ok(());
-        }
-        // Evict LRU under write lock to handle concurrent loads.
+        // Evict LRU under write lock. The per-model load lock above
+        // already ensures we are the only loader for `model_id`, so no
+        // re-check needed here.
+        let mut evicted = Vec::new();
         while pools.len() >= config.max_loaded_models {
             let lru_id = pools
                 .iter()
@@ -189,8 +226,17 @@ impl EngineManager {
                 Some(id) => {
                     info!(model_id = %id, "evicting LRU model");
                     pools.remove(&id);
+                    evicted.push(id);
                 }
                 None => break,
+            }
+        }
+        // Free per-model load locks for evicted models so the map can't
+        // grow unbounded across many load/evict cycles.
+        if !evicted.is_empty() {
+            let mut locks = self.load_locks.write().await;
+            for id in &evicted {
+                locks.remove(id);
             }
         }
         pools.insert(
@@ -204,10 +250,11 @@ impl EngineManager {
         Ok(())
     }
 
-    /// Unload a specific model, freeing its pool resources.
+    /// Unload a specific model, freeing its pool resources and load lock.
     pub async fn unload(&self, model_id: &str) -> bool {
         let removed = self.pools.write().await.remove(model_id).is_some();
         if removed {
+            self.load_locks.write().await.remove(model_id);
             info!(model_id = %model_id, "model unloaded");
         }
         removed
@@ -267,9 +314,14 @@ impl EngineManager {
                         .collect::<Vec<_>>()
                 };
 
-                for id in to_unload {
-                    warn!(model_id = %id, "unloading idle model");
-                    mgr.pools.write().await.remove(&id);
+                if !to_unload.is_empty() {
+                    let mut pools = mgr.pools.write().await;
+                    let mut locks = mgr.load_locks.write().await;
+                    for id in &to_unload {
+                        warn!(model_id = %id, "unloading idle model");
+                        pools.remove(id);
+                        locks.remove(id);
+                    }
                 }
             }
         })
