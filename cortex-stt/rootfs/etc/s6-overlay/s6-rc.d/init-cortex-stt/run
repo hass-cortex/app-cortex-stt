@@ -23,8 +23,10 @@ else
     bashio::log.info "Using baked-in binary at /app/cortex-stt"
 fi
 
-# Data and model directories
-mkdir -p /share/cortex-stt/models /data/audio
+# Data and model directories — kept under /data so HA "Remove with data"
+# can sweep them up. /share is no longer used; old /share/cortex-stt/models
+# from <=0.1.4 stays behind on upgrade and must be removed manually.
+mkdir -p /data/models /data/audio
 
 # Ensure the Home Assistant discovery API key is set in the addon's options.
 # Admins can rotate it from the app's Configuration tab — clearing the field
@@ -37,4 +39,4 @@ if ! bashio::config.has_value 'discovery_api_key'; then
 fi
 
 # Permissions
-chown -R cortex-stt:cortex-stt /data /share/cortex-stt/models 2>/dev/null || true
+chown -R cortex-stt:cortex-stt /data 2>/dev/null || true

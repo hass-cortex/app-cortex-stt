@@ -17,7 +17,7 @@ case "${LOG_LEVEL}" in
 esac
 
 export DATA_DIR="/data"
-export MODEL_DIR="/share/cortex-stt/models"
+export MODEL_DIR="/data/models"
 export STATIC_DIR="/app/web/dist"
 
 # Register the bootstrap API key used for Home Assistant Supervisor discovery.
