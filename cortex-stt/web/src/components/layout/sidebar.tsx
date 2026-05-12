@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 import { NavLink } from "react-router";
 import { setApiKey } from "@/api/client";
 import { CortexLogo } from "@/components/ui/cortex-logo";
+import { useHealth } from "@/hooks/use-system";
 import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 
 // HA ingress delegates auth to Home Assistant — the local Sign out button
@@ -47,6 +48,7 @@ interface SidebarProps {
 
 export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 	const [collapsed, setCollapsed] = useState(getInitialCollapsed);
+	const { data: health } = useHealth();
 
 	const toggleCollapsed = useCallback(() => {
 		setCollapsed((prev) => {
@@ -131,7 +133,11 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 						{!isCollapsed && <span className="truncate">Sign out</span>}
 					</button>
 				)}
-				{!isCollapsed && <p className="text-[10px] text-text-muted px-0.5">Cortex STT v0.1.0</p>}
+				{!isCollapsed && (
+					<p className="text-[10px] text-text-muted px-0.5">
+						Cortex STT{health?.version ? ` ${health.version}` : ""}
+					</p>
+				)}
 			</div>
 		</aside>
 	);
