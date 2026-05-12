@@ -3,12 +3,16 @@ import { LoginPage } from "@/pages/login";
 
 const API_KEY_STORAGE_KEY = "cortex-stt-api-key";
 
-/** When accessed via HA ingress, auth is handled by HA — skip login. */
+/** When accessed via HA ingress, auth is handled by HA — skip the gate entirely. */
 const isIngress = !!(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__;
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
+	if (isIngress) return <>{children}</>;
+	return <ApiKeyGate>{children}</ApiKeyGate>;
+}
+
+function ApiKeyGate({ children }: { children: React.ReactNode }) {
 	const [hasKey, setHasKey] = useState(() => {
-		if (isIngress) return true;
 		try {
 			return !!localStorage.getItem(API_KEY_STORAGE_KEY);
 		} catch {
@@ -16,11 +20,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 		}
 	});
 
-	// Listen for storage changes (login/logout from other tabs)
 	useEffect(() => {
-		const handler = () => {
-			const key = localStorage.getItem(API_KEY_STORAGE_KEY);
-			setHasKey(!!key);
+		const handler = (e: StorageEvent) => {
+			if (e.key !== null && e.key !== API_KEY_STORAGE_KEY) return;
+			setHasKey(!!localStorage.getItem(API_KEY_STORAGE_KEY));
 		};
 		window.addEventListener("storage", handler);
 		return () => window.removeEventListener("storage", handler);
