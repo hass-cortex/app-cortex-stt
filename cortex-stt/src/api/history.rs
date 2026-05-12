@@ -23,6 +23,7 @@ pub struct HistoryQuery {
     pub text: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    pub has_error: Option<bool>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -42,6 +43,7 @@ async fn list_history(
         text: query.text,
         from: query.from,
         to: query.to,
+        has_error: query.has_error,
         limit: Some(query.limit.unwrap_or(50)),
         offset: query.offset,
     };

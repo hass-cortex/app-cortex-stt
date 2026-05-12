@@ -212,3 +212,69 @@ async fn test_list_history_with_source_filter() {
     assert_eq!(records.len(), 3);
     assert_eq!(records[0]["source"], "http_api");
 }
+
+#[tokio::test]
+async fn test_list_history_with_has_error_filter() {
+    let state = create_test_state().await;
+
+    // Two successful records.
+    insert_test_records(&state.db, 2).await;
+    // One errored record.
+    state
+        .db
+        .insert_record(&CreateRecord {
+            source: TranscriptionSource::HttpApi,
+            language: Some("en".into()),
+            model_id: "whisper-small".into(),
+            audio_duration_ms: 1000,
+            inference_ms: 50,
+            model_load_ms: 0,
+            text: String::new(),
+            segments_json: "[]".into(),
+            audio_path: None,
+            has_error: true,
+            error_message: Some("boom".into()),
+            api_key_id: None,
+            device: "cpu".to_string(),
+        })
+        .await
+        .unwrap();
+
+    // Errors only.
+    let resp = test_app(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?has_error=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let records = json.as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["has_error"], true);
+
+    // Successful only.
+    let resp = test_app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?has_error=false")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let records = json.as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|r| r["has_error"] == false));
+}

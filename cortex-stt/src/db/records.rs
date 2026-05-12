@@ -77,6 +77,7 @@ pub struct ListRecordsFilter {
     pub text: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    pub has_error: Option<bool>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -177,6 +178,7 @@ impl Database {
         let text = filter.text.clone();
         let from = filter.from.clone();
         let to = filter.to.clone();
+        let has_error = filter.has_error;
         let limit = filter.limit;
         let offset = filter.offset;
 
@@ -212,6 +214,11 @@ impl Database {
                 if let Some(to) = &to {
                     sql.push_str(&format!(" AND timestamp <= ?{idx}"));
                     param_values.push(Box::new(to.clone()));
+                    idx += 1;
+                }
+                if let Some(has_error) = has_error {
+                    sql.push_str(&format!(" AND has_error = ?{idx}"));
+                    param_values.push(Box::new(has_error as i32));
                     idx += 1;
                 }
 

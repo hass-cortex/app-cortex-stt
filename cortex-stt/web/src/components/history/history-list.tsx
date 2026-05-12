@@ -15,11 +15,6 @@ import { formatTimestamp } from "@/utils/time";
 import { AudioPlayer } from "./audio-player";
 import { SegmentTimeline } from "./segment-timeline";
 
-const sourceOptions = [
-	{ value: "", label: "All sources" },
-	{ value: "http_api", label: "HTTP API" },
-];
-
 const errorOptions = [
 	{ value: "", label: "All results" },
 	{ value: "true", label: "Errors only" },
@@ -79,12 +74,6 @@ export function HistoryList() {
 		<div className="space-y-4">
 			{/* Filters */}
 			<div className="flex flex-col sm:flex-row gap-3">
-				<Select
-					options={sourceOptions}
-					value={filters.source ?? ""}
-					onChange={(e) => updateFilter("source", e.target.value)}
-					className="sm:w-36"
-				/>
 				<Select
 					options={errorOptions}
 					value={filters.has_error !== undefined ? String(filters.has_error) : ""}

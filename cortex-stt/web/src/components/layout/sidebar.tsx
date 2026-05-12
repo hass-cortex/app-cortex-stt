@@ -14,6 +14,10 @@ import { setApiKey } from "@/api/client";
 import { CortexLogo } from "@/components/ui/cortex-logo";
 import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 
+// HA ingress delegates auth to Home Assistant — the local Sign out button
+// would only clear an unused API key and force a confusing reload.
+const isIngress = !!(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__;
+
 interface NavItem {
 	path: string;
 	label: string;
@@ -111,20 +115,22 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 
 			{/* Footer */}
 			<div className="px-2 py-2 border-t border-border space-y-1.5">
-				<button
-					type="button"
-					onClick={() => {
-						setApiKey(null);
-						window.location.reload();
-					}}
-					className={`flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-surface-3 hover:text-text-primary transition-colors cursor-pointer ${
-						isCollapsed ? "justify-center" : ""
-					}`}
-					title={isCollapsed ? "Sign out" : undefined}
-				>
-					<LogOut size={18} className="shrink-0" />
-					{!isCollapsed && <span className="truncate">Sign out</span>}
-				</button>
+				{!isIngress && (
+					<button
+						type="button"
+						onClick={() => {
+							setApiKey(null);
+							window.location.reload();
+						}}
+						className={`flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-surface-3 hover:text-text-primary transition-colors cursor-pointer ${
+							isCollapsed ? "justify-center" : ""
+						}`}
+						title={isCollapsed ? "Sign out" : undefined}
+					>
+						<LogOut size={18} className="shrink-0" />
+						{!isCollapsed && <span className="truncate">Sign out</span>}
+					</button>
+				)}
 				{!isCollapsed && <p className="text-[10px] text-text-muted px-0.5">Cortex STT v0.1.0</p>}
 			</div>
 		</aside>
