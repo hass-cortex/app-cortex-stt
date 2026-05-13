@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { useGenerateKey } from "@/hooks/use-keys";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface GenerateKeyModalProps {
 	open: boolean;
@@ -32,7 +33,7 @@ export function GenerateKeyModal({ open, onClose }: GenerateKeyModalProps) {
 	const handleCopy = async () => {
 		if (!generatedKey) return;
 		try {
-			await navigator.clipboard.writeText(generatedKey.key);
+			await copyToClipboard(generatedKey.key);
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		} catch {

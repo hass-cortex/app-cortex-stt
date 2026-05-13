@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useKeys, useRevokeKey } from "@/hooks/use-keys";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
+import { copyToClipboard } from "@/lib/clipboard";
 import { formatRelativeTime } from "@/lib/format";
 import { formatTimestamp } from "@/utils/time";
 
@@ -38,7 +39,7 @@ export function KeyList({ onGenerate }: KeyListProps) {
 
 	const handleCopy = async (id: string, key: string) => {
 		try {
-			await navigator.clipboard.writeText(key);
+			await copyToClipboard(key);
 			setCopiedKey(id);
 			setTimeout(() => setCopiedKey(null), 2000);
 		} catch {
