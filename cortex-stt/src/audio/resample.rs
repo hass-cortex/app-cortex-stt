@@ -1,8 +1,8 @@
+use crate::audio::canonical::SAMPLE_RATE as TARGET_SAMPLE_RATE;
 use crate::error::AsrError;
 use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
 use rubato::{Async, FixedAsync, PolynomialDegree, Resampler};
 
-const TARGET_SAMPLE_RATE: u32 = 16_000;
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
 
 /// Sample encoding declared in a WAV `fmt ` chunk.

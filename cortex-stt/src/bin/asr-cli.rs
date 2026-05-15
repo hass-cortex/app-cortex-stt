@@ -275,7 +275,7 @@ async fn cmd_transcribe(
     // Read and parse WAV
     let wav_data = std::fs::read(wav_file)?;
     let samples = cortex_stt::audio::resample::resample_to_16khz_mono(&wav_data)?;
-    let duration_secs = samples.len() as f32 / 16000.0;
+    let duration_secs = samples.len() as f32 / cortex_stt::audio::canonical::SAMPLE_RATE_F32;
     println!(
         "Audio: {:.2}s, {} samples (16kHz mono)",
         duration_secs,
@@ -644,7 +644,7 @@ async fn cmd_verify(
         drop(guard);
 
         // Stage 4: Transcribe silence
-        let silence = vec![0.0f32; 16000];
+        let silence = vec![0.0f32; cortex_stt::audio::canonical::SAMPLE_RATE as usize];
         let opts = cortex_stt::engine::traits::TranscribeOptions::default();
         match engine_manager.acquire(&def.id).await {
             Ok(mut g) => match g.transcribe(&silence, &opts) {

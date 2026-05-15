@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::audio::canonical::SAMPLE_RATE;
 use crate::engine::pool::{ModelPool, PoolGuard};
 use crate::error::AsrError;
 
@@ -194,7 +195,7 @@ impl EngineManager {
             let warmup_timeout = config.acquire_timeout;
             match warmup_pool.acquire(warmup_timeout).await {
                 Ok(mut guard) => {
-                    let warmup_samples = vec![0.0f32; 16000]; // 1 second of silence
+                    let warmup_samples = vec![0.0f32; SAMPLE_RATE as usize]; // 1 second of silence
                     let warmup_options = crate::engine::traits::TranscribeOptions {
                         language: None,
                         translate: false,

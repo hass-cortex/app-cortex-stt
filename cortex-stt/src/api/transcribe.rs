@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::{Stream, StreamExt};
 
 use crate::api::auth::AuthKeyId;
+use crate::audio::canonical::{SAMPLE_RATE, SAMPLE_RATE_F64};
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
@@ -63,7 +64,7 @@ fn prepare(
         .unwrap_or("audio/wav");
 
     let samples = decode_audio(content_type, body, query.sample_rate, query.channels)?;
-    let duration_ms = (samples.len() as f64 / 16_000.0 * 1000.0) as u64;
+    let duration_ms = (samples.len() as f64 / SAMPLE_RATE_F64 * 1000.0) as u64;
 
     let language = query.language;
     let options = TranscribeOptions {
@@ -90,7 +91,7 @@ fn decode_audio(
     channels: Option<u16>,
 ) -> Result<Vec<f32>, AsrError> {
     if content_type.starts_with("application/octet-stream") {
-        let sr = sample_rate.unwrap_or(16_000);
+        let sr = sample_rate.unwrap_or(SAMPLE_RATE);
         let ch = channels.unwrap_or(1);
         raw_pcm_to_f32(body, sr, ch)
     } else {

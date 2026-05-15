@@ -2,13 +2,15 @@ use std::path::Path;
 
 use tokio::fs;
 
+use crate::audio::canonical::{BITS_PER_SAMPLE, CHANNELS, SAMPLE_RATE};
 use crate::error::AsrError;
 
-/// Write f32 samples (16 kHz mono) as a 16-bit PCM WAV file.
+/// Write f32 samples (canonical form — see [`crate::audio::canonical`])
+/// as a 16-bit PCM WAV file.
 pub async fn write_wav(path: &Path, samples: &[f32]) -> Result<(), AsrError> {
-    let sample_rate: u32 = 16_000;
-    let bits_per_sample: u16 = 16;
-    let channels: u16 = 1;
+    let sample_rate = SAMPLE_RATE;
+    let bits_per_sample = BITS_PER_SAMPLE;
+    let channels = CHANNELS;
     let byte_rate = sample_rate * u32::from(channels) * u32::from(bits_per_sample) / 8;
     let block_align = channels * bits_per_sample / 8;
     let data_size = (samples.len() * 2) as u32;
