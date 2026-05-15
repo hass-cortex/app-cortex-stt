@@ -11,6 +11,7 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::{CreateRecord, History, TranscriptionSource};
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore};
+use cortex_stt::transcriber::Transcriber;
 
 async fn create_test_state() -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
@@ -20,6 +21,7 @@ async fn create_test_state() -> Arc<AppState> {
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
         .unwrap();
+    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
 
     Arc::new(AppState {
         engine_manager,
@@ -32,6 +34,7 @@ async fn create_test_state() -> Arc<AppState> {
         http_port: 0,
         started_at: std::time::Instant::now(),
         history,
+        transcriber,
     })
 }
 

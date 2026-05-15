@@ -14,6 +14,7 @@ use cortex_stt::error::AsrError;
 use cortex_stt::history::History;
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore};
+use cortex_stt::transcriber::Transcriber;
 
 // ---------------------------------------------------------------------------
 // Mock engine
@@ -74,6 +75,7 @@ async fn create_test_state() -> Arc<AppState> {
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
         .unwrap();
+    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
 
     Arc::new(AppState {
         engine_manager,
@@ -86,6 +88,7 @@ async fn create_test_state() -> Arc<AppState> {
         http_port: 0,
         started_at: std::time::Instant::now(),
         history,
+        transcriber,
     })
 }
 
@@ -255,9 +258,10 @@ async fn test_sync_transcribe_raw_pcm() {
     assert_eq!(duration, 1000, "16000 samples at 16kHz = 1000ms");
 }
 
-/// Regression: SSE stream must emit real stage events in order
-/// (decoded -> engine_acquired -> inference_started -> result).
-/// Replaces the prior fake chunk progress loop.
+/// Regression: SSE stream must emit real async-stage events in order
+/// (engine_acquired -> inference_started -> result). Audio decoding
+/// is synchronous and happens before the stream opens, so it no
+/// longer surfaces as a stage event.
 #[tokio::test]
 async fn test_sse_emits_stage_events_in_order() {
     let state = create_test_state().await;
@@ -298,15 +302,14 @@ async fn test_sse_emits_stage_events_in_order() {
 
     assert_eq!(
         events,
-        vec!["decoded", "engine_acquired", "inference_started", "result"],
+        vec!["engine_acquired", "inference_started", "result"],
         "stage events must arrive in pipeline order"
     );
 
-    // The `decoded` event must include duration_ms and sample_count.
-    assert!(text.contains("\"duration_ms\":1000"));
-    assert!(text.contains("\"sample_count\":16000"));
-    // The result must carry through the transcription text.
+    // The result must carry through the transcription text + the audio
+    // duration the pipeline derived from the decoded samples.
     assert!(text.contains("\"text\":\"hello world\""));
+    assert!(text.contains("\"duration_ms\":1000"));
 }
 
 /// Regression: SSE deadline must cover model acquisition, not just
@@ -350,6 +353,7 @@ async fn test_sse_timeout_covers_acquire_phase() {
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
         .unwrap();
+    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
 
     let state = Arc::new(AppState {
         engine_manager,
@@ -362,6 +366,7 @@ async fn test_sse_timeout_covers_acquire_phase() {
         http_port: 0,
         started_at: std::time::Instant::now(),
         history,
+        transcriber,
     });
     let app = test_app(state);
 
@@ -398,9 +403,11 @@ async fn test_sse_timeout_covers_acquire_phase() {
         .lines()
         .filter_map(|l| l.strip_prefix("event: "))
         .collect();
-    // Sequence must be: decoded (audio decoded ok) -> error (acquire timeout).
-    // It must NOT include engine_acquired or result.
-    assert_eq!(event_names, vec!["decoded", "error"]);
+    // The audio decoded ok (sync, before the stream opens), then the
+    // pipeline tried to acquire the engine and hit the deadline. The
+    // stream must NOT include engine_acquired, inference_started, or
+    // result — only the error event.
+    assert_eq!(event_names, vec!["error"]);
     assert!(
         text.contains("INFERENCE_TIMEOUT"),
         "error event must carry InferenceTimeout code, body: {text}"

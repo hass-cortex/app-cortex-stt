@@ -9,3 +9,4 @@ pub mod history;
 pub mod model;
 pub mod retention;
 pub mod state;
+pub mod transcriber;

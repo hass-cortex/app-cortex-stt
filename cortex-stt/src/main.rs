@@ -24,6 +24,7 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::History;
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
+use cortex_stt::transcriber::Transcriber;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -163,6 +164,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::with_defaults());
 
+    // Build the transcription pipeline (engine + history + settings).
+    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
+
     // Build shared application state.
     let state = Arc::new(AppState {
         engine_manager: engine_manager.clone(),
@@ -175,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         http_port: config.http_port,
         started_at: std::time::Instant::now(),
         history: history.clone(),
+        transcriber,
     });
 
     // Spawn background retention cleanup (hourly).

@@ -10,6 +10,7 @@ use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::history::History;
 use crate::model::manager::ModelManager;
+use crate::transcriber::Transcriber;
 
 /// Default maximum number of jobs (any status) retained in memory.
 pub const JOB_STORE_DEFAULT_MAX: usize = 100;
@@ -24,7 +25,7 @@ pub enum AsyncJobStatus {
     Processing,
     /// Job completed successfully.
     Completed {
-        result: crate::api::transcribe::TranscribeResponse,
+        result: crate::transcriber::TranscribeResponse,
     },
     /// Job failed with an error.
     Failed { error: String },
@@ -233,4 +234,6 @@ pub struct AppState {
     pub started_at: Instant,
     /// Transcription history store (DB rows + WAV files + live updates).
     pub history: Arc<History>,
+    /// Transcription pipeline (engine acquire → inference → save).
+    pub transcriber: Arc<Transcriber>,
 }

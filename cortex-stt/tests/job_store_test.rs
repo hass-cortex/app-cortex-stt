@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use cortex_stt::api::transcribe::TranscribeResponse;
 use cortex_stt::state::{AsyncJob, AsyncJobStatus, JobStore};
+use cortex_stt::transcriber::TranscribeResponse;
 
 fn make_processing(id: &str) -> AsyncJob {
     AsyncJob {
