@@ -17,7 +17,7 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::registry::builtin_models;
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
-use cortex_stt::model::downloads::Downloads;
+use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::model::types::ModelStatus;
 
 #[derive(Parser)]
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.model_dir)?;
 
-    let downloads = Downloads::new(cli.model_dir.clone());
+    let downloads = DownloadManager::new(cli.model_dir.clone());
     let catalog = ModelCatalog::new(cli.model_dir.clone(), downloads.clone());
 
     match cli.command {
@@ -164,7 +164,7 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
 async fn cmd_download(
     model_id: &str,
     catalog: &ModelCatalog,
-    downloads: &Arc<Downloads>,
+    downloads: &Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let models = catalog.list_models().await;
     let model_info = models
@@ -247,7 +247,7 @@ async fn cmd_download(
 async fn cmd_download_if_needed(
     model_id: &str,
     catalog: &ModelCatalog,
-    downloads: &Arc<Downloads>,
+    downloads: &Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let models = catalog.list_models().await;
     let model = models.iter().find(|m| m.id == model_id);
@@ -293,7 +293,7 @@ async fn cmd_transcribe(
     let engine_manager = EngineManager::new(engine_config);
 
     // Determine engine type and model path — check both registry and scanned models
-    let downloads = Downloads::new(model_dir.to_path_buf());
+    let downloads = DownloadManager::new(model_dir.to_path_buf());
     let catalog = ModelCatalog::new(model_dir.to_path_buf(), downloads);
     let all_models = catalog.list_models().await;
     let model_info = all_models.iter().find(|m| m.id == model_id);
@@ -537,7 +537,7 @@ async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn cmd_download_all(
     catalog: &ModelCatalog,
-    downloads: &Arc<Downloads>,
+    downloads: &Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let models = builtin_models();
     let mut ok = 0u32;

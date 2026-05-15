@@ -103,7 +103,7 @@ Top-level modules:
 - `src/transcriber.rs` — transcription pipeline (acquire → infer → save)
 - `src/history/` — transcription history records (DB row + paired WAV)
 - `src/retention.rs` — pure retention policy (`Days` / `Count` / `DiskLimitMb`)
-- `src/model/` — model catalog (`catalog.rs`) + download coordinator (`downloads.rs`)
+- `src/model/` — model catalog (`catalog.rs`) + download coordinator (`download_manager.rs`)
 - `src/api/` — Axum routes; handlers are thin shells over the modules above
 - `src/db/` — SQLite storage for settings + API keys
 - `web/` — React Admin UI

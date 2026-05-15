@@ -88,7 +88,7 @@ src/
 │   └── onnx_bridge.rs    ONNX Runtime binding (Parakeet/SenseVoice)
 ├── model/            model installation
 │   ├── catalog.rs    ModelCatalog: list / get / delete / scan custom
-│   ├── downloads.rs  Downloads: queue + progress + active handles + cancel
+│   ├── download_manager.rs DownloadManager: queue + progress + active handles + cancel
 │   ├── download.rs   async download pipeline (HTTP + SHA-256 + archive extract)
 │   ├── storage.rs    on-disk layout (`{data_dir}/models/{id}/`)
 │   └── types.rs      model type definitions (ModelInfo, DownloadPhase, …)
@@ -108,7 +108,7 @@ src/
 - **`history::History` owns the row + WAV pair.** Delete operations remove the WAV before the DB row so a partial failure can never orphan a file. `audio_retention` triggers **Drop audio** (NULL the `audio_path`, remove WAV; row survives), not Delete record.
 - **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. The hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint share this code path.
 - **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The three HTTP handlers (sync / SSE / async) are thin shells over its two methods.
-- **`model::ModelCatalog` reads the registry + scans disk**; `Downloads` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `Downloads`.
+- **`model::ModelCatalog` reads the registry + scans disk**; `DownloadManager` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `DownloadManager`.
 
 See [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) for the domain
 vocabulary (Transcription history record, Delete record vs Drop audio,

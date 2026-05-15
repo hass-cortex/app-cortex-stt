@@ -11,14 +11,14 @@ use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::History;
 use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::downloads::Downloads;
+use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::state::{AppState, JobStore};
 use cortex_stt::transcriber::Transcriber;
 
 async fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let downloads = Downloads::new(model_dir.to_path_buf());
+    let downloads = DownloadManager::new(model_dir.to_path_buf());
     let catalog = ModelCatalog::new(model_dir.to_path_buf(), downloads.clone());
     let history = History::new(db.clone(), model_dir.join("audio"))
         .await

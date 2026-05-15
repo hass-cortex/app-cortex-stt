@@ -14,7 +14,7 @@ use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::builtin_models;
 use crate::error::AsrError;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
-use crate::model::downloads::QueuedDownloadRequest;
+use crate::model::download_manager::QueuedDownloadRequest;
 use crate::model::types::DownloadPhase;
 use crate::state::AppState;
 
@@ -83,7 +83,7 @@ async fn start_download(
     // Try to claim a download slot; if full, request is queued automatically.
     if let Some(request) = state.downloads.try_claim_slot(request).await {
         // Keep a copy of dest_path so we can register the running task
-        // with Downloads (cancel-time `.part` cleanup needs it).
+        // with DownloadManager (cancel-time `.part` cleanup needs it).
         let dest_path_owned = request.dest_path.clone();
         let handle = match download_model(
             &request.url,

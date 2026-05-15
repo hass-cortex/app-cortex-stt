@@ -1,6 +1,6 @@
 //! Model catalog: the unified view of all installed and installable
 //! models. Combines the built-in registry, on-disk scanning for
-//! custom models, and live download status from [`Downloads`].
+//! custom models, and live download status from [`DownloadManager`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,20 +9,20 @@ use tracing::info;
 
 use crate::engine::registry::{EngineType, builtin_models};
 use crate::error::AsrError;
-use crate::model::downloads::Downloads;
+use crate::model::download_manager::DownloadManager;
 use crate::model::storage::dir_size;
 use crate::model::types::{DownloadPhase, ModelInfo, ModelStatus};
 
 /// Read-only view of installed and installable models. The catalog
 /// does NOT own download lifecycle — it only queries
-/// [`Downloads`] for in-flight status when reporting `list_models`.
+/// [`DownloadManager`] for in-flight status when reporting `list_models`.
 pub struct ModelCatalog {
     model_dir: PathBuf,
-    downloads: Arc<Downloads>,
+    downloads: Arc<DownloadManager>,
 }
 
 impl ModelCatalog {
-    pub fn new(model_dir: PathBuf, downloads: Arc<Downloads>) -> Arc<Self> {
+    pub fn new(model_dir: PathBuf, downloads: Arc<DownloadManager>) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
             downloads,
@@ -190,7 +190,7 @@ mod tests {
     use super::*;
 
     fn make_catalog(model_dir: PathBuf) -> Arc<ModelCatalog> {
-        let downloads = Downloads::new(model_dir.clone());
+        let downloads = DownloadManager::new(model_dir.clone());
         ModelCatalog::new(model_dir, downloads)
     }
 

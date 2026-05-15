@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::error::AsrError;
-use crate::model::downloads::{Downloads, QueuedDownloadRequest};
+use crate::model::download_manager::{DownloadManager, QueuedDownloadRequest};
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
 /// Hosts allowed for model downloads.
@@ -92,7 +92,7 @@ pub async fn download_model(
     dest_path: PathBuf,
     expected_sha256: &str,
     model_id: &str,
-    downloads: Arc<Downloads>,
+    downloads: Arc<DownloadManager>,
     config: DownloadConfig,
 ) -> Result<DownloadHandle, AsrError> {
     if !validate_download_url(url) {
@@ -185,7 +185,7 @@ pub async fn download_model(
 /// start_queued_download → download_model).
 pub fn start_queued_download(
     request: QueuedDownloadRequest,
-    downloads: Arc<Downloads>,
+    downloads: Arc<DownloadManager>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
         let model_id = request.model_id.clone();
@@ -222,7 +222,7 @@ async fn download_task(
     dest_path: &Path,
     expected_sha256: &str,
     model_id: &str,
-    downloads: &Arc<Downloads>,
+    downloads: &Arc<DownloadManager>,
     config: &DownloadConfig,
     tx: &watch::Sender<DownloadProgress>,
 ) -> Result<(), AsrError> {

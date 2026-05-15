@@ -13,7 +13,7 @@ use cortex_stt::engine::traits::*;
 use cortex_stt::error::AsrError;
 use cortex_stt::history::History;
 use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::downloads::Downloads;
+use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::state::{AppState, JobStore};
 use cortex_stt::transcriber::Transcriber;
 
@@ -71,7 +71,7 @@ async fn create_test_state() -> Arc<AppState> {
         .await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let downloads = Downloads::new(tmp.path().to_path_buf());
+    let downloads = DownloadManager::new(tmp.path().to_path_buf());
     let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let history = History::new(db.clone(), tmp.path().join("audio"))
@@ -343,7 +343,7 @@ async fn test_sse_timeout_covers_acquire_phase() {
     engine_manager.register("slow-model", slow_factory).await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let downloads = Downloads::new(tmp.path().to_path_buf());
+    let downloads = DownloadManager::new(tmp.path().to_path_buf());
     let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
 

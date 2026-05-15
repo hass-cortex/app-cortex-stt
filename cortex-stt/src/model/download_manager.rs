@@ -7,18 +7,18 @@
 //!
 //! Lifecycle:
 //!   1. Caller submits a [`QueuedDownloadRequest`] to
-//!      [`Downloads::try_claim_slot`]. If concurrency is below the
+//!      [`DownloadManager::try_claim_slot`]. If concurrency is below the
 //!      cap, the request is returned for the caller to launch and the
 //!      active count is bumped. Otherwise the request is parked in
 //!      the queue and `None` is returned.
 //!   2. Once the task is spawned, the caller registers it with
-//!      [`Downloads::register_active`] so cancellation can find both
+//!      [`DownloadManager::register_active`] so cancellation can find both
 //!      the handle and the destination path (for `.part` cleanup).
 //!   3. While downloading, the task reports progress via
-//!      [`set_progress`](Downloads::set_progress) — read back by SSE
-//!      via [`get_progress`](Downloads::get_progress).
+//!      [`set_progress`](DownloadManager::set_progress) — read back by SSE
+//!      via [`get_progress`](DownloadManager::get_progress).
 //!   4. On completion or failure, the task calls
-//!      [`on_finished`](Downloads::on_finished); the returned next
+//!      [`on_finished`](DownloadManager::on_finished); the returned next
 //!      request (if any) is launched by the caller.
 
 use std::collections::{HashMap, VecDeque};
@@ -56,14 +56,14 @@ struct ActiveDownload {
 }
 
 /// Coordinates concurrent model downloads.
-pub struct Downloads {
+pub struct DownloadManager {
     model_dir: PathBuf,
     queue: Mutex<DownloadQueue>,
     progress: RwLock<HashMap<String, DownloadProgress>>,
     active: RwLock<HashMap<String, ActiveDownload>>,
 }
 
-impl Downloads {
+impl DownloadManager {
     pub fn new(model_dir: PathBuf) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
@@ -261,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn progress_tracking_lifecycle() {
         let tmp = tempfile::tempdir().unwrap();
-        let downloads = Downloads::new(tmp.path().to_path_buf());
+        let downloads = DownloadManager::new(tmp.path().to_path_buf());
 
         assert!(!downloads.is_downloading("test-model").await);
 
@@ -288,7 +288,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_queued_request_removes_it_from_pending() {
         let tmp = tempfile::tempdir().unwrap();
-        let downloads = Downloads::new(tmp.path().to_path_buf());
+        let downloads = DownloadManager::new(tmp.path().to_path_buf());
 
         // Fill the active slots so the next request is queued.
         for i in 0..MAX_CONCURRENT_DOWNLOADS {
