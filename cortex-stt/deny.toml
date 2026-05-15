@@ -22,6 +22,9 @@ allow = [
     "MPL-2.0",
     "Unlicense",
     "CDLA-Permissive-2.0",
+    # bzip2 0.6+ defaults to the pure-Rust libbz2-rs-sys backend, which inherits
+    # this license from the original C bzip2 library.
+    "bzip2-1.0.6",
 ]
 confidence-threshold = 0.8
 

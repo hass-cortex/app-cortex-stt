@@ -67,7 +67,7 @@ fn hash_key(raw: &str) -> String {
 impl Database {
     /// Create a new API key. Returns the record and the raw key (shown once).
     pub async fn create_api_key(&self, name: &str) -> Result<(ApiKeyRecord, String), AsrError> {
-        use rand::Rng;
+        use rand::RngExt;
 
         let mut bytes = [0u8; 32];
         rand::rng().fill(&mut bytes);

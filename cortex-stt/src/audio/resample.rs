@@ -1,5 +1,6 @@
 use crate::error::AsrError;
-use rubato::{FastFixedIn, PolynomialDegree, Resampler};
+use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
+use rubato::{Async, FixedAsync, PolynomialDegree, Resampler};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
@@ -197,43 +198,32 @@ fn resample(mono: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<f32>, AsrE
 
     let ratio = dst_rate as f64 / src_rate as f64;
 
-    let mut resampler = FastFixedIn::<f32>::new(
+    let mut resampler = Async::<f32>::new_poly(
         ratio,
         1.1, // max relative ratio (fixed-ratio, small margin)
         PolynomialDegree::Septic,
         RESAMPLE_CHUNK_SIZE,
         1, // mono
+        FixedAsync::Input,
     )
     .map_err(|e| audio_err(&format!("failed to create resampler: {e}")))?;
 
-    let chunk_size = resampler.input_frames_next();
-    let mut output = Vec::with_capacity((mono.len() as f64 * ratio * 1.1) as usize);
+    let input_data = vec![mono.to_vec()];
+    let input = SequentialSliceOfVecs::new(&input_data, 1, mono.len())
+        .map_err(|e| audio_err(&format!("input adapter error: {e}")))?;
 
-    let mut pos = 0;
-    while pos + chunk_size <= mono.len() {
-        let chunk = &mono[pos..pos + chunk_size];
-        let result = resampler
-            .process(&[chunk], None)
-            .map_err(|e| audio_err(&format!("resample error: {e}")))?;
-        output.extend_from_slice(&result[0]);
-        pos += chunk_size;
-    }
+    let output_len = resampler.process_all_needed_output_len(mono.len());
+    let mut output_data = vec![vec![0.0f32; output_len]; 1];
+    let mut output = SequentialSliceOfVecs::new_mut(&mut output_data, 1, output_len)
+        .map_err(|e| audio_err(&format!("output adapter error: {e}")))?;
 
-    // Process remaining samples by padding with zeros
-    let remaining = mono.len() - pos;
-    if remaining > 0 {
-        let mut padded = vec![0.0f32; chunk_size];
-        padded[..remaining].copy_from_slice(&mono[pos..]);
-        let result = resampler
-            .process(&[&padded], None)
-            .map_err(|e| audio_err(&format!("resample error (tail): {e}")))?;
-        // Only keep the proportional amount of output for the remaining input
-        let expected_out = (remaining as f64 * ratio).ceil() as usize;
-        let take = expected_out.min(result[0].len());
-        output.extend_from_slice(&result[0][..take]);
-    }
+    let (_nbr_in, nbr_out) = resampler
+        .process_all_into_buffer(&input, &mut output, mono.len(), None)
+        .map_err(|e| audio_err(&format!("resample error: {e}")))?;
 
-    Ok(output)
+    let mut result = output_data.into_iter().next().expect("one channel");
+    result.truncate(nbr_out);
+    Ok(result)
 }
 
 fn audio_err(detail: &str) -> AsrError {
