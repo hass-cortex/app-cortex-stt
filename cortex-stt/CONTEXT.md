@@ -14,7 +14,7 @@ _Avoid_: "request handler", "transcription service"
 
 **Speech engine**:
 A loaded model behind the `SpeechEngine` trait — Whisper (ggml), Parakeet (ONNX), SenseVoice (ONNX). Each instance is single-threaded; concurrency comes from the pool.
-_Avoid_: "model" (a *model* is a file on disk; a *speech engine* is the loaded runtime)
+_Avoid_: "model" (a _model_ is a file on disk; a _speech engine_ is the loaded runtime)
 
 **Engine pool**:
 A fixed-size set of `SpeechEngine` instances for one loaded model, fronted by a semaphore. One instance per slot.
@@ -27,7 +27,7 @@ _Avoid_: "async request", "deferred task"
 ### Models
 
 **Built-in model**:
-An entry in the static registry (`engine/registry.rs`) — id, download URL, archive layout. The set of *downloadable* models.
+An entry in the static registry (`engine/registry.rs`) — id, download URL, archive layout. The set of _downloadable_ models.
 _Avoid_: "supported model"
 
 **Loaded model**:
@@ -39,7 +39,7 @@ The model used when a transcription request omits `model=`. Configured via `/api
 ### History + retention
 
 **Transcription history record**:
-A persisted artifact of one transcription: a DB row, plus an *optional* WAV file on disk. The two parts are paired and obey lifecycle invariants.
+A persisted artifact of one transcription: a DB row, plus an _optional_ WAV file on disk. The two parts are paired and obey lifecycle invariants.
 _Avoid_: "history entry", "log entry", "record" (alone)
 
 **Delete record**:
@@ -61,7 +61,7 @@ Two independent retention policies applied separately. `record_retention` drives
 ## Relationships
 
 - A **Transcription history record** is produced by the **Transcription pipeline** and consumed by the History API + retention sweep.
-- **Record retention** triggers **Delete record**; **Audio retention** triggers **Drop audio**. These two operations are *distinct* — conflating them produces dangling `audio_path` references.
+- **Record retention** triggers **Delete record**; **Audio retention** triggers **Drop audio**. These two operations are _distinct_ — conflating them produces dangling `audio_path` references.
 - A **Retention policy** is a pure value; applying it yields a set of ids. The policy never touches storage.
 - A **Speech engine** is a loaded **Built-in model**; the **Engine pool** owns one or more instances per loaded model.
 
@@ -77,4 +77,4 @@ Two independent retention policies applied separately. `record_retention` drives
 
 - "record" alone is ambiguous — `db::records` is a storage backend module; `Record` types are wire shapes. After the history refactor, the public concept is **Transcription history record** and `db::records` collapses into `history::*`.
 - "history" as an HTTP path (`/api/history`) refers to **Transcription history records**, not application logs.
-- "cleanup" in code means *retention sweep*, not garbage collection in the language sense.
+- "cleanup" in code means _retention sweep_, not garbage collection in the language sense.

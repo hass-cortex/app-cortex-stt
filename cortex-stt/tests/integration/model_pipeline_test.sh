@@ -56,6 +56,7 @@ EXPECTED_TEXT[zh]="打开"       # zh.wav says "打開大燈" (simplified: 打�
 EXPECTED_TEXT[en]="light"      # en.wav says "turn on the living room light"
 
 # Map: model -> primary test language (first supported language with a wav file)
+# shellcheck disable=SC2317  # shellcheck mis-flags the post-loop fallback as unreachable
 model_test_lang() {
   local model_id="$1"
   # Query the CLI for the model's supported languages

@@ -10,7 +10,7 @@ the Rust backend + React frontend + Dockerfile + rootfs.
 ## Quick Links
 
 - **Supported models**: [`MODELS.md`](MODELS.md) — curated list of built-in models by engine, with sizes and languages.
-- **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a *Transcription history record*? *Drop audio* vs *Delete record*? *Retention candidate*?
+- **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a _Transcription history record_? _Drop audio_ vs _Delete record_? _Retention candidate_?
 - **Contributor guide**: [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — fork → branch → PR flow.
 - **Release runbook**: workspace-level [`docs/release/`](../docs/release/README.md) — pipeline diagram, beta/stable cuts, troubleshooting.
 - **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). Standalone Docker / LXC / systemd packaging was removed before 0.1.0; the HA app is the only supported distribution form.

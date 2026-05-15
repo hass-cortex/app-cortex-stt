@@ -12,8 +12,51 @@ repos:
         args: ["--maxkb=500"]
       - id: check-merge-conflict
 
+  # ─── Mirrors of hassio-addons/workflows app-ci.yaml lint jobs ───
+  # The release deploy chain calls app-ci as a reusable workflow; any of
+  # these failing blocks deploy. Catch them locally so a tag push doesn't
+  # discover Dockerfile / YAML / shell mistakes the hard way.
+
+  # `.yamllint` config in repo root sets the rules.
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        files: ^cortex-stt/Dockerfile(\..+)?$
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-s", "bash"] # matches SHELLCHECK_OPTS in app-ci.yaml
+        # s6-overlay run/finish scripts have no .sh extension and use a
+        # non-standard `#!/command/with-contenv bashio` shebang, so the
+        # default identify heuristics miss them — list them explicitly.
+        files: |
+          (?x)^(
+            .*\.sh|
+            cortex-stt/rootfs/etc/s6-overlay/s6-rc\.d/[^/]+/(run|finish)
+          )$
+
   - repo: local
     hooks:
+      # Mirror the Prettier step in hassio-addons/workflows/.github/workflows/
+      # app-ci.yaml@v2.0.6 — it pins prettier@3.8.3 and runs --check on the
+      # whole repo (minus .prettierignore). Catch the same issues locally so
+      # the release deploy doesn't get blocked on whitespace.
+      - id: prettier-md
+        name: prettier (markdown)
+        entry: prettier
+        language: node
+        additional_dependencies: ["prettier@3.8.3"]
+        files: \.md$
+        args: ["--write"]
+
       - id: cargo-fmt
         name: cargo fmt
         entry: bash -c 'cd cortex-stt && cargo fmt --check'
