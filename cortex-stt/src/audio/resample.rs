@@ -5,9 +5,19 @@ use rubato::{Async, FixedAsync, PolynomialDegree, Resampler};
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const RESAMPLE_CHUNK_SIZE: usize = 1024;
 
+/// Sample encoding declared in a WAV `fmt ` chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleFormat {
+    /// `WAVE_FORMAT_PCM` (1): signed integer samples.
+    PcmInt,
+    /// `WAVE_FORMAT_IEEE_FLOAT` (3): IEEE 754 floating-point samples.
+    Float,
+}
+
 /// Parsed WAV file header information.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WavHeader {
+    pub format: SampleFormat,
     pub sample_rate: u32,
     pub channels: u16,
     pub bits_per_sample: u16,
@@ -17,7 +27,8 @@ pub struct WavHeader {
 
 /// Parse a RIFF/WAVE header, scanning for `fmt ` and `data` chunks.
 ///
-/// Returns an error for non-PCM formats (audio format != 1) or malformed headers.
+/// Accepts `WAVE_FORMAT_PCM` (1) and `WAVE_FORMAT_IEEE_FLOAT` (3). Any
+/// other format code or a malformed header returns an error.
 pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AsrError> {
     if data.len() < 12 {
         return Err(audio_err("WAV data too short for RIFF header"));
@@ -29,6 +40,7 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AsrError> {
 
     let mut pos = 12;
     let mut fmt_found = false;
+    let mut format = SampleFormat::PcmInt;
     let mut sample_rate = 0u32;
     let mut channels = 0u16;
     let mut bits_per_sample = 0u16;
@@ -48,11 +60,15 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AsrError> {
             }
             let fmt_data = &data[pos + 8..];
             let audio_format = u16::from_le_bytes([fmt_data[0], fmt_data[1]]);
-            if audio_format != 1 {
-                return Err(audio_err(&format!(
-                    "unsupported audio format {audio_format}, only PCM (1) is supported"
-                )));
-            }
+            format = match audio_format {
+                1 => SampleFormat::PcmInt,
+                3 => SampleFormat::Float,
+                other => {
+                    return Err(audio_err(&format!(
+                        "unsupported audio format {other}; only PCM (1) and IEEE float (3) are supported"
+                    )));
+                }
+            };
             channels = u16::from_le_bytes([fmt_data[2], fmt_data[3]]);
             sample_rate = u32::from_le_bytes([fmt_data[4], fmt_data[5], fmt_data[6], fmt_data[7]]);
             bits_per_sample = u16::from_le_bytes([fmt_data[14], fmt_data[15]]);
@@ -84,6 +100,7 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AsrError> {
     }
 
     Ok(WavHeader {
+        format,
         sample_rate,
         channels,
         bits_per_sample,
@@ -94,8 +111,8 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AsrError> {
 
 /// Decode a WAV file to 16 kHz mono f32 samples.
 ///
-/// - Parses the WAV header and extracts PCM data.
-/// - Converts PCM bytes to f32 samples (supports 16-bit and 32-bit PCM).
+/// - Parses the WAV header and extracts the sample data.
+/// - Converts samples to f32 (PCM int: 16 / 24 / 32-bit; IEEE float: 32-bit).
 /// - Mixes stereo to mono if the source has more than one channel.
 /// - Resamples to 16 kHz via rubato if the source sample rate differs.
 /// - Passes through unchanged if already 16 kHz mono.
@@ -105,7 +122,7 @@ pub fn resample_to_16khz_mono(wav_data: &[u8]) -> Result<Vec<f32>, AsrError> {
     let end = (header.data_offset + header.data_size).min(wav_data.len());
     let pcm_bytes = &wav_data[header.data_offset..end];
 
-    let samples = pcm_bytes_to_f32(pcm_bytes, header.bits_per_sample)?;
+    let samples = pcm_bytes_to_f32(pcm_bytes, header.format, header.bits_per_sample)?;
 
     let mono = if header.channels > 1 {
         mix_to_mono(&samples, header.channels)
@@ -123,14 +140,14 @@ pub fn resample_to_16khz_mono(wav_data: &[u8]) -> Result<Vec<f32>, AsrError> {
 /// Convert raw PCM bytes (without WAV header) to f32 samples and optionally
 /// mix to mono. Does **not** resample.
 ///
-/// This is useful when audio arrives as headerless PCM from a streaming protocol.
+/// Assumes 16-bit signed PCM (the HA voice pipeline default for headerless
+/// streams). Other depths require a WAV header so the format can be detected.
 pub fn raw_pcm_to_f32(
     pcm_bytes: &[u8],
     sample_rate: u32,
     channels: u16,
 ) -> Result<Vec<f32>, AsrError> {
-    // Assume 16-bit PCM for raw streams (common default for speech audio)
-    let samples = pcm_bytes_to_f32(pcm_bytes, 16)?;
+    let samples = pcm_bytes_to_f32(pcm_bytes, SampleFormat::PcmInt, 16)?;
 
     let mono = if channels > 1 {
         mix_to_mono(&samples, channels)
@@ -149,34 +166,69 @@ pub fn raw_pcm_to_f32(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Decode PCM bytes into f32 samples normalized to [-1.0, 1.0].
-fn pcm_bytes_to_f32(pcm_bytes: &[u8], bits_per_sample: u16) -> Result<Vec<f32>, AsrError> {
-    match bits_per_sample {
-        16 => {
+/// Decode sample bytes into f32 normalised to [-1.0, 1.0].
+///
+/// Supported combinations:
+/// - PCM int, 16-bit: signed LE, normalised by 2^15.
+/// - PCM int, 24-bit: signed LE, sign-extended from 24 to 32 bits, normalised by 2^23.
+/// - PCM int, 32-bit: signed LE, normalised by 2^31.
+/// - IEEE float, 32-bit: native `f32` LE, passed through.
+fn pcm_bytes_to_f32(
+    pcm_bytes: &[u8],
+    format: SampleFormat,
+    bits_per_sample: u16,
+) -> Result<Vec<f32>, AsrError> {
+    match (format, bits_per_sample) {
+        (SampleFormat::PcmInt, 16) => {
             if pcm_bytes.len() % 2 != 0 {
                 return Err(audio_err("PCM-16 data has odd byte count"));
             }
+            // Divide by 2^15 (32768) — symmetric around 0, full negative reaches -1.0.
+            const SCALE: f32 = 32_768.0;
             Ok(pcm_bytes
                 .chunks_exact(2)
+                .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / SCALE)
+                .collect())
+        }
+        (SampleFormat::PcmInt, 24) => {
+            if pcm_bytes.len() % 3 != 0 {
+                return Err(audio_err("PCM-24 data length not divisible by 3"));
+            }
+            // 2^23. Pack 3 LE bytes into the high 24 bits of a u32, then
+            // arithmetic-shift back so the sign bit propagates.
+            const SCALE: f32 = 8_388_608.0;
+            Ok(pcm_bytes
+                .chunks_exact(3)
                 .map(|chunk| {
-                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                    sample as f32 / i16::MAX as f32
+                    let raw = u32::from_le_bytes([0, chunk[0], chunk[1], chunk[2]]);
+                    (raw as i32 >> 8) as f32 / SCALE
                 })
                 .collect())
         }
-        32 => {
+        (SampleFormat::PcmInt, 32) => {
             if pcm_bytes.len() % 4 != 0 {
                 return Err(audio_err("PCM-32 data length not divisible by 4"));
             }
+            const SCALE: f32 = 2_147_483_648.0; // 2^31
             Ok(pcm_bytes
                 .chunks_exact(4)
                 .map(|chunk| {
-                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    sample as f32 / i32::MAX as f32
+                    i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32 / SCALE
                 })
                 .collect())
         }
-        other => Err(audio_err(&format!("unsupported bits_per_sample: {other}"))),
+        (SampleFormat::Float, 32) => {
+            if pcm_bytes.len() % 4 != 0 {
+                return Err(audio_err("float-32 data length not divisible by 4"));
+            }
+            Ok(pcm_bytes
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect())
+        }
+        (fmt, bits) => Err(audio_err(&format!(
+            "unsupported sample format: {fmt:?} {bits}-bit"
+        ))),
     }
 }
 
