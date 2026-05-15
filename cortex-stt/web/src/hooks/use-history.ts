@@ -11,6 +11,17 @@ import type { HistoryFilters } from "@/api/types";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
 
+// Every history mutation (create / delete / drop-audio) changes the
+// aggregate numbers shown on the Dashboard (Audio MB, Storage usage,
+// today/total duration), so invalidate those queries alongside the
+// history list itself. Without this the Dashboard reads stale cached
+// values until staleTime elapses or the page is reloaded.
+const HISTORY_MUTATION_INVALIDATES = [
+	queryKeys.history.all,
+	queryKeys.system.metrics(),
+	queryKeys.system.storage(),
+];
+
 export function useHistoryList(filters?: HistoryFilters) {
 	const queryClient = useQueryClient();
 
@@ -19,7 +30,9 @@ export function useHistoryList(filters?: HistoryFilters) {
 		const cleanup = subscribeSSE(
 			"/api/history/live",
 			() => {
-				queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
+				for (const key of HISTORY_MUTATION_INVALIDATES) {
+					queryClient.invalidateQueries({ queryKey: key });
+				}
 			},
 			undefined, // onError
 			"new_record", // named SSE event
@@ -44,13 +57,13 @@ export function useHistoryDetail(id: string | null) {
 export function useDeleteHistoryRecord() {
 	return useInvalidatingMutation({
 		mutationFn: (id: string) => deleteHistoryRecord(id),
-		invalidates: [queryKeys.history.all],
+		invalidates: HISTORY_MUTATION_INVALIDATES,
 	});
 }
 
 export function useDeleteAllHistory() {
 	return useInvalidatingMutation({
 		mutationFn: deleteAllHistory,
-		invalidates: [queryKeys.history.all],
+		invalidates: HISTORY_MUTATION_INVALIDATES,
 	});
 }
