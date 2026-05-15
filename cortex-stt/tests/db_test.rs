@@ -9,6 +9,8 @@ fn sample_record() -> CreateRecord {
         audio_duration_ms: 3200,
         inference_ms: 450,
         model_load_ms: 0,
+        pool_wait_ms: 0,
+        cold_load_ms: 0,
         text: "hello world".to_string(),
         segments_json: "[]".to_string(),
         audio_path: None,
@@ -48,9 +50,28 @@ async fn test_insert_and_get_record() {
     assert_eq!(fetched.model_id, "whisper-tiny");
     assert_eq!(fetched.audio_duration_ms, 3200);
     assert_eq!(fetched.inference_ms, 450);
+    assert_eq!(fetched.model_load_ms, 0);
+    assert_eq!(fetched.pool_wait_ms, 0);
+    assert_eq!(fetched.cold_load_ms, 0);
     assert_eq!(fetched.text, "hello world");
     assert!(!fetched.has_error);
     assert!(fetched.error_message.is_none());
+}
+
+#[tokio::test]
+async fn test_insert_and_get_record_preserves_acquire_breakdown() {
+    let db = Database::open_in_memory().await.unwrap();
+    let mut rec = sample_record();
+    rec.pool_wait_ms = 17;
+    rec.cold_load_ms = 83;
+    rec.model_load_ms = rec.pool_wait_ms + rec.cold_load_ms;
+
+    let id = db.insert_record(&rec).await.unwrap();
+    let fetched = db.get_record(&id).await.unwrap().unwrap();
+
+    assert_eq!(fetched.model_load_ms, 100);
+    assert_eq!(fetched.pool_wait_ms, 17);
+    assert_eq!(fetched.cold_load_ms, 83);
 }
 
 #[tokio::test]

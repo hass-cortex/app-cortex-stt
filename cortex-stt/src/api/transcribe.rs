@@ -346,6 +346,8 @@ async fn save_to_history(
         audio_duration_ms: response.duration_ms as i64,
         inference_ms: response.inference_ms as i64,
         model_load_ms: response.model_load_ms as i64,
+        pool_wait_ms: response.pool_wait_ms as i64,
+        cold_load_ms: response.cold_load_ms as i64,
         text: response.text.clone(),
         segments_json,
         audio_path: audio_path_str,

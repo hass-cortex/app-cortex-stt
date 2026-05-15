@@ -47,6 +47,8 @@ async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
                 audio_duration_ms: 3000,
                 inference_ms: 200,
                 model_load_ms: 0,
+                pool_wait_ms: 0,
+                cold_load_ms: 0,
                 text: format!("test transcription {i}"),
                 segments_json: "[]".into(),
                 audio_path: None,
@@ -139,6 +141,8 @@ async fn test_get_single_history_record() {
     assert_eq!(json["id"], ids[0]);
     assert_eq!(json["text"], "test transcription 0");
     assert_eq!(json["model_id"], "whisper-small");
+    assert_eq!(json["pool_wait_ms"], 0);
+    assert_eq!(json["cold_load_ms"], 0);
 }
 
 #[tokio::test]
@@ -229,6 +233,8 @@ async fn test_list_history_with_has_error_filter() {
             audio_duration_ms: 1000,
             inference_ms: 50,
             model_load_ms: 0,
+            pool_wait_ms: 0,
+            cold_load_ms: 0,
             text: String::new(),
             segments_json: "[]".into(),
             audio_path: None,

@@ -62,6 +62,8 @@ impl Database {
                 audio_duration_ms INTEGER NOT NULL,
                 inference_ms INTEGER NOT NULL,
                 model_load_ms INTEGER NOT NULL DEFAULT 0,
+                pool_wait_ms INTEGER NOT NULL DEFAULT 0,
+                cold_load_ms INTEGER NOT NULL DEFAULT 0,
                 text TEXT NOT NULL,
                 segments_json TEXT NOT NULL DEFAULT '[]',
                 audio_path TEXT,
@@ -158,6 +160,37 @@ impl Database {
                 if !has_device {
                     conn.execute_batch(
                         "ALTER TABLE records ADD COLUMN device TEXT NOT NULL DEFAULT 'cpu';",
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)?;
+
+        // Migration: add acquire timing breakdown columns to records.
+        self.conn
+            .call(|conn| {
+                let has_pool_wait: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='pool_wait_ms'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_pool_wait {
+                    conn.execute_batch(
+                        "ALTER TABLE records ADD COLUMN pool_wait_ms INTEGER NOT NULL DEFAULT 0;",
+                    )?;
+                }
+
+                let has_cold_load: bool = conn
+                    .prepare(
+                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='cold_load_ms'",
+                    )?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !has_cold_load {
+                    conn.execute_batch(
+                        "ALTER TABLE records ADD COLUMN cold_load_ms INTEGER NOT NULL DEFAULT 0;",
                     )?;
                 }
                 Ok(())

@@ -185,7 +185,7 @@ function HistoryRow({
 						{formatDuration(record.inference_ms)} inference
 					</p>
 					{record.model_load_ms > 0 && (
-						<p className="text-xs text-amber-500">{formatDuration(record.model_load_ms)} load</p>
+						<p className="text-xs text-amber-500">{formatDuration(record.model_load_ms)} acquire</p>
 					)}
 					<p className="text-xs text-text-muted">{record.device?.toUpperCase() ?? "CPU"}</p>
 				</div>
@@ -233,8 +233,20 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 				</div>
 				{record.model_load_ms > 0 && (
 					<div>
-						<span className="text-text-muted">Model Load Time</span>
+						<span className="text-text-muted">Acquire Time</span>
 						<p className="text-amber-500">{formatDuration(record.model_load_ms)}</p>
+					</div>
+				)}
+				{record.pool_wait_ms > 0 && (
+					<div>
+						<span className="text-text-muted">Pool Wait</span>
+						<p className="text-text-primary">{formatDuration(record.pool_wait_ms)}</p>
+					</div>
+				)}
+				{record.cold_load_ms > 0 && (
+					<div>
+						<span className="text-text-muted">Cold Load</span>
+						<p className="text-amber-500">{formatDuration(record.cold_load_ms)}</p>
 					</div>
 				)}
 				<div>
