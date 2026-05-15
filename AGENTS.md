@@ -61,7 +61,7 @@ src/
 ├── error.rs          AsrError enum + status()/code()/related_id() (HTTP mapping lives on the variant)
 ├── cleanup.rs        background retention sweeper (hourly)
 ├── retention.rs      pure policy: (candidates, policy) → ids to drop
-├── history/          transcription history records (DB row + paired WAV)
+├── history/          transcription history records (DB row + paired Opus audio)
 │   ├── mod.rs        History struct; Delete record / Drop audio operations
 │   └── store.rs      private SQL + types (CreateRecord, TranscriptionRecord, …)
 ├── transcriber.rs    transcription pipeline (acquire → infer → save to history)
@@ -86,15 +86,16 @@ src/
 │   ├── register.rs   engine registration
 │   ├── whisper_bridge.rs ggml binding via transcribe-rs
 │   └── onnx_bridge.rs    ONNX Runtime binding (Parakeet/SenseVoice)
-├── model/            model installation
-│   ├── catalog.rs    ModelCatalog: list / get / delete / scan custom
+├── model/                  model installation
+│   ├── catalog.rs          ModelCatalog: list / get / delete / scan custom
 │   ├── download_manager.rs DownloadManager: queue + progress + active handles + cancel
-│   ├── download.rs   async download pipeline (HTTP + SHA-256 + archive extract)
-│   ├── storage.rs    on-disk layout (`{data_dir}/models/{id}/`)
-│   └── types.rs      model type definitions (ModelInfo, DownloadPhase, …)
-├── audio/            preprocessing
-│   ├── resample.rs   rubato-based rate conversion
-│   └── wav_writer.rs WAV encoding (used by history::create)
+│   ├── download.rs         async download pipeline (HTTP + SHA-256 + archive extract)
+│   ├── storage.rs          on-disk layout (`{data_dir}/models/{id}/`)
+│   └── types.rs            model type definitions (ModelInfo, DownloadPhase, …)
+├── audio/              preprocessing
+│   ├── canonical.rs    shared 16 kHz / 16-bit / mono constants
+│   ├── opus_writer.rs  Ogg Opus encoder (history persistence)
+│   └── resample.rs     WAV decode (PCM 16/24/32, IEEE float) + rubato resample
 ├── db/               SQLite (rusqlite, bundled) — settings + api keys storage
 │   ├── database.rs   connection pool + migrations
 │   ├── settings.rs   key-value settings
@@ -105,7 +106,7 @@ src/
 
 ### Cross-module guarantees
 
-- **`history::History` owns the row + WAV pair.** Delete operations remove the WAV before the DB row so a partial failure can never orphan a file. `audio_retention` triggers **Drop audio** (NULL the `audio_path`, remove WAV; row survives), not Delete record.
+- **`history::History` owns the row + audio file pair.** Delete operations remove the audio file before the DB row so a partial failure can never orphan a file. `audio_retention` triggers **Drop audio** (NULL the `audio_path`, remove the file; row survives), not Delete record. New rows store audio as Ogg Opus (`.opus`); legacy `.wav` files are served as-is via the file-extension-driven MIME on the replay endpoint.
 - **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. The hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint share this code path.
 - **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The three HTTP handlers (sync / SSE / async) are thin shells over its two methods.
 - **`model::ModelCatalog` reads the registry + scans disk**; `DownloadManager` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `DownloadManager`.
