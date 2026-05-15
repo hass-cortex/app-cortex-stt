@@ -93,14 +93,20 @@ cargo test -- --nocapture
 
 ## Architecture
 
-See the [design spec](docs/design/) for architecture details.
+See [`AGENTS.md`](../AGENTS.md) for the full module tree, cross-module
+invariants, and the API endpoint reference. [`CONTEXT.md`](CONTEXT.md)
+defines the domain vocabulary those docs use.
 
-Key modules:
+Top-level modules:
 
-- `src/engine/` - Model pool and engine management
-- `src/api/` - Axum HTTP API and static file serving
-- `src/model/` - Model download and storage
-- `web/` - React Admin UI
+- `src/engine/` — `SpeechEngine` trait + pool + LRU eviction
+- `src/transcriber.rs` — transcription pipeline (acquire → infer → save)
+- `src/history/` — transcription history records (DB row + paired WAV)
+- `src/retention.rs` — pure retention policy (`Days` / `Count` / `DiskLimitMb`)
+- `src/model/` — model catalog (`catalog.rs`) + download coordinator (`downloads.rs`)
+- `src/api/` — Axum routes; handlers are thin shells over the modules above
+- `src/db/` — SQLite storage for settings + API keys
+- `web/` — React Admin UI
 
 ## Adding a New Engine
 

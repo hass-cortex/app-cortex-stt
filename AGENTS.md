@@ -1,34 +1,19 @@
 # app-cortex-stt / cortex-stt
 
 Multi-engine speech-to-text HTTP service for Home Assistant, powered by
-[transcribe-rs](https://github.com/cjpais/transcribe-rs). Supports Whisper
-(ggml), ONNX (Parakeet, SenseVoice) and Silero VAD via a unified Axum HTTP
-API plus a React admin UI.
+[transcribe-rs](https://github.com/cjpais/transcribe-rs). Supports
+Whisper (ggml), ONNX (Parakeet, SenseVoice), and Silero VAD via a
+unified Axum HTTP API plus a React admin UI. The outer directory is
+the HA addon shell + repo metadata; the inner `cortex-stt/` subdir is
+the Rust backend + React frontend + Dockerfile + rootfs.
 
-> **Repo layout**: outer dir = HA addon shell + repo metadata, inner
-> `cortex-stt/` subdir = Rust backend + React frontend + Dockerfile +
-> rootfs.
->
-> **Distribution**: git-tag push on `hass-cortex/app-cortex-stt` →
-> `release.yml` builds binaries and creates a GitHub Release (auto-marked
-> prerelease when the tag contains `-`, e.g. `0.1.4-beta.1`) →
-> `deploy.yaml` (hassio-addons/workflows `app-deploy.yaml@v2.0.6`) builds
-> multi-arch images → pushes `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>` →
-> dispatches `repository_dispatch` to one or both catalogs based on the
-> prerelease flag. Stable tags dispatch to **`hass-cortex/repository`**
-> and **`hass-cortex/repository-beta`**; prerelease tags dispatch to
-> `hass-cortex/repository-beta` only. Each catalog's
-> `repository-updater.yaml` filters releases per its `.apps.yml`
-> `channel:` field (`stable` vs `beta`) and writes `cortex-stt/config.yaml`.
->
-> See the workspace-level [`docs/release/`](../docs/release/README.md)
-> for the full pipeline diagram, end-user install paths, and the
-> maintainer runbook (cutting beta then stable, troubleshooting).
->
-> **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt)
-> HACS integration (HA STT platform). Standalone Docker / LXC / systemd
-> packaging was removed before 0.1.0; the HA app is the only supported
-> distribution form.
+## Quick Links
+
+- **Supported models**: [`MODELS.md`](MODELS.md) — curated list of built-in models by engine, with sizes and languages.
+- **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a *Transcription history record*? *Drop audio* vs *Delete record*? *Retention candidate*?
+- **Contributor guide**: [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — fork → branch → PR flow.
+- **Release runbook**: workspace-level [`docs/release/`](../docs/release/README.md) — pipeline diagram, beta/stable cuts, troubleshooting.
+- **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). Standalone Docker / LXC / systemd packaging was removed before 0.1.0; the HA app is the only supported distribution form.
 
 ## Repository Layout
 
@@ -42,6 +27,7 @@ API plus a React admin UI.
 ├── .yamllint, .mdlrc          lint configs (consumed by ci.yaml)
 ├── .pre-commit-config.yaml    pre-commit hook config
 ├── README.md                  user-facing install instructions
+├── MODELS.md                  curated list of built-in models (kept in sync with registry.rs)
 ├── LICENSE.md                 MIT
 ├── images/                    README screenshots (history.png, models.png)
 └── cortex-stt/                ── ADDON / SOURCE SUBDIR ──
@@ -54,25 +40,87 @@ API plus a React admin UI.
     ├── translations/en.yaml   addon UI translations
     ├── rootfs/                s6-overlay services (init oneshot + cortex-stt main)
     ├── .cargo/config.toml     GGML_NATIVE=OFF (avoid SIGILL on non-AVX-512 hosts)
-    ├── .dockerignore
     ├── Cargo.toml/.lock       Rust workspace root (single crate)
     ├── rust-toolchain.toml    pinned Rust version
     ├── clippy.toml, deny.toml, rustfmt.toml
+    ├── CONTEXT.md             domain vocabulary
     ├── CONTRIBUTING.md
-    ├── src/                   Rust backend (see Architecture below)
+    ├── src/                   Rust backend (see Architecture)
     ├── tests/                 integration tests (real DB, mocked engines)
     └── web/                   React + Vite admin UI
 ```
 
-## Build & Test
+## Architecture
+
+```
+src/
+├── main.rs           Axum server bootstrap, signal handling
+├── lib.rs            library exports
+├── config.rs         clap CLI + env + TOML config (priority: CLI > ENV > config.toml > defaults)
+├── state.rs          AppState (Arc<…>) shared across handlers; JobStore
+├── error.rs          AsrError enum + status()/code()/related_id() (HTTP mapping lives on the variant)
+├── cleanup.rs        background retention sweeper (hourly)
+├── retention.rs      pure policy: (candidates, policy) → ids to drop
+├── history/          transcription history records (DB row + paired WAV)
+│   ├── mod.rs        History struct; Delete record / Drop audio operations
+│   └── store.rs      private SQL + types (CreateRecord, TranscriptionRecord, …)
+├── transcriber.rs    transcription pipeline (acquire → infer → save to history)
+├── api/              Axum routes & middleware
+│   ├── auth.rs       Bearer token middleware
+│   ├── error.rs      ApiError DTO + IntoResponse glue (thin)
+│   ├── transcribe.rs HTTP shell: decode audio + dispatch to Transcriber (sync/SSE/async)
+│   ├── models.rs     model CRUD + download progress (catalog + downloads)
+│   ├── engine.rs     engine status, load/unload, default-model selection
+│   ├── settings.rs   GET/PUT runtime settings (RetentionPolicy lives in crate::retention)
+│   ├── keys.rs       API key CRUD
+│   ├── history.rs    HTTP shell over crate::history; /api/history/cleanup runs retention now
+│   ├── metrics.rs    aggregate stats (consumes history aggregates + catalog count)
+│   ├── system.rs     system + storage info
+│   ├── discovery.rs  Supervisor /discovery announce (startup task + manual trigger)
+│   └── health.rs     /health (no auth)
+├── engine/           speech engine lifecycle
+│   ├── traits.rs     SpeechEngine trait (the abstraction)
+│   ├── manager.rs    engine selection, load/unload coordination, LRU eviction
+│   ├── pool.rs       per-model thread-safe pool (Arc<Mutex<…>>)
+│   ├── registry.rs   builtin model catalog (id → URL, archive dir, etc.)
+│   ├── register.rs   engine registration
+│   ├── whisper_bridge.rs ggml binding via transcribe-rs
+│   └── onnx_bridge.rs    ONNX Runtime binding (Parakeet/SenseVoice)
+├── model/            model installation
+│   ├── catalog.rs    ModelCatalog: list / get / delete / scan custom
+│   ├── downloads.rs  Downloads: queue + progress + active handles + cancel
+│   ├── download.rs   async download pipeline (HTTP + SHA-256 + archive extract)
+│   ├── storage.rs    on-disk layout (`{data_dir}/models/{id}/`)
+│   └── types.rs      model type definitions (ModelInfo, DownloadPhase, …)
+├── audio/            preprocessing
+│   ├── resample.rs   rubato-based rate conversion
+│   └── wav_writer.rs WAV encoding (used by history::create)
+├── db/               SQLite (rusqlite, bundled) — settings + api keys storage
+│   ├── database.rs   connection pool + migrations
+│   ├── settings.rs   key-value settings
+│   ├── keys.rs       API keys
+│   └── mod.rs
+└── bin/asr-cli.rs    one-shot CLI for direct STT testing (no HTTP)
+```
+
+### Cross-module guarantees
+
+- **`history::History` owns the row + WAV pair.** Delete operations remove the WAV before the DB row so a partial failure can never orphan a file. `audio_retention` triggers **Drop audio** (NULL the `audio_path`, remove WAV; row survives), not Delete record.
+- **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. The hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint share this code path.
+- **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The three HTTP handlers (sync / SSE / async) are thin shells over its two methods.
+- **`model::ModelCatalog` reads the registry + scans disk**; `Downloads` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `Downloads`.
+
+See [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) for the domain
+vocabulary (Transcription history record, Delete record vs Drop audio,
+Retention candidate, …) used in these names.
+
+## Build
 
 ```bash
 cd cortex-stt
 
-cargo build                    # default: all engines, CPU only
-cargo build --features cuda    # all engines + CUDA GPU
-cargo test --lib               # unit tests (fast)
-cargo test                     # unit + integration (uses mock SpeechEngine)
+cargo build                    # default features: whisper + onnx + vad-silero, CPU only
+cargo build --features cuda    # adds CUDA acceleration (requires CUDA toolkit)
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo deny check               # license + advisory audit
@@ -91,80 +139,38 @@ bun run build                  # vite production build
 | `default` | `whisper` + `onnx` + `vad-silero`, CPU only                           |
 | `cuda`    | adds `transcribe-rs/whisper-cuda` + `ort-cuda`, requires CUDA toolkit |
 
-Internal features `whisper` / `onnx` / `vad-silero` exist for faster dev
-builds but aren't intended as a public selector.
+Internal features `whisper` / `onnx` / `vad-silero` exist for faster
+dev builds but aren't intended as a public selector.
 
 ### GGML_NATIVE=OFF
 
 Set unconditionally via `.cargo/config.toml`. Without it, whisper.cpp
-compiles with `-march=native` and crashes with `SIGILL` at model load if
-the target host lacks an instruction the build host had (e.g. AVX-512 on
-the dev box but not on the HA OS VM).
-
-## Architecture
-
-```
-src/
-├── main.rs           Axum server bootstrap, signal handling
-├── lib.rs            library exports
-├── config.rs         clap CLI + env + TOML config (priority: CLI > ENV > config.toml > defaults)
-├── state.rs          AppState (Arc<…>) shared across handlers
-├── error.rs          custom error types (thiserror)
-├── cleanup.rs        background task: expire old transcriptions / failed downloads
-├── api/              Axum routes & middleware
-│   ├── auth.rs       Bearer token middleware
-│   ├── error.rs      HTTP error mapping
-│   ├── transcribe.rs sync + SSE + async-job endpoints
-│   ├── models.rs     model CRUD + download progress
-│   ├── engine.rs     engine status, load/unload, default-model selection
-│   ├── settings.rs   GET/PUT runtime settings
-│   ├── keys.rs       API key CRUD
-│   ├── history.rs    transcription history (incl. live SSE)
-│   ├── metrics.rs    aggregate stats
-│   ├── system.rs     system + storage info
-│   ├── discovery.rs  Supervisor /discovery announce (startup task + manual trigger)
-│   └── health.rs     /health (no auth)
-├── engine/           model lifecycle
-│   ├── traits.rs     SpeechEngine trait (the abstraction)
-│   ├── manager.rs    engine selection, load/unload coordination
-│   ├── pool.rs       per-model thread-safe pool (Arc<Mutex<…>>)
-│   ├── registry.rs   builtin model catalog (id → URL, archive dir, etc.)
-│   ├── register.rs   engine registration
-│   ├── whisper_bridge.rs ggml binding via transcribe-rs
-│   └── onnx_bridge.rs    ONNX Runtime binding (Parakeet/SenseVoice)
-├── model/            download + storage
-│   ├── manager.rs    metadata + availability
-│   ├── storage.rs    on-disk layout (`{data_dir}/models/{id}/`)
-│   ├── download.rs   async download w/ progress + archive extract
-│   └── types.rs      model type definitions
-├── audio/            preprocessing
-│   ├── resample.rs   rubato-based rate conversion
-│   └── wav_writer.rs WAV encoding for history snapshots
-├── db/               SQLite (rusqlite, bundled)
-│   ├── database.rs   connection pool + migrations
-│   ├── settings.rs   key-value settings
-│   ├── keys.rs       API keys
-│   ├── records.rs    history records
-│   └── mod.rs
-└── bin/asr-cli.rs    one-shot CLI for direct STT testing (no HTTP)
-```
-
-All engine tests use a mock `SpeechEngine` — no real model files in CI.
+compiles with `-march=native` and crashes with `SIGILL` at model load
+if the target host lacks an instruction the build host had (e.g.
+AVX-512 on the dev box but not on the HA OS VM).
 
 ## Testing
 
 ```bash
 cargo test                              # everything (unit + integration)
-cargo test --test api_health_test       # single integration test
-cargo test --lib engine::pool::tests    # single unit test module
+cargo test --lib                        # unit tests only (fast)
+cargo test --lib retention              # single module
+cargo test --test api_history_test      # single integration test file
+cargo test -- --nocapture               # with stdout
 ```
 
-Integration tests under `tests/` exercise the real Axum router + real
-SQLite, but stub the engine layer. The shell-driven
-`tests/integration/model_pipeline_test.sh` is a manual smoke test for
-the real download → transcribe pipeline (not run in CI).
+All engine tests use a mock `SpeechEngine` — no real model files are
+needed in CI. Integration tests under `tests/` exercise the real Axum
+router + real (in-memory) SQLite, but stub the engine layer.
+
+The shell-driven `tests/integration/model_pipeline_test.sh` is a
+manual smoke test for the real download → transcribe pipeline (not
+run in CI).
 
 ## API Endpoints
+
+All `/api/*` routes require Bearer auth. The first API key is created
+on first run via `--api-key` env or auto-generated `discovery_api_key`.
 
 | Method    | Path                                 | Description                                                 |
 | --------- | ------------------------------------ | ----------------------------------------------------------- |
@@ -189,7 +195,7 @@ the real download → transcribe pipeline (not run in CI).
 | DELETE    | `/api/keys/{id}`                     | Revoke key                                                  |
 | GET       | `/api/history`                       | List transcription history                                  |
 | GET       | `/api/history/live`                  | Live history (SSE)                                          |
-| POST      | `/api/history/cleanup`               | Manual cleanup                                              |
+| POST      | `/api/history/cleanup`               | Force retention sweep using current settings                |
 | GET       | `/api/history/{id}`                  | Single record                                               |
 | GET       | `/api/history/{id}/audio`            | Replay audio                                                |
 | DELETE    | `/api/history/{id}`                  | Delete one record                                           |
@@ -200,52 +206,77 @@ the real download → transcribe pipeline (not run in CI).
 | POST      | `/api/discovery/announce`            | Send Supervisor `/discovery` announce (manual re-trigger)   |
 | GET       | `/health`                            | Health check (no auth)                                      |
 
-All `/api/*` routes require Bearer auth. The first API key is created on
-first run via `--api-key` env or auto-generated `discovery_api_key`.
-
 ## Home Assistant Discovery
 
 Discovery announce to Supervisor `/discovery` is implemented in
-`src/api/discovery.rs` (Rust) — there is **no** bashio-based `discovery/run`
-service in `rootfs/`. Triggers:
+`src/api/discovery.rs` (Rust) — there is **no** bashio-based
+`discovery/run` service in `rootfs/`. Triggers:
 
-1. **Startup** (auto): `main.rs` spawns a best-effort `tokio::spawn` after the
-   HTTP listener binds. Failures log a warning but never fatal — the addon keeps
-   serving requests.
-2. **Manual** (on demand): `POST /api/discovery/announce` (Bearer auth). Used
-   by the Admin UI's "Re-announce to Home Assistant" button.
+1. **Startup** (auto): `main.rs` spawns a best-effort `tokio::spawn`
+   after the HTTP listener binds. Failures log a warning but never
+   fatal — the addon keeps serving requests.
+2. **Manual** (on demand): `POST /api/discovery/announce` (Bearer
+   auth). Used by the Admin UI's "Re-announce to Home Assistant"
+   button.
 
 Both call `cortex_stt::api::discovery::announce(&state)` which:
 
 - Reads `SUPERVISOR_TOKEN` from env (else returns `NotInSupervisor`).
 - Picks the system-managed API key (DB row with `system=true` and name
   `home-assistant-discovery`, fallback to first system row).
-- Posts `{service: "cortex_stt", config: {host, port, api_key}}` where `host`
-  comes from `gethostname` and `port` from `state.http_port` (so a custom
-  `--http-port` is correctly announced).
-- Maps Supervisor 4xx/5xx into `DiscoveryError::SupervisorRejected{status, body}`
-  — unlike `bashio::discovery`, real HTTP status codes propagate.
+- Posts `{service: "cortex_stt", config: {host, port, api_key}}` where
+  `host` comes from `gethostname` and `port` from `state.http_port`
+  (so a custom `--http-port` is correctly announced).
+- Maps Supervisor 4xx/5xx into
+  `DiscoveryError::SupervisorRejected{status, body}` — unlike
+  `bashio::discovery`, real HTTP status codes propagate.
 
-The integration's `async_step_hassio` consumes `discovery_info.config['host']`
-and `['port']` (no scheme) to build `http://<host>:<port>` and authenticates
-with `['api_key']`.
+The integration's `async_step_hassio` consumes
+`discovery_info.config['host']` and `['port']` (no scheme) to build
+`http://<host>:<port>` and authenticates with `['api_key']`.
 
-## Adding a New Model
+## How To
 
-Model archives ship with inconsistent packaging. **Always inspect before
-registering:**
+### Adding a new model
+
+Model archives ship with inconsistent packaging. **Always inspect
+before registering:**
 
 ```bash
 tar tzf <model>.tar.gz | head -20
 ```
 
 Verify: (1) directory nesting depth, (2) no extraneous files (`._*`,
-`.DS_Store`, etc.), (3) expected filenames match what the engine bridge
-loads, (4) `archive_dir_name` in the registry matches the top-level dir
-inside the archive. The extractor in `src/model/download.rs` handles
-single-level nesting automatically.
+`.DS_Store`, etc.), (3) expected filenames match what the engine
+bridge loads, (4) `archive_dir_name` in the registry matches the
+top-level dir inside the archive. The extractor in
+`src/model/download.rs` handles single-level nesting automatically.
 
 Add a new entry to `builtin_models()` in `src/engine/registry.rs`,
 covering: `id`, `engine`, archive URL, expected files, languages,
 size hint, and optional default flags. Update tests in
-`tests/registry_test.rs`.
+`tests/registry_test.rs` and add a row to [`MODELS.md`](MODELS.md)
+so users see the new model in the curated catalog.
+
+## Distribution
+
+A git-tag push on `hass-cortex/app-cortex-stt` drives the full
+pipeline:
+
+1. **`release.yml`** cross-compiles binaries and creates a GitHub
+   Release. Tags containing `-` (e.g. `0.1.4-beta.1`) are auto-marked
+   prerelease.
+2. **`deploy.yaml`** (using `hassio-addons/workflows/app-deploy.yaml@v2.0.6`)
+   builds multi-arch images, pushes
+   `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>` (plus `aarch64`), and
+   dispatches `repository_dispatch` to one or both catalogs:
+   - Stable tags → both **`hass-cortex/repository`** and
+     **`hass-cortex/repository-beta`**.
+   - Prerelease tags → **`hass-cortex/repository-beta`** only.
+3. Each catalog's **`repository-updater.yaml`** filters releases per
+   its `.apps.yml` `channel:` field (`stable` vs `beta`) and writes
+   `cortex-stt/config.yaml`.
+
+See the workspace-level [`docs/release/`](../docs/release/README.md)
+for the full pipeline diagram, end-user install paths, and the
+maintainer runbook (cutting beta then stable, troubleshooting).

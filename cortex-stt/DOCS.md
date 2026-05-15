@@ -24,7 +24,9 @@ Click the Home Assistant My button below to open the app on your Home Assistant 
 ### 1. Download a model
 
 Open the **Cortex STT** panel from the sidebar → **Models** tab → pick a
-model → **Download**. `SenseVoice (INT8)` is a good first choice.
+model → **Download**. `SenseVoice (INT8)` is a good first choice. See
+[MODELS.md](../MODELS.md) for the full catalog with sizes, supported
+languages, and use-case notes.
 
 ### 2. Configure default model and lifecycle (Optional)
 
