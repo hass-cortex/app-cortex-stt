@@ -6,8 +6,8 @@ use axum::extract::State;
 use axum::routing::get;
 use serde::Serialize;
 
-use crate::db::records::TranscriptionSource;
 use crate::error::AsrError;
+use crate::history::TranscriptionSource;
 use crate::state::AppState;
 
 /// Aggregate metrics about the service.
@@ -28,17 +28,17 @@ pub struct Metrics {
 }
 
 async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>, AsrError> {
-    let total = state.db.count_records(None).await?;
+    let total = state.history.count(None).await?;
     let http_count = state
-        .db
-        .count_records(Some(TranscriptionSource::HttpApi))
+        .history
+        .count(Some(TranscriptionSource::HttpApi))
         .await?;
-    let today_transcriptions = state.db.count_records_today(None).await?;
-    let total_audio_duration_ms = state.db.total_audio_duration_ms().await?;
-    let today_audio_duration_ms = state.db.today_audio_duration_ms().await?;
-    let avg_inference_ms = state.db.avg_inference_ms().await?;
-    let error_count = state.db.count_errors(false).await?;
-    let today_error_count = state.db.count_errors(true).await?;
+    let today_transcriptions = state.history.count_today(None).await?;
+    let total_audio_duration_ms = state.history.total_audio_duration_ms().await?;
+    let today_audio_duration_ms = state.history.today_audio_duration_ms().await?;
+    let avg_inference_ms = state.history.avg_inference_ms().await?;
+    let error_count = state.history.count_errors(false).await?;
+    let today_error_count = state.history.count_errors(true).await?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
     let total_models = state.model_manager.list_models().await.len();

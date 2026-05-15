@@ -1,151 +1,16 @@
-use cortex_stt::db::database::Database;
-use cortex_stt::db::records::{CreateRecord, ListRecordsFilter, TranscriptionSource};
+//! Database integration tests covering API key CRUD + auth.
+//!
+//! Transcription history CRUD + retention lives in `history_test.rs` —
+//! the storage layer for history is a private detail of the `history`
+//! module.
 
-fn sample_record() -> CreateRecord {
-    CreateRecord {
-        source: TranscriptionSource::HttpApi,
-        language: Some("en".to_string()),
-        model_id: "whisper-tiny".to_string(),
-        audio_duration_ms: 3200,
-        inference_ms: 450,
-        model_load_ms: 0,
-        pool_wait_ms: 0,
-        cold_load_ms: 0,
-        text: "hello world".to_string(),
-        segments_json: "[]".to_string(),
-        audio_path: None,
-        has_error: false,
-        error_message: None,
-        api_key_id: None,
-        device: "cpu".to_string(),
-    }
-}
+use cortex_stt::db::database::Database;
 
 #[tokio::test]
-async fn test_database_init_creates_tables() {
+async fn test_database_init_creates_api_keys_table() {
     let db = Database::open_in_memory().await.expect("open in-memory db");
-
-    // Verify tables exist by running a query that would fail if they don't.
-    let count = db.count_records(None).await.unwrap();
-    assert_eq!(count, 0, "records table should exist and be empty");
-
     let keys = db.list_api_keys().await.unwrap();
     assert!(keys.is_empty(), "api_keys table should exist and be empty");
-}
-
-#[tokio::test]
-async fn test_insert_and_get_record() {
-    let db = Database::open_in_memory().await.unwrap();
-    let rec = sample_record();
-    let id = db.insert_record(&rec).await.unwrap();
-
-    let fetched = db
-        .get_record(&id)
-        .await
-        .unwrap()
-        .expect("record should exist");
-    assert_eq!(fetched.id, id);
-    assert_eq!(fetched.source, "http_api");
-    assert_eq!(fetched.language.as_deref(), Some("en"));
-    assert_eq!(fetched.model_id, "whisper-tiny");
-    assert_eq!(fetched.audio_duration_ms, 3200);
-    assert_eq!(fetched.inference_ms, 450);
-    assert_eq!(fetched.model_load_ms, 0);
-    assert_eq!(fetched.pool_wait_ms, 0);
-    assert_eq!(fetched.cold_load_ms, 0);
-    assert_eq!(fetched.text, "hello world");
-    assert!(!fetched.has_error);
-    assert!(fetched.error_message.is_none());
-}
-
-#[tokio::test]
-async fn test_insert_and_get_record_preserves_acquire_breakdown() {
-    let db = Database::open_in_memory().await.unwrap();
-    let mut rec = sample_record();
-    rec.pool_wait_ms = 17;
-    rec.cold_load_ms = 83;
-    rec.model_load_ms = rec.pool_wait_ms + rec.cold_load_ms;
-
-    let id = db.insert_record(&rec).await.unwrap();
-    let fetched = db.get_record(&id).await.unwrap().unwrap();
-
-    assert_eq!(fetched.model_load_ms, 100);
-    assert_eq!(fetched.pool_wait_ms, 17);
-    assert_eq!(fetched.cold_load_ms, 83);
-}
-
-#[tokio::test]
-async fn test_delete_record() {
-    let db = Database::open_in_memory().await.unwrap();
-    let id = db.insert_record(&sample_record()).await.unwrap();
-
-    assert!(
-        db.delete_record(&id).await.unwrap(),
-        "should delete existing"
-    );
-    assert!(
-        !db.delete_record(&id).await.unwrap(),
-        "second delete returns false"
-    );
-    assert!(db.get_record(&id).await.unwrap().is_none());
-}
-
-#[tokio::test]
-async fn test_list_records_with_filters() {
-    let db = Database::open_in_memory().await.unwrap();
-
-    // Insert records with different sources and models
-    let mut rec1 = sample_record();
-    rec1.source = TranscriptionSource::HttpApi;
-    rec1.model_id = "whisper-tiny".to_string();
-    db.insert_record(&rec1).await.unwrap();
-
-    let mut rec2 = sample_record();
-    rec2.source = TranscriptionSource::HttpApi;
-    rec2.model_id = "whisper-large".to_string();
-    db.insert_record(&rec2).await.unwrap();
-
-    let mut rec3 = sample_record();
-    rec3.source = TranscriptionSource::HttpApi;
-    rec3.model_id = "whisper-large".to_string();
-    db.insert_record(&rec3).await.unwrap();
-
-    // No filter — all 3
-    let all = db
-        .list_records(&ListRecordsFilter::default())
-        .await
-        .unwrap();
-    assert_eq!(all.len(), 3);
-
-    // Filter by source
-    let http_only = db
-        .list_records(&ListRecordsFilter {
-            source: Some(TranscriptionSource::HttpApi),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(http_only.len(), 3);
-
-    // Filter by model_id
-    let large_only = db
-        .list_records(&ListRecordsFilter {
-            model_id: Some("whisper-large".to_string()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(large_only.len(), 2);
-
-    // Limit
-    let limited = db
-        .list_records(&ListRecordsFilter {
-            limit: Some(1),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(limited.len(), 1);
 }
 
 #[tokio::test]
@@ -207,51 +72,4 @@ async fn test_api_key_list_shows_metadata() {
         assert_eq!(key.last4.len(), 4);
         assert!(!key.created_at.is_empty());
     }
-}
-
-#[tokio::test]
-async fn test_record_retention_cleanup_by_days() {
-    let db = Database::open_in_memory().await.unwrap();
-
-    // Insert a record with current timestamp (auto-generated by SQLite)
-    db.insert_record(&sample_record()).await.unwrap();
-
-    // Cleanup with 0 days — should NOT delete just-inserted record
-    let deleted = db.cleanup_records_older_than_days(0).await.unwrap();
-    assert_eq!(
-        deleted, 0,
-        "fresh record should not be cleaned up with 0-day retention"
-    );
-
-    // Manually insert an old record via the connection
-    db.connection()
-        .call(|conn| -> Result<(), rusqlite::Error> {
-            conn.execute(
-                "INSERT INTO records (id, timestamp, source, model_id, audio_duration_ms, inference_ms, text, segments_json, has_error)
-                 VALUES ('old-1', datetime('now', '-30 days'), 'external', 'model-x', 1000, 100, 'old text', '[]', 0)",
-                [],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-
-    // Should now have 2 records
-    let all = db
-        .list_records(&ListRecordsFilter::default())
-        .await
-        .unwrap();
-    assert_eq!(all.len(), 2);
-
-    // Cleanup records older than 7 days
-    let deleted = db.cleanup_records_older_than_days(7).await.unwrap();
-    assert_eq!(deleted, 1, "old record should be cleaned up");
-
-    // Only the recent record remains
-    let remaining = db
-        .list_records(&ListRecordsFilter::default())
-        .await
-        .unwrap();
-    assert_eq!(remaining.len(), 1);
-    assert_ne!(remaining[0].id, "old-1");
 }

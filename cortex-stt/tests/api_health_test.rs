@@ -11,6 +11,7 @@ use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::traits::*;
 use cortex_stt::error::AsrError;
+use cortex_stt::history::History;
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore};
 
@@ -46,6 +47,9 @@ async fn create_test_state() -> Arc<AppState> {
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
+    let history = History::new(db.clone(), tmp.path().join("audio"))
+        .await
+        .unwrap();
 
     Arc::new(AppState {
         engine_manager,
@@ -57,7 +61,7 @@ async fn create_test_state() -> Arc<AppState> {
         version: "0.0.0-test".to_string(),
         http_port: 0,
         started_at: std::time::Instant::now(),
-        history_tx: tokio::sync::broadcast::channel(16).0,
+        history,
     })
 }
 

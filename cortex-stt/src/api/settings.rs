@@ -8,6 +8,7 @@ use axum::routing::{get, put};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AsrError;
+use crate::retention::RetentionPolicy;
 use crate::state::AppState;
 
 /// Compute device preference for a model.
@@ -18,26 +19,6 @@ pub enum ComputeDevice {
     Auto,
     Cpu,
     Gpu,
-}
-
-/// Retention policy controlling how old data is cleaned up.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", content = "value")]
-pub enum RetentionPolicy {
-    /// Keep data for at most N days.
-    Days(u32),
-    /// Keep at most N records.
-    Count(usize),
-    /// Keep total disk usage under N megabytes.
-    DiskLimitMb(u64),
-    /// Never automatically delete.
-    Unlimited,
-}
-
-impl Default for RetentionPolicy {
-    fn default() -> Self {
-        Self::Days(7)
-    }
 }
 
 /// Application settings exposed via the REST API.
@@ -123,38 +104,6 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn retention_policy_days_roundtrip() {
-        let policy = RetentionPolicy::Days(7);
-        let json = serde_json::to_string(&policy).unwrap();
-        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, RetentionPolicy::Days(7));
-    }
-
-    #[test]
-    fn retention_policy_count_roundtrip() {
-        let policy = RetentionPolicy::Count(1000);
-        let json = serde_json::to_string(&policy).unwrap();
-        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, RetentionPolicy::Count(1000));
-    }
-
-    #[test]
-    fn retention_policy_disk_limit_roundtrip() {
-        let policy = RetentionPolicy::DiskLimitMb(5120);
-        let json = serde_json::to_string(&policy).unwrap();
-        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, RetentionPolicy::DiskLimitMb(5120));
-    }
-
-    #[test]
-    fn retention_policy_unlimited_roundtrip() {
-        let policy = RetentionPolicy::Unlimited;
-        let json = serde_json::to_string(&policy).unwrap();
-        let parsed: RetentionPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, RetentionPolicy::Unlimited);
-    }
 
     #[test]
     fn settings_default_uses_days_policies() {

@@ -21,6 +21,7 @@ use cortex_stt::cleanup::spawn_retention_cleanup;
 use cortex_stt::config::AppConfig;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt::history::History;
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
 use tokio::net::TcpListener;
@@ -51,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_dir = config.model_dir();
     let audio_dir = config.audio_dir();
     tokio::fs::create_dir_all(&model_dir).await?;
-    tokio::fs::create_dir_all(&audio_dir).await?;
     tokio::fs::create_dir_all(&config.data_dir).await?;
     tracing::info!(?model_dir, ?audio_dir, "Data directories ready");
 
@@ -59,6 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = config.data_dir.join("records.db");
     let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
+
+    // Build the transcription history store (owns audio_dir + broadcast tx).
+    let history = History::new(db.clone(), audio_dir.clone()).await?;
 
     // Resolve default model: DB override takes precedence over CLI/env config.
     let default_model = match db.get_default_model().await {
@@ -160,9 +163,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create job store for async transcription jobs.
     let job_store = Arc::new(JobStore::with_defaults());
 
-    // Create broadcast channel for live history SSE updates.
-    let (history_tx, _) = tokio::sync::broadcast::channel(100);
-
     // Build shared application state.
     let state = Arc::new(AppState {
         engine_manager: engine_manager.clone(),
@@ -174,11 +174,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         http_port: config.http_port,
         started_at: std::time::Instant::now(),
-        history_tx,
+        history: history.clone(),
     });
 
     // Spawn background retention cleanup (hourly).
-    let _cleanup_handle = spawn_retention_cleanup(db.clone(), config.data_dir.clone());
+    let _cleanup_handle = spawn_retention_cleanup(db.clone(), history.clone());
 
     // Spawn background job-store sweeper (every 60s) to enforce TTL +
     // max_jobs on async transcription jobs.

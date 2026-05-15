@@ -14,11 +14,10 @@ use tokio_stream::Stream;
 
 use crate::api::auth::AuthKeyId;
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
-use crate::audio::wav_writer::write_wav;
-use crate::db::records::{CreateRecord, TranscriptionSource};
 use crate::engine::pool::PoolGuard;
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
+use crate::history::{CreateRecord, TranscriptionSource};
 use crate::state::{AppState, AsyncJob, AsyncJobStatus};
 
 /// Heuristic threshold: a pool acquire that took longer than this is
@@ -304,13 +303,13 @@ async fn run_transcription(
         .await
 }
 
-/// Save transcription result to history (audio file + DB record).
+/// Save transcription result to history. Best-effort: logs warnings on
+/// failure but never propagates errors to the caller so the
+/// transcription response is unaffected.
 ///
-/// Best-effort: logs warnings on failure but never propagates errors
-/// to the caller so the transcription response is unaffected.
-///
-/// When the `save_audio` setting is disabled, the DB record is still
-/// created but no WAV file is written to disk.
+/// When `save_audio` is false, the row is still created — only the WAV
+/// is skipped. The history module guarantees row + audio_path stay
+/// consistent regardless of the outcome.
 #[allow(clippy::too_many_arguments)]
 async fn save_to_history(
     state: &AppState,
@@ -323,20 +322,6 @@ async fn save_to_history(
     device: String,
     save_audio: bool,
 ) {
-    let record_id = uuid::Uuid::new_v4().to_string();
-    let audio_path_str = if save_audio {
-        let audio_dir = state.data_dir.join("audio");
-        let audio_filename = format!("{record_id}.wav");
-        let audio_path = audio_dir.join(&audio_filename);
-
-        if let Err(e) = write_wav(&audio_path, samples).await {
-            tracing::warn!(error = %e, "Failed to save audio file");
-        }
-        Some(audio_filename)
-    } else {
-        None
-    };
-
     let segments_json = serde_json::to_string(&response.segments).unwrap_or_default();
 
     let record = CreateRecord {
@@ -350,18 +335,15 @@ async fn save_to_history(
         cold_load_ms: response.cold_load_ms as i64,
         text: response.text.clone(),
         segments_json,
-        audio_path: audio_path_str,
         has_error: false,
         error_message: None,
         api_key_id,
         device,
     };
 
-    if let Err(e) = state.db.insert_record(&record).await {
-        tracing::warn!(error = %e, "Failed to insert transcription record");
-    } else {
-        // Notify SSE subscribers of new history record.
-        let _ = state.history_tx.send(());
+    let samples_opt = save_audio.then_some(samples);
+    if let Err(e) = state.history.create(record, samples_opt).await {
+        tracing::warn!(error = %e, "Failed to save transcription history");
     }
 }
 

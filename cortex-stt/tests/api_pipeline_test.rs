@@ -20,6 +20,7 @@ use cortex_stt::api::transcribe::transcribe_routes;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::register::register_downloaded_models;
+use cortex_stt::history::History;
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore};
 use test_helpers::{audio_dir, model_dir};
@@ -27,8 +28,10 @@ use test_helpers::{audio_dir, model_dir};
 /// Build a test app with real engines registered from downloaded models.
 async fn build_test_app() -> (Router, Arc<AppState>) {
     let mdir = model_dir();
-    let tmp = tempfile::tempdir().unwrap();
-    let data_dir = tmp.path().to_path_buf();
+    // Leak the temp dir into a stable path so the audio directory
+    // survives past `build_test_app` returning — otherwise WAV writes
+    // performed by the live `History` would fail with NotFound.
+    let data_dir = tempfile::tempdir().unwrap().keep();
 
     // Create audio subdirectory for saved recordings.
     std::fs::create_dir_all(data_dir.join("audio")).unwrap();
@@ -48,6 +51,9 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
 
     let model_manager = ModelManager::new(mdir);
     let db = Arc::new(Database::open_in_memory().await.unwrap());
+    let history = History::new(db.clone(), data_dir.join("audio"))
+        .await
+        .unwrap();
 
     let state = Arc::new(AppState {
         engine_manager,
@@ -59,7 +65,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         version: "0.0.0-test".to_string(),
         http_port: 0,
         started_at: std::time::Instant::now(),
-        history_tx: tokio::sync::broadcast::channel(16).0,
+        history,
     });
 
     let app = Router::new()

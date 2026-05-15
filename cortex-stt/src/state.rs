@@ -4,10 +4,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::RwLock;
 
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
+use crate::history::History;
 use crate::model::manager::ModelManager;
 
 /// Default maximum number of jobs (any status) retained in memory.
@@ -230,6 +231,6 @@ pub struct AppState {
     pub version: String,
     pub http_port: u16,
     pub started_at: Instant,
-    /// Broadcast channel for notifying SSE clients of new history records.
-    pub history_tx: broadcast::Sender<()>,
+    /// Transcription history store (DB rows + WAV files + live updates).
+    pub history: Arc<History>,
 }

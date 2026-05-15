@@ -7,8 +7,8 @@ use tower::ServiceExt;
 
 use cortex_stt::api::history::history_routes;
 use cortex_stt::db::database::Database;
-use cortex_stt::db::records::{CreateRecord, TranscriptionSource};
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt::history::{CreateRecord, History, TranscriptionSource};
 use cortex_stt::model::manager::ModelManager;
 use cortex_stt::state::{AppState, JobStore};
 
@@ -17,6 +17,9 @@ async fn create_test_state() -> Arc<AppState> {
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let tmp = tempfile::tempdir().unwrap();
     let model_manager = ModelManager::new(tmp.path().to_path_buf());
+    let history = History::new(db.clone(), tmp.path().join("audio"))
+        .await
+        .unwrap();
 
     Arc::new(AppState {
         engine_manager,
@@ -28,7 +31,7 @@ async fn create_test_state() -> Arc<AppState> {
         version: "0.0.0-test".to_string(),
         http_port: 0,
         started_at: std::time::Instant::now(),
-        history_tx: tokio::sync::broadcast::channel(16).0,
+        history,
     })
 }
 
@@ -36,27 +39,29 @@ fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(history_routes()).with_state(state)
 }
 
-async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
+async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
     let mut ids = Vec::new();
     for i in 0..count {
-        let id = db
-            .insert_record(&CreateRecord {
-                source: TranscriptionSource::HttpApi,
-                language: Some("en".into()),
-                model_id: "whisper-small".into(),
-                audio_duration_ms: 3000,
-                inference_ms: 200,
-                model_load_ms: 0,
-                pool_wait_ms: 0,
-                cold_load_ms: 0,
-                text: format!("test transcription {i}"),
-                segments_json: "[]".into(),
-                audio_path: None,
-                has_error: false,
-                error_message: None,
-                api_key_id: None,
-                device: "cpu".to_string(),
-            })
+        let id = history
+            .create(
+                CreateRecord {
+                    source: TranscriptionSource::HttpApi,
+                    language: Some("en".into()),
+                    model_id: "whisper-small".into(),
+                    audio_duration_ms: 3000,
+                    inference_ms: 200,
+                    model_load_ms: 0,
+                    pool_wait_ms: 0,
+                    cold_load_ms: 0,
+                    text: format!("test transcription {i}"),
+                    segments_json: "[]".into(),
+                    has_error: false,
+                    error_message: None,
+                    api_key_id: None,
+                    device: "cpu".to_string(),
+                },
+                None,
+            )
             .await
             .unwrap();
         ids.push(id);
@@ -67,7 +72,7 @@ async fn insert_test_records(db: &Database, count: usize) -> Vec<String> {
 #[tokio::test]
 async fn test_list_history() {
     let state = create_test_state().await;
-    insert_test_records(&state.db, 5).await;
+    insert_test_records(&state.history, 5).await;
     let app = test_app(state);
 
     let resp = app
@@ -93,7 +98,7 @@ async fn test_list_history() {
 #[tokio::test]
 async fn test_list_history_default_limit() {
     let state = create_test_state().await;
-    insert_test_records(&state.db, 3).await;
+    insert_test_records(&state.history, 3).await;
     let app = test_app(state);
 
     let resp = app
@@ -119,7 +124,7 @@ async fn test_list_history_default_limit() {
 #[tokio::test]
 async fn test_get_single_history_record() {
     let state = create_test_state().await;
-    let ids = insert_test_records(&state.db, 1).await;
+    let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state);
 
     let resp = app
@@ -148,7 +153,7 @@ async fn test_get_single_history_record() {
 #[tokio::test]
 async fn test_delete_history_record() {
     let state = create_test_state().await;
-    let ids = insert_test_records(&state.db, 1).await;
+    let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state.clone());
 
     let resp = app
@@ -165,7 +170,7 @@ async fn test_delete_history_record() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Verify the record is gone.
-    let record = state.db.get_record(&ids[0]).await.unwrap();
+    let record = state.history.get(&ids[0]).await.unwrap();
     assert!(record.is_none());
 }
 
@@ -192,7 +197,7 @@ async fn test_list_history_with_source_filter() {
     let state = create_test_state().await;
 
     // Insert HTTP API records.
-    insert_test_records(&state.db, 3).await;
+    insert_test_records(&state.history, 3).await;
 
     let app = test_app(state);
 
@@ -222,27 +227,29 @@ async fn test_list_history_with_has_error_filter() {
     let state = create_test_state().await;
 
     // Two successful records.
-    insert_test_records(&state.db, 2).await;
+    insert_test_records(&state.history, 2).await;
     // One errored record.
     state
-        .db
-        .insert_record(&CreateRecord {
-            source: TranscriptionSource::HttpApi,
-            language: Some("en".into()),
-            model_id: "whisper-small".into(),
-            audio_duration_ms: 1000,
-            inference_ms: 50,
-            model_load_ms: 0,
-            pool_wait_ms: 0,
-            cold_load_ms: 0,
-            text: String::new(),
-            segments_json: "[]".into(),
-            audio_path: None,
-            has_error: true,
-            error_message: Some("boom".into()),
-            api_key_id: None,
-            device: "cpu".to_string(),
-        })
+        .history
+        .create(
+            CreateRecord {
+                source: TranscriptionSource::HttpApi,
+                language: Some("en".into()),
+                model_id: "whisper-small".into(),
+                audio_duration_ms: 1000,
+                inference_ms: 50,
+                model_load_ms: 0,
+                pool_wait_ms: 0,
+                cold_load_ms: 0,
+                text: String::new(),
+                segments_json: "[]".into(),
+                has_error: true,
+                error_message: Some("boom".into()),
+                api_key_id: None,
+                device: "cpu".to_string(),
+            },
+            None,
+        )
         .await
         .unwrap();
 
