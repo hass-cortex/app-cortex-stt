@@ -5,8 +5,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::db::database::Database;
-
-use super::error::ApiError;
+use crate::error::AsrError;
 
 /// Authenticated API key ID, inserted into request extensions by the auth middleware.
 #[derive(Clone, Debug)]
@@ -52,7 +51,7 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
                         req.extensions_mut().insert(AuthKeyId(key_id));
                         return next.run(req).await;
                     }
-                    return ApiError::invalid_api_key().into_response();
+                    return AsrError::InvalidApiKey.into_response();
                 }
             }
         }
@@ -68,12 +67,12 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
                         req.extensions_mut().insert(AuthKeyId(key_id));
                         return next.run(req).await;
                     }
-                    return ApiError::invalid_api_key().into_response();
+                    return AsrError::InvalidApiKey.into_response();
                 }
             }
         }
     }
 
     // 5. No valid credentials
-    ApiError::auth_required().into_response()
+    AsrError::AuthRequired.into_response()
 }

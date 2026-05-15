@@ -162,10 +162,9 @@ fn to_sse(event: &SseEvent) -> Event {
 }
 
 fn error_event(err: &AsrError) -> SseEvent {
-    let (_, api_error): (StatusCode, crate::api::error::ApiError) = err.into();
     SseEvent::Error {
-        code: api_error.code.to_string(),
-        message: api_error.message,
+        code: err.code().to_string(),
+        message: err.to_string(),
     }
 }
 
