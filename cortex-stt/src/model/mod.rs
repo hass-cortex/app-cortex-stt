@@ -1,4 +1,5 @@
+pub mod catalog;
 pub mod download;
-pub mod manager;
+pub mod downloads;
 pub mod storage;
 pub mod types;

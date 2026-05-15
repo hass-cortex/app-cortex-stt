@@ -21,7 +21,8 @@ use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::register::register_downloaded_models;
 use cortex_stt::history::History;
-use cortex_stt::model::manager::ModelManager;
+use cortex_stt::model::catalog::ModelCatalog;
+use cortex_stt::model::downloads::Downloads;
 use cortex_stt::state::{AppState, JobStore};
 use cortex_stt::transcriber::Transcriber;
 use test_helpers::{audio_dir, model_dir};
@@ -50,7 +51,8 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
     eprintln!("Registered {registered} models from {}", mdir.display());
 
-    let model_manager = ModelManager::new(mdir);
+    let downloads = Downloads::new(mdir.clone());
+    let catalog = ModelCatalog::new(mdir, downloads.clone());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let history = History::new(db.clone(), data_dir.join("audio"))
         .await
@@ -59,7 +61,8 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
 
     let state = Arc::new(AppState {
         engine_manager,
-        model_manager,
+        catalog,
+        downloads,
         db,
         job_store: Arc::new(JobStore::with_defaults()),
         data_dir,

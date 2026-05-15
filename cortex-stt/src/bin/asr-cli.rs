@@ -8,14 +8,16 @@
 //!   asr-cli test-all <wav-dir>                # Test all downloaded models
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::registry::builtin_models;
+use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
-use cortex_stt::model::manager::ModelManager;
+use cortex_stt::model::downloads::Downloads;
 use cortex_stt::model::types::ModelStatus;
 
 #[derive(Parser)]
@@ -85,11 +87,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.model_dir)?;
 
-    let model_manager = ModelManager::new(cli.model_dir.clone());
+    let downloads = Downloads::new(cli.model_dir.clone());
+    let catalog = ModelCatalog::new(cli.model_dir.clone(), downloads.clone());
 
     match cli.command {
-        Command::List => cmd_list(&model_manager).await,
-        Command::Download { model_id } => cmd_download(&model_id, &model_manager).await,
+        Command::List => cmd_list(&catalog).await,
+        Command::Download { model_id } => cmd_download(&model_id, &catalog, &downloads).await,
         Command::Transcribe {
             model_id,
             wav_file,
@@ -100,20 +103,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wav_file,
             language,
         } => {
-            cmd_download_if_needed(&model_id, &model_manager).await?;
+            cmd_download_if_needed(&model_id, &catalog, &downloads).await?;
             cmd_transcribe(&model_id, &wav_file, language.as_deref(), &cli.model_dir).await
         }
-        Command::TestAll { wav_dir } => {
-            cmd_test_all(&wav_dir, &model_manager, &cli.model_dir).await
-        }
+        Command::TestAll { wav_dir } => cmd_test_all(&wav_dir, &catalog, &cli.model_dir).await,
         Command::VerifyUrls => cmd_verify_urls().await,
-        Command::DownloadAll => cmd_download_all(&model_manager).await,
+        Command::DownloadAll => cmd_download_all(&catalog, &downloads).await,
         Command::Verify { model_id } => cmd_verify(model_id.as_deref(), &cli.model_dir).await,
     }
 }
 
-async fn cmd_list(manager: &ModelManager) -> Result<(), Box<dyn std::error::Error>> {
-    let models = manager.list_models().await;
+async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Error>> {
+    let models = catalog.list_models().await;
 
     println!(
         "{:<25} {:<12} {:<12} {:<8} Languages",
@@ -162,9 +163,10 @@ async fn cmd_list(manager: &ModelManager) -> Result<(), Box<dyn std::error::Erro
 
 async fn cmd_download(
     model_id: &str,
-    manager: &ModelManager,
+    catalog: &ModelCatalog,
+    downloads: &Arc<Downloads>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let models = manager.list_models().await;
+    let models = catalog.list_models().await;
     let model_info = models
         .iter()
         .find(|m| m.id == model_id)
@@ -176,7 +178,7 @@ async fn cmd_download(
     ) {
         println!(
             "✓ Model '{model_id}' already downloaded at {}",
-            manager.model_dir().join(&model_info.filename).display()
+            catalog.model_dir().join(&model_info.filename).display()
         );
         return Ok(());
     }
@@ -197,15 +199,14 @@ async fn cmd_download(
         def.size_mb, def.url
     );
 
-    let dest_path = manager.model_dir().join(&def.filename);
-    let manager_arc = ModelManager::new(manager.model_dir().to_path_buf());
+    let dest_path = catalog.model_dir().join(&def.filename);
 
     let handle = download_model(
         &def.url,
         dest_path.clone(),
         &def.sha256,
         model_id,
-        manager_arc,
+        downloads.clone(),
         DownloadConfig {
             verify_sha256: !def.sha256.is_empty(),
             ..Default::default()
@@ -245,9 +246,10 @@ async fn cmd_download(
 
 async fn cmd_download_if_needed(
     model_id: &str,
-    manager: &ModelManager,
+    catalog: &ModelCatalog,
+    downloads: &Arc<Downloads>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let models = manager.list_models().await;
+    let models = catalog.list_models().await;
     let model = models.iter().find(|m| m.id == model_id);
 
     match model {
@@ -255,7 +257,7 @@ async fn cmd_download_if_needed(
             println!("✓ Model '{model_id}' already downloaded");
             Ok(())
         }
-        Some(_) => cmd_download(model_id, manager).await,
+        Some(_) => cmd_download(model_id, catalog, downloads).await,
         None => Err(format!("Model not found: {model_id}").into()),
     }
 }
@@ -291,8 +293,9 @@ async fn cmd_transcribe(
     let engine_manager = EngineManager::new(engine_config);
 
     // Determine engine type and model path — check both registry and scanned models
-    let manager = ModelManager::new(model_dir.to_path_buf());
-    let all_models = manager.list_models().await;
+    let downloads = Downloads::new(model_dir.to_path_buf());
+    let catalog = ModelCatalog::new(model_dir.to_path_buf(), downloads);
+    let all_models = catalog.list_models().await;
     let model_info = all_models.iter().find(|m| m.id == model_id);
 
     let (model_path, engine_type) = match model_info {
@@ -361,14 +364,14 @@ async fn cmd_transcribe(
 
 async fn cmd_test_all(
     wav_dir: &Path,
-    manager: &ModelManager,
+    catalog: &ModelCatalog,
     model_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !wav_dir.exists() {
         return Err(format!("WAV directory not found: {}", wav_dir.display()).into());
     }
 
-    let models = manager.list_models().await;
+    let models = catalog.list_models().await;
     let downloaded: Vec<_> = models
         .iter()
         .filter(|m| matches!(m.status, ModelStatus::Downloaded | ModelStatus::Custom))
@@ -532,14 +535,17 @@ async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn cmd_download_all(manager: &ModelManager) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_download_all(
+    catalog: &ModelCatalog,
+    downloads: &Arc<Downloads>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let models = builtin_models();
     let mut ok = 0u32;
     let mut fail = 0u32;
 
     for def in &models {
         println!("--- {} ---", def.id);
-        match cmd_download(&def.id, manager).await {
+        match cmd_download(&def.id, catalog, downloads).await {
             Ok(_) => ok += 1,
             Err(e) => {
                 println!("  ✗ FAILED: {e}");

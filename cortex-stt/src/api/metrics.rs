@@ -41,7 +41,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>
     let today_error_count = state.history.count_errors(true).await?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
-    let total_models = state.model_manager.list_models().await.len();
+    let total_models = state.catalog.list_models().await.len();
     let api_keys_count = state.db.list_api_keys().await?.len();
 
     let uptime_secs = state.started_at.elapsed().as_secs();

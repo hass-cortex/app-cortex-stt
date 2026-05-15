@@ -12,7 +12,8 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::traits::*;
 use cortex_stt::error::AsrError;
 use cortex_stt::history::History;
-use cortex_stt::model::manager::ModelManager;
+use cortex_stt::model::catalog::ModelCatalog;
+use cortex_stt::model::downloads::Downloads;
 use cortex_stt::state::{AppState, JobStore};
 use cortex_stt::transcriber::Transcriber;
 
@@ -70,7 +71,8 @@ async fn create_test_state() -> Arc<AppState> {
         .await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let model_manager = ModelManager::new(tmp.path().to_path_buf());
+    let downloads = Downloads::new(tmp.path().to_path_buf());
+    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
@@ -79,7 +81,8 @@ async fn create_test_state() -> Arc<AppState> {
 
     Arc::new(AppState {
         engine_manager,
-        model_manager,
+        catalog,
+        downloads,
         db,
         job_store: Arc::new(JobStore::with_defaults()),
         data_dir: tmp.path().to_path_buf(),
@@ -340,7 +343,8 @@ async fn test_sse_timeout_covers_acquire_phase() {
     engine_manager.register("slow-model", slow_factory).await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let model_manager = ModelManager::new(tmp.path().to_path_buf());
+    let downloads = Downloads::new(tmp.path().to_path_buf());
+    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
 
     // Configure a 1-second transcription timeout via settings.
@@ -357,7 +361,8 @@ async fn test_sse_timeout_covers_acquire_phase() {
 
     let state = Arc::new(AppState {
         engine_manager,
-        model_manager,
+        catalog,
+        downloads,
         db,
         job_store: Arc::new(JobStore::with_defaults()),
         data_dir: tmp.path().to_path_buf(),

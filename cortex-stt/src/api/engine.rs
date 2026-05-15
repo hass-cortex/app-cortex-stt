@@ -49,12 +49,7 @@ async fn set_default_model(
     axum::Json(body): axum::Json<SetDefaultRequest>,
 ) -> Result<impl IntoResponse, AsrError> {
     // Verify the model exists.
-    if state
-        .model_manager
-        .get_model(&body.model_id)
-        .await
-        .is_none()
-    {
+    if state.catalog.get_model(&body.model_id).await.is_none() {
         return Err(AsrError::ModelNotFound {
             model_id: body.model_id,
         });

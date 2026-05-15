@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::error::AsrError;
-use crate::model::manager::{ModelManager, QueuedDownloadRequest};
+use crate::model::downloads::{Downloads, QueuedDownloadRequest};
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
 /// Hosts allowed for model downloads.
@@ -92,7 +92,7 @@ pub async fn download_model(
     dest_path: PathBuf,
     expected_sha256: &str,
     model_id: &str,
-    model_manager: Arc<ModelManager>,
+    downloads: Arc<Downloads>,
     config: DownloadConfig,
 ) -> Result<DownloadHandle, AsrError> {
     if !validate_download_url(url) {
@@ -114,9 +114,7 @@ pub async fn download_model(
 
     // Register initial progress immediately so list_models() sees "downloading" status
     // before the first HTTP chunk arrives.
-    model_manager
-        .set_download_progress(initial_progress.clone())
-        .await;
+    downloads.set_progress(initial_progress.clone()).await;
 
     let (tx, rx) = watch::channel(initial_progress.clone());
 
@@ -130,7 +128,7 @@ pub async fn download_model(
             &dest_path,
             &expected_sha256,
             &model_id,
-            &model_manager,
+            &downloads,
             &config,
             &tx,
         )
@@ -147,7 +145,7 @@ pub async fn download_model(
                     eta_secs: None,
                     error: None,
                 };
-                model_manager.set_download_progress(progress.clone()).await;
+                downloads.set_progress(progress.clone()).await;
                 let _ = tx.send(progress);
             }
             Err(e) => {
@@ -161,19 +159,19 @@ pub async fn download_model(
                     eta_secs: None,
                     error: Some(e.to_string()),
                 };
-                model_manager.set_download_progress(progress.clone()).await;
+                downloads.set_progress(progress.clone()).await;
                 let _ = tx.send(progress);
             }
         }
 
         // Release the active slot and start the next queued download.
-        if let Some(next) = model_manager.on_download_finished().await {
-            tokio::spawn(start_queued_download(next, model_manager.clone()));
+        if let Some(next) = downloads.on_finished().await {
+            tokio::spawn(start_queued_download(next, downloads.clone()));
         }
 
         // Brief delay so SSE clients can pick up the terminal status.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        model_manager.remove_download_progress(&model_id).await;
+        downloads.remove_progress(&model_id).await;
     });
 
     Ok(DownloadHandle {
@@ -187,30 +185,32 @@ pub async fn download_model(
 /// start_queued_download → download_model).
 pub fn start_queued_download(
     request: QueuedDownloadRequest,
-    model_manager: Arc<ModelManager>,
+    downloads: Arc<Downloads>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
+        let model_id = request.model_id.clone();
+        let dest_path = request.dest_path.clone();
         match download_model(
             &request.url,
             request.dest_path,
             &request.sha256,
             &request.model_id,
-            model_manager.clone(),
+            downloads.clone(),
             DownloadConfig::default(),
         )
         .await
         {
             Ok(handle) => {
-                model_manager
-                    .set_download_handle(request.model_id, handle.task_handle)
+                downloads
+                    .register_active(model_id, handle.task_handle, dest_path)
                     .await;
             }
             Err(e) => {
                 error!(
-                    model_id = %request.model_id, error = %e,
+                    model_id = %model_id, error = %e,
                     "failed to start queued download"
                 );
-                model_manager.release_download_slot().await;
+                downloads.release_slot().await;
             }
         }
     })
@@ -222,7 +222,7 @@ async fn download_task(
     dest_path: &Path,
     expected_sha256: &str,
     model_id: &str,
-    model_manager: &Arc<ModelManager>,
+    downloads: &Arc<Downloads>,
     config: &DownloadConfig,
     tx: &watch::Sender<DownloadProgress>,
 ) -> Result<(), AsrError> {
@@ -287,7 +287,7 @@ async fn download_task(
             dest_path,
             expected_sha256,
             model_id,
-            model_manager,
+            downloads,
             config,
             tx,
         ))
@@ -357,7 +357,7 @@ async fn download_task(
             error: None,
         };
 
-        model_manager.set_download_progress(progress.clone()).await;
+        downloads.set_progress(progress.clone()).await;
         let _ = tx.send(progress);
     }
 
@@ -381,7 +381,7 @@ async fn download_task(
             eta_secs: None,
             error: None,
         };
-        model_manager.set_download_progress(verifying.clone()).await;
+        downloads.set_progress(verifying.clone()).await;
         let _ = tx.send(verifying);
 
         let actual = compute_sha256(&part_path).await?;
@@ -418,9 +418,7 @@ async fn download_task(
             eta_secs: None,
             error: None,
         };
-        model_manager
-            .set_download_progress(extracting.clone())
-            .await;
+        downloads.set_progress(extracting.clone()).await;
         let _ = tx.send(extracting);
 
         info!(model_id = %model_id, "extracting archive");

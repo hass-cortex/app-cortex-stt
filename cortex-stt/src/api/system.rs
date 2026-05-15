@@ -206,7 +206,7 @@ struct StorageResponse {
 }
 
 async fn get_storage_info(State(state): State<Arc<AppState>>) -> axum::Json<StorageResponse> {
-    let model_dir = state.model_manager.model_dir().to_path_buf();
+    let model_dir = state.catalog.model_dir().to_path_buf();
     let audio_dir = state.data_dir.join("audio");
     let db_path = state.data_dir.join("records.db");
     let free_path = state.data_dir.clone();

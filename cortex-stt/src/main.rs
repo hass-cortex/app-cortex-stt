@@ -22,7 +22,8 @@ use cortex_stt::config::AppConfig;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::History;
-use cortex_stt::model::manager::ModelManager;
+use cortex_stt::model::catalog::ModelCatalog;
+use cortex_stt::model::downloads::Downloads;
 use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
 use cortex_stt::transcriber::Transcriber;
 use tokio::net::TcpListener;
@@ -86,8 +87,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Pre-configured Home Assistant discovery API key registered");
     }
 
-    // Create model manager.
-    let model_manager = ModelManager::new(model_dir);
+    // Build the model catalog + download coordinator. Catalog reads
+    // the registry + scans the model_dir; Downloads owns queue +
+    // progress + cancellation. Catalog consults Downloads for live
+    // status during list_models.
+    let downloads = Downloads::new(model_dir.clone());
+    let catalog = ModelCatalog::new(model_dir, downloads.clone());
 
     // Create engine manager (returns Arc<EngineManager>).
     // DB settings take precedence over CLI defaults for engine behavior.
@@ -170,7 +175,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build shared application state.
     let state = Arc::new(AppState {
         engine_manager: engine_manager.clone(),
-        model_manager,
+        catalog,
+        downloads,
         db: db.clone(),
         job_store,
         data_dir: config.data_dir.clone(),

@@ -14,13 +14,13 @@ use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::builtin_models;
 use crate::error::AsrError;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
-use crate::model::manager::QueuedDownloadRequest;
+use crate::model::downloads::QueuedDownloadRequest;
 use crate::model::types::DownloadPhase;
 use crate::state::AppState;
 
 /// GET /api/models — list all models with status.
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut models = state.model_manager.list_models().await;
+    let mut models = state.catalog.list_models().await;
 
     // Enrich with engine load status and hardware recommendations.
     let loaded = state.engine_manager.loaded_models().await;
@@ -42,14 +42,14 @@ async fn delete_model(
     state.engine_manager.unload(&model_id).await;
 
     // Delete files from disk.
-    state.model_manager.delete_model(&model_id).await?;
+    state.catalog.delete_model(&model_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /api/models/scan — rescan for custom models on disk.
 async fn scan_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let custom = state.model_manager.scan_custom_models();
+    let custom = state.catalog.scan_custom_models();
     axum::Json(custom)
 }
 
@@ -59,7 +59,7 @@ async fn start_download(
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
     // Check if already downloading or queued.
-    if state.model_manager.is_downloading(&model_id).await {
+    if state.downloads.is_downloading(&model_id).await {
         return Err(AsrError::DownloadInProgress { model_id });
     }
 
@@ -71,7 +71,7 @@ async fn start_download(
             model_id: model_id.clone(),
         })?;
 
-    let dest_path = state.model_manager.model_dir().join(&definition.filename);
+    let dest_path = state.catalog.model_dir().join(&definition.filename);
 
     let request = QueuedDownloadRequest {
         model_id: model_id.clone(),
@@ -81,13 +81,16 @@ async fn start_download(
     };
 
     // Try to claim a download slot; if full, request is queued automatically.
-    if let Some(request) = state.model_manager.try_claim_download_slot(request).await {
+    if let Some(request) = state.downloads.try_claim_slot(request).await {
+        // Keep a copy of dest_path so we can register the running task
+        // with Downloads (cancel-time `.part` cleanup needs it).
+        let dest_path_owned = request.dest_path.clone();
         let handle = match download_model(
             &request.url,
             request.dest_path,
             &request.sha256,
             &request.model_id,
-            state.model_manager.clone(),
+            state.downloads.clone(),
             DownloadConfig::default(),
         )
         .await
@@ -95,9 +98,9 @@ async fn start_download(
             Ok(h) => h,
             Err(e) => {
                 // Release the claimed slot on failure.
-                let mgr = state.model_manager.clone();
+                let downloads = state.downloads.clone();
                 tokio::spawn(async move {
-                    mgr.release_download_slot().await;
+                    downloads.release_slot().await;
                 });
                 return Err(e);
             }
@@ -105,8 +108,8 @@ async fn start_download(
 
         let progress_rx = handle.progress_rx;
         state
-            .model_manager
-            .set_download_handle(model_id.clone(), handle.task_handle)
+            .downloads
+            .register_active(model_id.clone(), handle.task_handle, dest_path_owned)
             .await;
 
         // Auto-register the engine factory when the download finishes so the
@@ -132,7 +135,7 @@ async fn start_download(
                             .unwrap_or_default();
                         crate::engine::register::register_downloaded_models(
                             &watch_state.engine_manager,
-                            watch_state.model_manager.model_dir(),
+                            watch_state.catalog.model_dir(),
                             &device_overrides,
                         )
                         .await;
@@ -164,18 +167,18 @@ async fn download_progress(
     Path(model_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
     // Verify the model exists.
-    if state.model_manager.get_model(&model_id).await.is_none() {
+    if state.catalog.get_model(&model_id).await.is_none() {
         return Err(AsrError::ModelNotFound {
             model_id: model_id.clone(),
         });
     }
 
-    let manager = state.model_manager.clone();
+    let downloads = state.downloads.clone();
     let id = model_id.clone();
 
     let stream = async_stream::stream! {
         loop {
-            let progress = manager.get_download_progress(&id).await;
+            let progress = downloads.get_progress(&id).await;
 
             match progress {
                 Some(p) => {
@@ -218,12 +221,12 @@ async fn cancel_download_handler(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let slot_released = state.model_manager.cancel_download(&model_id).await?;
+    let slot_released = state.downloads.cancel(&model_id).await?;
 
     // If an active slot was freed, start the next queued download.
     if slot_released {
-        if let Some(next) = state.model_manager.on_download_finished().await {
-            tokio::spawn(start_queued_download(next, state.model_manager.clone()));
+        if let Some(next) = state.downloads.on_finished().await {
+            tokio::spawn(start_queued_download(next, state.downloads.clone()));
         }
     }
 

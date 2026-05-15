@@ -9,7 +9,8 @@ use tokio::sync::RwLock;
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::history::History;
-use crate::model::manager::ModelManager;
+use crate::model::catalog::ModelCatalog;
+use crate::model::downloads::Downloads;
 use crate::transcriber::Transcriber;
 
 /// Default maximum number of jobs (any status) retained in memory.
@@ -224,7 +225,8 @@ pub fn spawn_job_sweeper(job_store: Arc<JobStore>) -> tokio::task::JoinHandle<()
 #[derive(Clone)]
 pub struct AppState {
     pub engine_manager: Arc<EngineManager>,
-    pub model_manager: Arc<ModelManager>,
+    pub catalog: Arc<ModelCatalog>,
+    pub downloads: Arc<Downloads>,
     pub db: Arc<Database>,
     pub job_store: Arc<JobStore>,
     pub data_dir: PathBuf,
