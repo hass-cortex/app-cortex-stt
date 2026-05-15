@@ -1,6 +1,11 @@
 //! Transcription history — the unified concept of a DB row paired with
-//! an optional WAV file on disk. See `CONTEXT.md` for the domain
+//! an optional audio file on disk. See `CONTEXT.md` for the domain
 //! vocabulary (Delete record vs Drop audio, Retention candidate, …).
+//!
+//! New audio files are written as Ogg Opus (`.opus`) for storage
+//! efficiency. Legacy `.wav` rows created before this change continue
+//! to be served as-is; the read path picks Content-Type from the file
+//! extension stored on the record.
 //!
 //! Two invariants this module exists to protect:
 //!
@@ -17,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::warn;
 
-use crate::audio::wav_writer::write_wav;
+use crate::audio::opus_writer::write_opus;
 use crate::db::database::Database;
 use crate::error::AsrError;
 use crate::retention::RetentionCandidate;
@@ -70,9 +75,9 @@ impl History {
 
         let audio_filename: Option<String> = match samples {
             Some(samples) => {
-                let filename = format!("{id}.wav");
+                let filename = format!("{id}.opus");
                 let path = self.audio_dir.join(&filename);
-                match write_wav(&path, samples).await {
+                match write_opus(&path, samples).await {
                     Ok(()) => Some(filename),
                     Err(e) => {
                         warn!(error = %e, record_id = %id, "Failed to save audio file; recording row without audio");
@@ -113,10 +118,12 @@ impl History {
         store::list(&self.db, filter).await
     }
 
-    /// Read the raw WAV bytes for the given record. Returns
+    /// Read the audio bytes for the given record plus the matching
+    /// MIME type derived from the file extension (`.opus` →
+    /// `audio/ogg`, `.wav` → `audio/wav`). Returns
     /// [`AsrError::RecordNotFound`] if the row is absent, or
     /// [`AsrError::NoAudio`] if the row has no audio_path.
-    pub async fn read_audio(&self, id: &str) -> Result<Vec<u8>, AsrError> {
+    pub async fn read_audio(&self, id: &str) -> Result<(Vec<u8>, &'static str), AsrError> {
         let record = self
             .get(id)
             .await?
@@ -126,8 +133,10 @@ impl History {
         let filename = record.audio_path.ok_or_else(|| AsrError::NoAudio {
             record_id: id.to_string(),
         })?;
+        let mime = mime_for(&filename);
         let path = self.audio_dir.join(filename);
-        tokio::fs::read(&path).await.map_err(AsrError::Io)
+        let bytes = tokio::fs::read(&path).await.map_err(AsrError::Io)?;
+        Ok((bytes, mime))
     }
 
     // -----------------------------------------------------------------
@@ -314,7 +323,18 @@ impl History {
     }
 }
 
-/// Remove a single WAV. Missing files are treated as success
+/// MIME type for serving a history audio file based on its extension.
+/// New rows are `.opus` (Ogg Opus); pre-migration rows remain `.wav`.
+fn mime_for(filename: &str) -> &'static str {
+    let lower = filename.to_ascii_lowercase();
+    if lower.ends_with(".opus") || lower.ends_with(".ogg") {
+        "audio/ogg"
+    } else {
+        "audio/wav"
+    }
+}
+
+/// Remove a single audio file. Missing files are treated as success
 /// (idempotent cleanup — retention may try repeatedly). Other I/O
 /// errors are logged and returned so the caller can leave the
 /// referencing row in place.

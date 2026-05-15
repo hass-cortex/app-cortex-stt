@@ -28,6 +28,8 @@ tower = "0.5"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tokio-rusqlite = "0.7"
 rubato = "2"
+opus = "0.3"
+ogg = "0.9"
 sha2 = "0.11"
 hex = "0.4"
 rand = "0.10"

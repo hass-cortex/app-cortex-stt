@@ -79,26 +79,29 @@ async fn create_with_samples_writes_wav_and_links_path() {
     let filename = fetched
         .audio_path
         .expect("audio_path set when samples given");
-    assert_eq!(filename, format!("{id}.wav"));
+    assert_eq!(filename, format!("{id}.opus"));
 
-    let wav_path = tmp.path().join("audio").join(&filename);
-    assert!(wav_path.exists(), "WAV file should be written to disk");
+    let audio_file = tmp.path().join("audio").join(&filename);
+    assert!(audio_file.exists(), "audio file should be written to disk");
 }
 
 #[tokio::test]
-async fn delete_record_removes_row_and_wav() {
+async fn delete_record_removes_row_and_audio() {
     let (history, tmp) = setup().await;
     let samples = vec![0.0f32; 16_000];
     let id = history
         .create(sample_record(), Some(&samples))
         .await
         .unwrap();
-    let wav_path = tmp.path().join("audio").join(format!("{id}.wav"));
-    assert!(wav_path.exists());
+    let audio_file = tmp.path().join("audio").join(format!("{id}.opus"));
+    assert!(audio_file.exists());
 
     assert!(history.delete(&id).await.unwrap(), "first delete succeeds");
     assert!(history.get(&id).await.unwrap().is_none());
-    assert!(!wav_path.exists(), "WAV must be removed alongside the row");
+    assert!(
+        !audio_file.exists(),
+        "audio must be removed alongside the row"
+    );
 
     assert!(!history.delete(&id).await.unwrap(), "idempotent delete");
 }
@@ -111,7 +114,7 @@ async fn drop_audios_nulls_audio_path_but_keeps_row() {
         .create(sample_record(), Some(&samples))
         .await
         .unwrap();
-    let wav_path = tmp.path().join("audio").join(format!("{id}.wav"));
+    let audio_file = tmp.path().join("audio").join(format!("{id}.opus"));
 
     let dropped = history
         .drop_audios(std::slice::from_ref(&id))
@@ -124,7 +127,7 @@ async fn drop_audios_nulls_audio_path_but_keeps_row() {
         fetched.audio_path.is_none(),
         "audio_path must be NULL after Drop audio — invariant guard"
     );
-    assert!(!wav_path.exists(), "WAV file removed");
+    assert!(!audio_file.exists(), "audio file removed");
 }
 
 #[tokio::test]

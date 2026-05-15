@@ -69,8 +69,8 @@ async fn get_history_audio(
     State(state): State<Arc<AppState>>,
     Path(record_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let data = state.history.read_audio(&record_id).await?;
-    Ok((StatusCode::OK, [(header::CONTENT_TYPE, "audio/wav")], data))
+    let (data, mime) = state.history.read_audio(&record_id).await?;
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, mime)], data))
 }
 
 async fn delete_history_record(
