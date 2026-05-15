@@ -281,3 +281,9 @@ pipeline:
 See the workspace-level [`docs/release/`](../docs/release/README.md)
 for the full pipeline diagram, end-user install paths, and the
 maintainer runbook (cutting beta then stable, troubleshooting).
+
+### Release tags
+
+Use a lightweight tag — `git tag <version> && git push origin <version>`.
+Do not pass `-a`/`-m`; annotated tags break the catalog
+`repository-updater`.
