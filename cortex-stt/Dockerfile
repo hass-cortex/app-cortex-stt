@@ -15,6 +15,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rustup component add rustfmt
 
 COPY Cargo.toml Cargo.lock ./
+# `.cargo/config.toml` sets `GGML_*=OFF` so whisper.cpp does **not**
+# inherit GitHub Actions runner SIMD features (which would SIGILL on
+# any host lacking them — e.g. Proxmox VE default `kvm64`). Without
+# this COPY the env vars are silently dropped and the released GHCR
+# image is built with `-march=native`.
+COPY .cargo/ ./.cargo/
 COPY src/ ./src/
 ARG CARGO_FEATURES=default
 RUN cargo build --release --features "${CARGO_FEATURES}"

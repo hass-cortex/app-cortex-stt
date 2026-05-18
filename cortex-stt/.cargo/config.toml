@@ -1,4 +1,18 @@
+# whisper.cpp/ggml: forbid `-march=native`.
+#
+# Without this override the released GHCR image is built with whatever
+# SIMD features the GitHub Actions runner happens to expose (e.g.
+# AVX-512). The init-oneshot preflight only checks for the documented
+# minimum (avx/avx2/fma/f16c/bmi2/sse4_2 — `x86-64-v3`); any feature
+# above that would slip past it and SIGILL the binary in ggml's hot
+# path on capable-but-not-runner-grade hardware. With NATIVE=OFF ggml
+# falls back to its `INS_ENB` defaults (AVX, AVX2, FMA, F16C, BMI2,
+# SSE 4.2 all ON; AVX-512 family OFF), which exactly matches what the
+# preflight already enforces — so the inference kernels stay fast on
+# Haswell-class CPUs without exceeding the supported baseline.
+#
+# `.cargo/config.toml` is consumed by both the local `cargo build`
+# and the Dockerfile build (the `COPY .cargo/` line in the Dockerfile
+# is what propagates this setting into the addon image).
 [env]
-# Prevent whisper.cpp from compiling with -march=native.
-# Native instructions (e.g. AVX-512) cause SIGILL on targets that lack them.
 GGML_NATIVE = "OFF"

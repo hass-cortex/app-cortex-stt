@@ -4,6 +4,14 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 use std::sync::Arc;
 use std::time::Duration;
 
+// CPU feature compatibility is enforced *outside* this binary, by the
+// addon's s6 init oneshot (`rootfs/.../init-cortex-stt/run`). A guard
+// inside `main()` cannot help: the statically-linked ONNX Runtime's
+// C++ global initializers execute AVX2/FMA/F16C/BMI2 instructions
+// before `main()` is ever entered, so any SIGILL on a too-old CPU has
+// already happened by the time Rust code runs. See DOCS.md ->
+// System Requirements for the supported baseline.
+
 use axum::Router;
 use axum::middleware;
 use cortex_stt::api::auth::auth_middleware;
