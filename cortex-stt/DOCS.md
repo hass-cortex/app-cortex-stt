@@ -8,6 +8,49 @@ Multi-engine speech-to-text service for Home Assistant. Supports
 via a unified HTTP API, with a built-in admin UI for downloading and
 managing models.
 
+## System Requirements
+
+**x86-64** host with **AVX + AVX2 + FMA + F16C + BMI2 + SSE 4.2** support
+(Intel Haswell / 2013+, AMD Excavator / 2015+ — the `x86-64-v3`
+micro-architecture level).
+
+The bundled ONNX Runtime (used by the SenseVoice and Parakeet engines)
+is statically linked into the binary and executes AVX2/FMA/F16C/BMI2
+instructions in its C++ **global initializers**, which run before any
+code inside cortex-stt itself. A runtime guard inside the binary
+therefore cannot prevent a `SIGILL` on under-spec hardware. Instead,
+the addon's init oneshot parses `/proc/cpuinfo` and refuses to start
+with a readable diagnostic (exit code 78 / `EX_CONFIG`) if any
+required flag is missing — no crash-loop.
+
+Performance-sensitive libraries (ONNX Runtime, rustfft, sha2, rustls)
+dispatch their own AVX-512 kernels at runtime when available, so newer
+hardware still gets the speed-up.
+
+Verify on the host (not inside HA):
+
+```bash
+grep -ow 'avx\|avx2\|fma\|f16c\|bmi2\|sse4_2' /proc/cpuinfo | sort -u
+# Expect six lines: avx, avx2, bmi2, f16c, fma, sse4_2
+```
+
+**Running Home Assistant OS in Proxmox VE / KVM / libvirt?** The default
+KVM CPU types (`qemu64`, `kvm64`, `x86-64-v2-AES`) mask AVX/AVX2/FMA
+from the guest even when the bare-metal host supports them. Change the
+HAOS VM's CPU type:
+
+1. PVE web UI → select your HAOS VM → **Hardware** → **Processors** → **Edit**.
+1. **Type**: set to `host` (passes the bare-metal CPU through and lets
+   runtime dispatch pick the fastest kernels — recommended) or
+   `x86-64-v3` (live-migratable across Haswell-class nodes in a
+   cluster).
+1. Click **OK**. **Fully shut down and start** the VM — `Reboot` is not
+   enough; KVM only re-applies the CPU mask on a cold boot.
+
+The same applies to other KVM/QEMU-based stacks (libvirt `<cpu mode='custom'>`,
+unRAID, TrueNAS Scale) — set CPU mode to `host-passthrough` or pick a
+Haswell-or-newer model.
+
 ## Installation
 
 Click the Home Assistant My button below to open the app on your Home Assistant instance.
@@ -106,6 +149,21 @@ already configured the integration with a known value and want to keep
 it after a reinstall. Leave it empty to auto-generate.
 
 ## Troubleshooting
+
+**App exits at startup with `FATAL: Cortex STT cannot start on this CPU.`.**
+The init oneshot detected that the running CPU is missing one or more
+of avx / avx2 / fma / f16c / bmi2 / sse4_2 — see **System Requirements**
+above. The diagnostic prints `Missing instruction set(s): …` and exits
+with code 78 (`EX_CONFIG`) so HA Supervisor stops auto-restarting.
+Almost always a Proxmox VE / KVM guest still on the default `qemu64` /
+`kvm64` / `x86-64-v2-AES` CPU type — change the VM's CPU Type and
+**cold-boot** the VM.
+
+**App crash-loops with `Service cortex-stt exited with code 256 (by signal 4)`.**
+SIGILL bypassed the preflight check — should not happen on 0.1.7+. If
+you see this on a recent version, please open an issue with the host
+CPU model and the contents of `/proc/cpuinfo` so we can extend the
+preflight check.
 
 **The admin UI shows "Cannot connect" right after start.** First boot
 initializes the database; wait ~10 seconds and reload.

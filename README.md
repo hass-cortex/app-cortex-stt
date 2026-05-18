@@ -21,6 +21,16 @@ Home Assistant app providing multi-engine speech-to-text with Whisper, Parakeet,
 
 See [cortex-stt/DOCS.md](cortex-stt/DOCS.md) for full install, configuration, discovery, and troubleshooting instructions.
 
+> **Heads-up for Proxmox VE / KVM users.** The pre-built binary's
+> bundled ONNX Runtime requires **AVX + AVX2 + FMA + F16C + BMI2 +
+> SSE 4.2** (Intel Haswell 2013+ / `x86-64-v3`). PVE's default
+> `qemu64` / `kvm64` / `x86-64-v2-AES` CPU types mask AVX/AVX2/FMA
+> from the guest — change the HAOS VM's CPU **Type** to `host` (or
+> `x86-64-v3`) and **cold-boot** the VM (reboot is not enough). The
+> addon's init oneshot detects the missing flags and prints a
+> readable diagnostic instead of crash-looping. Full steps in
+> [DOCS.md](cortex-stt/DOCS.md#system-requirements).
+
 ## Acknowledgements
 
 - [transcribe-rs](https://github.com/cjpais/transcribe-rs) — the unified Rust library providing the multi-engine inference layer.
