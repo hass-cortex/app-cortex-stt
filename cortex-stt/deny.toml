@@ -4,6 +4,14 @@
 [advisories]
 version = 2
 yanked = "warn"
+ignore = [
+    # RUSTSEC-2026-0150: audiopus_sys (transitive via `opus 0.3`) is unmaintained.
+    # This is an "unmaintained" advisory, not a security vulnerability, and no safe
+    # upgrade exists upstream (last commit 5 years ago; maintainer unresponsive).
+    # The bundled C build still compiles on our CI and runtime. Revisit if CMake 4.0
+    # actually breaks the build, or once a maintained Opus binding becomes available.
+    { id = "RUSTSEC-2026-0150", reason = "audiopus_sys unmaintained; no upstream fix, build still works" },
+]
 
 [licenses]
 version = 2
