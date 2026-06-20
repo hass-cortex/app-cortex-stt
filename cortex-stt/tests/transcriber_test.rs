@@ -233,6 +233,67 @@ async fn transcribe_propagates_engine_panic() {
 }
 
 #[tokio::test]
+async fn transcribe_stream_persists_aborted_row_on_consumer_drop() {
+    let f = fixture("whisper-small").await;
+
+    let stream = Arc::clone(&f.transcriber).transcribe_stream(request_for("whisper-small"));
+    let mut stream = Box::pin(stream);
+
+    // Drive past EngineAcquired + InferenceStarted so the abort guard is armed
+    // with an engine slot committed, then simulate an SSE client disconnect by
+    // dropping the stream future before the terminal Completed is reached.
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TranscribeStage::EngineAcquired { .. }
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TranscribeStage::InferenceStarted
+    ));
+    drop(stream);
+
+    // The guard persists the aborted row on a detached task, so poll (bounded)
+    // until it lands rather than racing a fixed sleep.
+    let mut records = Vec::new();
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        records = f.history.list(&ListRecordsFilter::default()).await.unwrap();
+        if !records.is_empty() {
+            break;
+        }
+    }
+
+    assert_eq!(records.len(), 1, "aborted row should be persisted on drop");
+    assert!(records[0].has_error, "aborted row must have has_error=true");
+    assert!(records[0].text.is_empty(), "aborted row has no transcript");
+    assert_eq!(records[0].model_id, "whisper-small");
+    assert!(
+        records[0].audio_path.is_none(),
+        "audio must never be persisted for an aborted request"
+    );
+}
+
+#[tokio::test]
+async fn transcribe_stream_writes_no_aborted_row_on_clean_completion() {
+    let f = fixture("whisper-small").await;
+
+    // Consume the stream fully: the guard must disarm so only the success row
+    // exists — no spurious aborted row from the drop at end-of-stream.
+    let stream = Arc::clone(&f.transcriber).transcribe_stream(request_for("whisper-small"));
+    let mut stream = Box::pin(stream);
+    while stream.next().await.is_some() {}
+    drop(stream);
+
+    // Give any erroneously-spawned abort task a chance to run before asserting.
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let records = f.history.list(&ListRecordsFilter::default()).await.unwrap();
+    assert_eq!(records.len(), 1, "exactly one success row, no aborted row");
+    assert!(!records[0].has_error);
+    assert_eq!(records[0].text, "hello world");
+}
+
+#[tokio::test]
 async fn transcribe_writes_wav_when_save_audio_enabled() {
     let f = fixture("whisper-small").await;
     // `Settings::default()` has `save_audio = true`; the pipeline

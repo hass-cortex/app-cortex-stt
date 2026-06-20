@@ -206,6 +206,13 @@ impl Transcriber {
                     unreachable!()
                 }
             };
+
+            // Engine slot committed and inference about to run — arm the abort
+            // guard so a consumer that drops the stream mid-inference (e.g. SSE
+            // client disconnect) still leaves an aborted row instead of a
+            // silent gap. Disarmed at each terminal branch below.
+            let mut abort_guard = StreamAbortGuard::armed(Arc::clone(&self), &req);
+
             yield TranscribeStage::EngineAcquired {
                 pool_wait_ms: metrics.pool_wait_ms,
                 cold_load_ms: metrics.cold_load_ms,
@@ -230,12 +237,14 @@ impl Transcriber {
                 Ok(v) => v,
                 Err(e) => {
                     self.on_failure(&req, &e).await;
+                    abort_guard.disarm();
                     Err::<(), AsrError>(e)?;
                     unreachable!()
                 }
             };
 
             self.save_to_history(&req, &response, settings.save_audio).await;
+            abort_guard.disarm();
             tracing::info!(
                 model = %req.model,
                 inference_ms = response.inference_ms,
@@ -356,6 +365,66 @@ fn base_record(req: &TranscribeRequest) -> CreateRecord {
         error_message: None,
         api_key_id: req.api_key_id.clone(),
         device: String::new(),
+    }
+}
+
+/// Persists an "aborted" failure row if the streaming pipeline's future is
+/// dropped after inference has started but before a terminal write.
+///
+/// The sync path always reaches either `save_to_history` or `on_failure`, but
+/// the streaming path's future can simply be dropped mid-inference when the
+/// SSE consumer disconnects — neither terminal branch runs, so genuinely
+/// started work would otherwise leave no history row and never reach
+/// `error_count`. The guard is armed once an engine slot is committed and
+/// disarmed at each terminal branch; if it is still armed on `Drop`, it
+/// best-effort persists the pre-built failure row on a detached task (the
+/// owning future is already gone, so the write cannot be awaited inline).
+struct StreamAbortGuard {
+    transcriber: Arc<Transcriber>,
+    record: Option<CreateRecord>,
+    armed: bool,
+}
+
+impl StreamAbortGuard {
+    fn armed(transcriber: Arc<Transcriber>, req: &TranscribeRequest) -> Self {
+        let record = CreateRecord {
+            has_error: true,
+            error_message: Some("client disconnected before completion".to_string()),
+            ..base_record(req)
+        };
+        Self {
+            transcriber,
+            record: Some(record),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StreamAbortGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(record) = self.record.take() else {
+            return;
+        };
+        // Dropped mid-inference (e.g. SSE client disconnect). The future is
+        // gone, so persist on a detached task; skip if no runtime is current
+        // (e.g. dropped during shutdown) rather than panicking.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            warn!("No runtime available to persist aborted transcription row");
+            return;
+        };
+        let transcriber = Arc::clone(&self.transcriber);
+        handle.spawn(async move {
+            if let Err(e) = transcriber.history.create(record, None).await {
+                warn!(error = %e, "Failed to persist aborted transcription row");
+            }
+        });
     }
 }
 
