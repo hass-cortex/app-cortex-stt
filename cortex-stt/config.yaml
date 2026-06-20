@@ -29,7 +29,9 @@ map:
     read_only: false
 options:
   log_level: info
+  log_filter: ""
   discovery_api_key: ""
 schema:
   log_level: list(trace|debug|info|warning|error|fatal)
+  log_filter: str?
   discovery_api_key: password?

@@ -3,6 +3,15 @@ configuration:
   log_level:
     name: Log Level
     description: Logging verbosity level
+  log_filter:
+    name: Log Filter (advanced)
+    description: >-
+      Raw RUST_LOG filter that overrides Log Level when set. The Log Level
+      debug/trace settings only raise this app's own logs and keep dependency
+      crates at info; set a filter here (e.g. "info,ort=debug" or
+      "info,cortex_stt=debug,hyper=debug") to capture a dependency's logs when
+      diagnosing model-load, HTTP, or resampling issues. Leave empty to use
+      Log Level.
   discovery_api_key:
     name: Home Assistant discovery API key
     description: >-
