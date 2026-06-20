@@ -317,7 +317,11 @@ async fn transcribe_async(
                     .await;
             }
             Err(e) => {
-                tracing::warn!(
+                // Transcriber::transcribe already logged the failure at warn
+                // level and persisted a failure history row; this breadcrumb
+                // only adds the job_id correlation, so keep it at debug to
+                // avoid double-counting failures in warn-level log scrapes.
+                tracing::debug!(
                     job_id = %job_id_bg,
                     code = e.code(),
                     error = %e,

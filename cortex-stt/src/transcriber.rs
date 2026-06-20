@@ -284,9 +284,6 @@ impl Transcriber {
     ) {
         let segments_json = serde_json::to_string(&response.segments).unwrap_or_default();
         let record = CreateRecord {
-            source: req.source,
-            language: req.language.clone(),
-            model_id: req.model.clone(),
             audio_duration_ms: response.duration_ms as i64,
             inference_ms: response.inference_ms as i64,
             model_load_ms: response.model_load_ms as i64,
@@ -294,10 +291,8 @@ impl Transcriber {
             cold_load_ms: response.cold_load_ms as i64,
             text: response.text.clone(),
             segments_json,
-            has_error: false,
-            error_message: None,
-            api_key_id: req.api_key_id.clone(),
             device: response.device.clone(),
+            ..base_record(req)
         };
         let samples_opt = save_audio.then_some(req.samples.as_ref());
         if let Err(e) = self.history.create(record, samples_opt).await {
@@ -319,20 +314,9 @@ impl Transcriber {
             "transcription failed",
         );
         let record = CreateRecord {
-            source: req.source,
-            language: req.language.clone(),
-            model_id: req.model.clone(),
-            audio_duration_ms: req.duration_ms as i64,
-            inference_ms: 0,
-            model_load_ms: 0,
-            pool_wait_ms: 0,
-            cold_load_ms: 0,
-            text: String::new(),
-            segments_json: "[]".to_string(),
             has_error: true,
             error_message: Some(error.to_string()),
-            api_key_id: req.api_key_id.clone(),
-            device: String::new(),
+            ..base_record(req)
         };
         // Never persist audio for a failed request.
         if let Err(e) = self.history.create(record, None).await {
@@ -349,6 +333,30 @@ impl Transcriber {
 struct AcquireMetrics {
     pool_wait_ms: u64,
     cold_load_ms: u64,
+}
+
+/// Common history fields shared by the success and failure paths, with
+/// outcome-neutral defaults (no timings, empty transcript, no error).
+/// Callers fill in only the fields that differ via struct-update syntax,
+/// so a new `CreateRecord` field is defaulted in one place rather than
+/// risking divergence between the two write sites.
+fn base_record(req: &TranscribeRequest) -> CreateRecord {
+    CreateRecord {
+        source: req.source,
+        language: req.language.clone(),
+        model_id: req.model.clone(),
+        audio_duration_ms: req.duration_ms as i64,
+        inference_ms: 0,
+        model_load_ms: 0,
+        pool_wait_ms: 0,
+        cold_load_ms: 0,
+        text: String::new(),
+        segments_json: "[]".to_string(),
+        has_error: false,
+        error_message: None,
+        api_key_id: req.api_key_id.clone(),
+        device: String::new(),
+    }
 }
 
 async fn run_inference(

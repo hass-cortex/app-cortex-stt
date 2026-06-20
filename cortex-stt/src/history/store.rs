@@ -454,12 +454,16 @@ pub(super) async fn count_records(
         .call(move |conn| {
             let count: i64 = if let Some(src) = source {
                 conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1",
+                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0",
                     params![src.as_str()],
                     |row| row.get(0),
                 )
             } else {
-                conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))
+                conn.query_row(
+                    "SELECT COUNT(*) FROM records WHERE has_error = 0",
+                    [],
+                    |row| row.get(0),
+                )
             }?;
             Ok(count as usize)
         })
@@ -475,13 +479,13 @@ pub(super) async fn count_records_today(
         .call(move |conn| {
             let count: i64 = if let Some(src) = source {
                 conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND timestamp >= datetime('now', 'start of day')",
+                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0 AND timestamp >= datetime('now', 'start of day')",
                     params![src.as_str()],
                     |row| row.get(0),
                 )
             } else {
                 conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                    "SELECT COUNT(*) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
                     [],
                     |row| row.get(0),
                 )
@@ -496,7 +500,7 @@ pub(super) async fn total_audio_duration_ms(db: &Arc<Database>) -> Result<i64, A
     db.connection()
         .call(|conn| {
             conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records",
+                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0",
                 [],
                 |row| row.get(0),
             )
@@ -509,7 +513,7 @@ pub(super) async fn today_audio_duration_ms(db: &Arc<Database>) -> Result<i64, A
     db.connection()
         .call(|conn| {
             conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE timestamp >= datetime('now', 'start of day')",
+                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
                 [],
                 |row| row.get(0),
             )
@@ -522,7 +526,7 @@ pub(super) async fn avg_inference_ms(db: &Arc<Database>) -> Result<f64, AsrError
     db.connection()
         .call(|conn| {
             conn.query_row(
-                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records",
+                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records WHERE has_error = 0",
                 [],
                 |row| row.get(0),
             )
