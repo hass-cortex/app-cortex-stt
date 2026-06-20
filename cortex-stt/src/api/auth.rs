@@ -51,6 +51,13 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
                         req.extensions_mut().insert(AuthKeyId(key_id));
                         return next.run(req).await;
                     }
+                    tracing::debug!(
+                        method = %req.method(),
+                        path = %req.uri().path(),
+                        reason = "invalid_api_key",
+                        auth = "query",
+                        "auth rejected",
+                    );
                     return AsrError::InvalidApiKey.into_response();
                 }
             }
@@ -67,6 +74,13 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
                         req.extensions_mut().insert(AuthKeyId(key_id));
                         return next.run(req).await;
                     }
+                    tracing::debug!(
+                        method = %req.method(),
+                        path = %req.uri().path(),
+                        reason = "invalid_api_key",
+                        auth = "bearer",
+                        "auth rejected",
+                    );
                     return AsrError::InvalidApiKey.into_response();
                 }
             }
@@ -74,5 +88,11 @@ pub async fn auth_middleware(mut req: Request, next: Next, db: Arc<Database>) ->
     }
 
     // 5. No valid credentials
+    tracing::debug!(
+        method = %req.method(),
+        path = %req.uri().path(),
+        reason = "missing_credentials",
+        "auth rejected",
+    );
     AsrError::AuthRequired.into_response()
 }

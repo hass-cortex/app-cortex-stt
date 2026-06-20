@@ -118,29 +118,61 @@ impl Transcriber {
     /// handler.
     pub async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResponse, AsrError> {
         let settings = RequestSettings::load(&self.db).await;
+        let started = Instant::now();
+        tracing::info!(
+            model = %req.model,
+            samples = req.samples.len(),
+            duration_ms = req.duration_ms,
+            source = ?req.source,
+            "transcription started",
+        );
         let deadline = RequestDeadline::from_now(settings.timeout_secs);
 
-        let (guard, metrics) = deadline
-            .enforce(self.acquire_engine(&req.model), &req.model)
-            .await?;
+        // Acquire + inference under the shared deadline. Errors are handled
+        // below so every terminal failure is logged and persisted, not just
+        // bubbled up silently.
+        let result = async {
+            let (guard, metrics) = deadline
+                .enforce(self.acquire_engine(&req.model), &req.model)
+                .await?;
+            deadline
+                .enforce(
+                    run_inference(
+                        guard,
+                        Arc::clone(&req.samples),
+                        req.options.clone(),
+                        req.model.clone(),
+                        req.duration_ms,
+                        metrics,
+                    ),
+                    &req.model,
+                )
+                .await
+        }
+        .await;
 
-        let response = deadline
-            .enforce(
-                run_inference(
-                    guard,
-                    Arc::clone(&req.samples),
-                    req.options.clone(),
-                    req.model.clone(),
-                    req.duration_ms,
-                    metrics,
-                ),
-                &req.model,
-            )
-            .await?;
-
-        self.save_to_history(&req, &response, settings.save_audio)
-            .await;
-        Ok(response)
+        match result {
+            Ok(response) => {
+                self.save_to_history(&req, &response, settings.save_audio)
+                    .await;
+                tracing::info!(
+                    model = %req.model,
+                    inference_ms = response.inference_ms,
+                    pool_wait_ms = response.pool_wait_ms,
+                    cold_load_ms = response.cold_load_ms,
+                    text_len = response.text.len(),
+                    empty = response.text.is_empty(),
+                    device = %response.device,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "transcription completed",
+                );
+                Ok(response)
+            }
+            Err(e) => {
+                self.on_failure(&req, &e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Run the pipeline yielding a [`TranscribeStage`] after each async
@@ -153,11 +185,27 @@ impl Transcriber {
     ) -> impl Stream<Item = Result<TranscribeStage, AsrError>> + Send + 'static {
         async_stream::try_stream! {
             let settings = RequestSettings::load(&self.db).await;
+            let started = Instant::now();
+            tracing::info!(
+                model = %req.model,
+                samples = req.samples.len(),
+                duration_ms = req.duration_ms,
+                source = ?req.source,
+                "transcription started (stream)",
+            );
             let deadline = RequestDeadline::from_now(settings.timeout_secs);
 
-            let (guard, metrics) = deadline
+            let (guard, metrics) = match deadline
                 .enforce(self.acquire_engine(&req.model), &req.model)
-                .await?;
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    self.on_failure(&req, &e).await;
+                    Err::<(), AsrError>(e)?;
+                    unreachable!()
+                }
+            };
             yield TranscribeStage::EngineAcquired {
                 pool_wait_ms: metrics.pool_wait_ms,
                 cold_load_ms: metrics.cold_load_ms,
@@ -165,7 +213,7 @@ impl Transcriber {
 
             yield TranscribeStage::InferenceStarted;
 
-            let response = deadline
+            let response = match deadline
                 .enforce(
                     run_inference(
                         guard,
@@ -177,9 +225,25 @@ impl Transcriber {
                     ),
                     &req.model,
                 )
-                .await?;
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    self.on_failure(&req, &e).await;
+                    Err::<(), AsrError>(e)?;
+                    unreachable!()
+                }
+            };
 
             self.save_to_history(&req, &response, settings.save_audio).await;
+            tracing::info!(
+                model = %req.model,
+                inference_ms = response.inference_ms,
+                text_len = response.text.len(),
+                empty = response.text.is_empty(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "transcription completed (stream)",
+            );
             yield TranscribeStage::Completed(response);
         }
     }
@@ -238,6 +302,41 @@ impl Transcriber {
         let samples_opt = save_audio.then_some(req.samples.as_ref());
         if let Err(e) = self.history.create(record, samples_opt).await {
             warn!(error = %e, "Failed to save transcription history");
+        }
+    }
+
+    /// Log a terminal pipeline failure and persist a failure history row.
+    /// Shared by the sync and streaming paths. Without the row, failed /
+    /// timed-out / aborted requests would leave no durable record and the
+    /// `/api/metrics` error_count would stay dead (it only ever counted
+    /// success rows with has_error=false).
+    async fn on_failure(&self, req: &TranscribeRequest, error: &AsrError) {
+        warn!(
+            model = %req.model,
+            code = error.code(),
+            duration_ms = req.duration_ms,
+            error = %error,
+            "transcription failed",
+        );
+        let record = CreateRecord {
+            source: req.source,
+            language: req.language.clone(),
+            model_id: req.model.clone(),
+            audio_duration_ms: req.duration_ms as i64,
+            inference_ms: 0,
+            model_load_ms: 0,
+            pool_wait_ms: 0,
+            cold_load_ms: 0,
+            text: String::new(),
+            segments_json: "[]".to_string(),
+            has_error: true,
+            error_message: Some(error.to_string()),
+            api_key_id: req.api_key_id.clone(),
+            device: String::new(),
+        };
+        // Never persist audio for a failed request.
+        if let Err(e) = self.history.create(record, None).await {
+            warn!(error = %e, "Failed to save failure history record");
         }
     }
 }

@@ -107,9 +107,16 @@ impl ModelPool {
     pub async fn acquire(&self, timeout: Duration) -> Result<PoolGuard, AsrError> {
         let permit = tokio::time::timeout(timeout, self.inner.semaphore.clone().acquire_owned())
             .await
-            .map_err(|_| AsrError::PoolAcquireTimeout {
-                model_id: self.inner.model_id.to_string(),
-                timeout_secs: timeout.as_secs(),
+            .map_err(|_| {
+                tracing::warn!(
+                    model_id = %self.inner.model_id,
+                    timeout_secs = timeout.as_secs(),
+                    "pool acquire timed out — all engine slots busy",
+                );
+                AsrError::PoolAcquireTimeout {
+                    model_id: self.inner.model_id.to_string(),
+                    timeout_secs: timeout.as_secs(),
+                }
             })?
             .map_err(|_| AsrError::ModelNotLoaded {
                 model_id: self.inner.model_id.to_string(),

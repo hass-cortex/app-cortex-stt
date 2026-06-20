@@ -317,6 +317,12 @@ async fn transcribe_async(
                     .await;
             }
             Err(e) => {
+                tracing::warn!(
+                    job_id = %job_id_bg,
+                    code = e.code(),
+                    error = %e,
+                    "async transcription job failed",
+                );
                 job_store
                     .update_status(
                         &job_id_bg,

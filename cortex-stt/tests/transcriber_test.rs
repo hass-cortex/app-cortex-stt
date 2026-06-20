@@ -214,9 +214,22 @@ async fn transcribe_propagates_engine_panic() {
         other => panic!("expected EnginePanic, got {other:?}"),
     }
 
-    // Failed inference must not write a history row.
+    // A failure history row is persisted so failed/timed-out/aborted
+    // requests leave a durable record and feed the error_count metric.
     let records = f.history.list(&ListRecordsFilter::default()).await.unwrap();
-    assert!(records.is_empty(), "no row should be written on failure");
+    assert_eq!(records.len(), 1, "one failure row should be written");
+    let record = &records[0];
+    assert!(record.has_error, "failure row must have has_error=true");
+    assert_eq!(record.model_id, "panic-model");
+    assert!(record.text.is_empty(), "failure row has no transcript text");
+    assert!(
+        record.audio_path.is_none(),
+        "audio must never be persisted for a failed request"
+    );
+    assert!(
+        record.error_message.as_ref().is_some_and(|m| !m.is_empty()),
+        "failure row must capture the error message"
+    );
 }
 
 #[tokio::test]

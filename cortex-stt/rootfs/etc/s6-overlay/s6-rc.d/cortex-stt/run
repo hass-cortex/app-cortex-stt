@@ -6,9 +6,11 @@
 
 LOG_LEVEL="$(bashio::config 'log_level')"
 
+# debug/trace use a per-target filter so the verbose level only applies to our
+# own crate — keeping dependency noise (ort, hyper, tower, rubato, …) at info.
 case "${LOG_LEVEL}" in
-    trace)   export RUST_LOG="trace" ;;
-    debug)   export RUST_LOG="debug" ;;
+    trace)   export RUST_LOG="info,cortex_stt=trace" ;;
+    debug)   export RUST_LOG="info,cortex_stt=debug" ;;
     info)    export RUST_LOG="info" ;;
     warning) export RUST_LOG="warn" ;;
     error)   export RUST_LOG="error" ;;
