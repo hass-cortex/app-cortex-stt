@@ -37,6 +37,7 @@ use cortex_stt::transcriber::Transcriber;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -227,7 +228,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state.clone())
-        .layer(CorsLayer::permissive());
+        .layer(CorsLayer::permissive())
+        // Catch-all per-request access log (method, path, status, latency).
+        // Outermost layer so it also records auth rejections and CORS-handled
+        // requests. Span + response are emitted at INFO so the access log is
+        // visible at the default log level — the single highest-leverage signal
+        // for "did a request reach the server and how did it end".
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+        );
 
     // Serve web UI static files with SPA fallback routing.
     // For HA ingress support, inject X-Ingress-Path into index.html at runtime.

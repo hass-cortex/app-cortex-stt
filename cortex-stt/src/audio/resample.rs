@@ -245,6 +245,11 @@ fn mix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
 /// Resample mono f32 audio from `src_rate` to `dst_rate` using rubato.
 fn resample(mono: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<f32>, AsrError> {
     if mono.is_empty() {
+        tracing::debug!(
+            src_rate,
+            dst_rate,
+            "resample: empty input, returning no samples"
+        );
         return Ok(Vec::new());
     }
 

@@ -63,8 +63,38 @@ fn prepare(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("audio/wav");
 
+    // Request-arrival breadcrumb: proves the request reached the engine layer
+    // and records how many audio bytes were received. Decisive for telling a
+    // real payload apart from an empty/aborted upload.
+    tracing::info!(
+        model = %query.model,
+        content_type = %content_type,
+        body_bytes = body.len(),
+        sample_rate = ?query.sample_rate,
+        channels = ?query.channels,
+        language = ?query.language,
+        api_key_id = ?api_key_id,
+        "transcribe request received",
+    );
+
     let samples = decode_audio(content_type, body, query.sample_rate, query.channels)?;
     let duration_ms = (samples.len() as f64 / SAMPLE_RATE_F64 * 1000.0) as u64;
+
+    if samples.is_empty() {
+        tracing::warn!(
+            model = %query.model,
+            content_type = %content_type,
+            body_bytes = body.len(),
+            "decoded audio is empty (0 samples) — no transcript will be produced",
+        );
+    } else {
+        tracing::debug!(
+            model = %query.model,
+            samples = samples.len(),
+            duration_ms,
+            "audio decoded",
+        );
+    }
 
     let language = query.language;
     let options = TranscribeOptions {

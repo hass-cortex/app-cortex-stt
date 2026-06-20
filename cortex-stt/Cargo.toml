@@ -23,7 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 axum = { version = "0.8", features = ["multipart", "macros"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tower = "0.5"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tokio-rusqlite = "0.7"

@@ -35,7 +35,17 @@ impl From<&AsrError> for ApiError {
 
 impl IntoResponse for AsrError {
     fn into_response(self) -> Response {
+        let status = self.status();
+        // Single choke point for every error response: surface 5xx at warn
+        // (server faults: inference, pool timeout, panic) and 4xx at debug
+        // (client faults: bad audio, auth, not-found). One log here covers all
+        // AsrError variants, which were previously serialized silently.
+        if status.is_server_error() {
+            tracing::warn!(code = self.code(), status = status.as_u16(), error = %self, "request failed");
+        } else {
+            tracing::debug!(code = self.code(), status = status.as_u16(), error = %self, "request rejected");
+        }
         let body = ApiError::from(&self);
-        (self.status(), axum::Json(body)).into_response()
+        (status, axum::Json(body)).into_response()
     }
 }
