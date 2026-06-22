@@ -95,6 +95,13 @@ pub struct ListRecordsFilter {
     pub offset: Option<i64>,
 }
 
+/// The full ordered column list for a `records` row, shared by every
+/// `SELECT … FROM records` that hydrates a [`TranscriptionRecord`]. The
+/// order MUST match the positional `row.get(N)` indices in
+/// [`row_to_record`]; keeping the list in one place stops the SELECT
+/// sites and the mapper from drifting apart when a column is added.
+const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device";
+
 // ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
@@ -162,10 +169,9 @@ pub(super) async fn get(
     let id_owned = id.to_string();
     db.connection()
         .call(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
-                 FROM records WHERE id = ?1",
-            )?;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {RECORD_COLUMNS} FROM records WHERE id = ?1"
+            ))?;
             let mut rows = stmt.query_map(params![id_owned], row_to_record)?;
             match rows.next() {
                 Some(row) => Ok(Some(row?)),
@@ -229,10 +235,7 @@ pub(super) async fn list(
 
     db.connection()
         .call(move |conn| {
-            let mut sql = String::from(
-                "SELECT id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device
-                 FROM records WHERE 1=1",
-            );
+            let mut sql = format!("SELECT {RECORD_COLUMNS} FROM records WHERE 1=1");
             let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             let mut idx = 1;
 
@@ -282,12 +285,8 @@ pub(super) async fn list(
             let mut stmt = conn.prepare(&sql)?;
             let params_ref: Vec<&dyn rusqlite::types::ToSql> =
                 param_values.iter().map(|b| b.as_ref()).collect();
-            let rows = stmt.query_map(params_ref.as_slice(), row_to_record)?;
-            let mut records = Vec::new();
-            for row in rows {
-                records.push(row?);
-            }
-            Ok(records)
+            stmt.query_map(params_ref.as_slice(), row_to_record)?
+                .collect::<rusqlite::Result<Vec<_>>>()
         })
         .await
         .map_err(map_db_err)
@@ -308,14 +307,10 @@ pub(super) async fn lookup_audio_paths(
             let placeholders = repeat_placeholders(ids.len());
             let sql = format!("SELECT id, audio_path FROM records WHERE id IN ({placeholders})");
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
+            stmt.query_map(params_from_iter(ids.iter()), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })?;
-            let mut out = Vec::new();
-            for row in rows {
-                out.push(row?);
-            }
-            Ok(out)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
         })
         .await
         .map_err(map_db_err)
@@ -328,14 +323,10 @@ pub(super) async fn all_audio_paths(
     db.connection()
         .call(|conn| {
             let mut stmt = conn.prepare("SELECT id, audio_path FROM records")?;
-            let rows = stmt.query_map([], |row| {
+            stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-            })?;
-            let mut out = Vec::new();
-            for row in rows {
-                out.push(row?);
-            }
-            Ok(out)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
         })
         .await
         .map_err(map_db_err)
@@ -395,18 +386,14 @@ pub(super) async fn list_record_candidates(
         .call(|conn| {
             let mut stmt =
                 conn.prepare("SELECT id, timestamp FROM records ORDER BY timestamp ASC")?;
-            let rows = stmt.query_map([], |row| {
+            stmt.query_map([], |row| {
                 Ok(RetentionCandidate {
                     id: row.get::<_, String>(0)?,
                     created_at: row.get::<_, String>(1)?,
                     size_bytes: None,
                 })
-            })?;
-            let mut out = Vec::new();
-            for row in rows {
-                out.push(row?);
-            }
-            Ok(out)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
         })
         .await
         .map_err(map_db_err)
@@ -425,18 +412,14 @@ pub(super) async fn list_audio_rows(
                  WHERE audio_path IS NOT NULL
                  ORDER BY timestamp ASC",
             )?;
-            let rows = stmt.query_map([], |row| {
+            stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                 ))
-            })?;
-            let mut out = Vec::new();
-            for row in rows {
-                out.push(row?);
-            }
-            Ok(out)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
         })
         .await
         .map_err(map_db_err)
