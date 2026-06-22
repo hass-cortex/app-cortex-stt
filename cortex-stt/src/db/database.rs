@@ -44,6 +44,38 @@ impl Database {
         Ok(db)
     }
 
+    /// Add `column` to `table` if it is not already present. `definition`
+    /// is the DDL fragment after the column name (e.g.
+    /// `"INTEGER NOT NULL DEFAULT 0"`). Idempotent — a no-op once the
+    /// column exists, so it is safe to run on every startup.
+    ///
+    /// All three arguments are compile-time constants from migration code
+    /// (never user input), so interpolating them into the DDL is safe.
+    async fn add_column_if_missing(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        definition: &'static str,
+    ) -> Result<(), AsrError> {
+        self.conn
+            .call(move |conn| {
+                let exists: bool = conn
+                    .prepare(&format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
+                    ))?
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .map(|c| c > 0)?;
+                if !exists {
+                    conn.execute_batch(&format!(
+                        "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+                    ))?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(map_db_err)
+    }
+
     /// Run all schema migrations.
     async fn run_migrations(&self) -> Result<(), AsrError> {
         // Step 1: ensure tables exist. Indexes are created later so that
@@ -95,23 +127,8 @@ impl Database {
         // Migration: backfill `source` on records tables predating its
         // introduction. Without this, CREATE INDEX idx_records_source below
         // would fail with "no such column: source" on upgraded installs.
-        self.conn
-            .call(|conn| {
-                let has_col: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='source'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_col {
-                    conn.execute_batch(
-                        "ALTER TABLE records ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown';",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
+        self.add_column_if_missing("records", "source", "TEXT NOT NULL DEFAULT 'unknown'")
+            .await?;
 
         // Step 2: create indexes once all referenced columns are guaranteed
         // to exist.
@@ -129,95 +146,25 @@ impl Database {
             .await
             .map_err(map_db_err)?;
 
-        // Migration: add raw_key column to api_keys
-        self.conn
-            .call(|conn| {
-                let has_col: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='raw_key'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_col {
-                    conn.execute_batch(
-                        "ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
+        // Migration: add raw_key column to api_keys.
+        self.add_column_if_missing("api_keys", "raw_key", "TEXT NOT NULL DEFAULT ''")
+            .await?;
 
-        // Migration: add device column to records
-        self.conn
-            .call(|conn| {
-                let has_device: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='device'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_device {
-                    conn.execute_batch(
-                        "ALTER TABLE records ADD COLUMN device TEXT NOT NULL DEFAULT 'cpu';",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
+        // Migration: add device column to records.
+        self.add_column_if_missing("records", "device", "TEXT NOT NULL DEFAULT 'cpu'")
+            .await?;
 
         // Migration: add acquire timing breakdown columns to records.
-        self.conn
-            .call(|conn| {
-                let has_pool_wait: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='pool_wait_ms'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_pool_wait {
-                    conn.execute_batch(
-                        "ALTER TABLE records ADD COLUMN pool_wait_ms INTEGER NOT NULL DEFAULT 0;",
-                    )?;
-                }
+        self.add_column_if_missing("records", "pool_wait_ms", "INTEGER NOT NULL DEFAULT 0")
+            .await?;
+        self.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
+            .await?;
 
-                let has_cold_load: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name='cold_load_ms'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_cold_load {
-                    conn.execute_batch(
-                        "ALTER TABLE records ADD COLUMN cold_load_ms INTEGER NOT NULL DEFAULT 0;",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
-
-        // Migration: add system column to api_keys
+        // Migration: add system column to api_keys.
         //   system=1 marks keys managed by the addon (e.g. Supervisor discovery
         //   bootstrap key). Clients cannot delete system keys via the admin UI.
-        self.conn
-            .call(|conn| {
-                let has_col: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM pragma_table_info('api_keys') WHERE name='system'",
-                    )?
-                    .query_row([], |row| row.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
-                if !has_col {
-                    conn.execute_batch(
-                        "ALTER TABLE api_keys ADD COLUMN system INTEGER NOT NULL DEFAULT 0;",
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
+        self.add_column_if_missing("api_keys", "system", "INTEGER NOT NULL DEFAULT 0")
+            .await?;
 
         Ok(())
     }
