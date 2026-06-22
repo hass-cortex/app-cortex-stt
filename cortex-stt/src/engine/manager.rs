@@ -48,6 +48,23 @@ struct LoadedModel {
     last_used: Instant,
 }
 
+/// Remove a model from both the pool map and the per-model load-lock map.
+///
+/// Centralizes the invariant that a model's `load_lock` is always dropped
+/// together with its pool: if a lock outlived its pool, the lock map would
+/// grow unbounded across repeated load/evict cycles. Every path that drops
+/// a pool — LRU eviction, explicit unload, idle eviction — goes through
+/// here, so the pairing can never be half-applied. Callers hold both write
+/// guards.
+fn remove_model(
+    pools: &mut HashMap<String, LoadedModel>,
+    load_locks: &mut HashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    model_id: &str,
+) {
+    pools.remove(model_id);
+    load_locks.remove(model_id);
+}
+
 /// Manages the lifecycle of speech engine model pools.
 ///
 /// Models are lazily loaded on first request and evicted (LRU) when the
@@ -213,10 +230,12 @@ impl EngineManager {
         }
 
         let mut pools = self.pools.write().await;
+        let mut locks = self.load_locks.write().await;
         // Evict LRU under write lock. The per-model load lock above
         // already ensures we are the only loader for `model_id`, so no
-        // re-check needed here.
-        let mut evicted = Vec::new();
+        // re-check needed here. `remove_model` drops each evicted pool and
+        // its load lock together, so the lock map can't grow unbounded
+        // across many load/evict cycles.
         while pools.len() >= config.max_loaded_models {
             let lru_id = pools
                 .iter()
@@ -226,20 +245,12 @@ impl EngineManager {
             match lru_id {
                 Some(id) => {
                     info!(model_id = %id, "evicting LRU model");
-                    pools.remove(&id);
-                    evicted.push(id);
+                    remove_model(&mut pools, &mut locks, &id);
                 }
                 None => break,
             }
         }
-        // Free per-model load locks for evicted models so the map can't
-        // grow unbounded across many load/evict cycles.
-        if !evicted.is_empty() {
-            let mut locks = self.load_locks.write().await;
-            for id in &evicted {
-                locks.remove(id);
-            }
-        }
+        drop(locks);
         pools.insert(
             model_id.to_string(),
             LoadedModel {
@@ -253,12 +264,14 @@ impl EngineManager {
 
     /// Unload a specific model, freeing its pool resources and load lock.
     pub async fn unload(&self, model_id: &str) -> bool {
-        let removed = self.pools.write().await.remove(model_id).is_some();
-        if removed {
-            self.load_locks.write().await.remove(model_id);
+        let mut pools = self.pools.write().await;
+        let mut locks = self.load_locks.write().await;
+        let present = pools.contains_key(model_id);
+        if present {
+            remove_model(&mut pools, &mut locks, model_id);
             info!(model_id = %model_id, "model unloaded");
         }
-        removed
+        present
     }
 
     /// Returns the number of currently loaded models.
@@ -320,8 +333,7 @@ impl EngineManager {
                     let mut locks = mgr.load_locks.write().await;
                     for id in &to_unload {
                         warn!(model_id = %id, "unloading idle model");
-                        pools.remove(id);
-                        locks.remove(id);
+                        remove_model(&mut pools, &mut locks, id);
                     }
                 }
             }
