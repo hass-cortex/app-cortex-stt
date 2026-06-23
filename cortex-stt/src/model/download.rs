@@ -242,9 +242,18 @@ pub async fn download_model(
         // Release the active slot and start the next queued download.
         launch_next(&downloads, downloads.finish(&model_id).await);
 
-        // Brief delay so SSE clients can pick up the terminal status.
+        // Brief delay so SSE clients can pick up the terminal status, then
+        // clear it — but only if it is still OUR terminal entry. finish()
+        // already freed the slot, so a same-model re-download admitted in
+        // this window owns the model_id-keyed progress now (it shows a
+        // non-terminal status); we must not delete its live progress.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        downloads.remove_progress(&model_id).await;
+        if matches!(
+            downloads.get_progress(&model_id).await.map(|p| p.status),
+            Some(DownloadPhase::Completed | DownloadPhase::Failed)
+        ) {
+            downloads.remove_progress(&model_id).await;
+        }
     });
 
     Ok(DownloadHandle { progress_rx: rx })
@@ -442,7 +451,7 @@ async fn download_task(
         // write_all and already cleared progress, and this model_id-keyed
         // entry may now belong to a same-model re-download — don't resurrect
         // a stale "Downloading" snapshot over it.
-        if cancel_flag.load(Ordering::Relaxed) {
+        if is_cancelled(cancel_flag, model_id) {
             return Ok(DownloadOutcome::Cancelled);
         }
         downloads.set_progress(progress.clone()).await;
@@ -466,6 +475,12 @@ async fn download_task(
 
     // SHA-256 verification.
     if config.verify_sha256 && !expected_sha256.is_empty() {
+        // Honour a cancel before publishing a Verifying snapshot (which
+        // cancel can't clear) and before burning time hashing a (possibly
+        // multi-GB) file the user abandoned.
+        if is_cancelled(cancel_flag, model_id) {
+            return Ok(DownloadOutcome::Cancelled);
+        }
         let verifying = DownloadProgress {
             model_id: model_id.to_string(),
             status: DownloadPhase::Verifying,
