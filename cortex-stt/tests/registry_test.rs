@@ -39,19 +39,6 @@ fn all_urls_are_https_and_whitelisted() {
 }
 
 #[test]
-fn all_directory_models_have_archive_dir_name() {
-    for m in &builtin_models() {
-        if m.is_directory {
-            assert!(
-                !m.archive_dir_name.is_empty(),
-                "directory model {} missing archive_dir_name",
-                m.id
-            );
-        }
-    }
-}
-
-#[test]
 fn all_models_have_supported_languages() {
     for m in &builtin_models() {
         assert!(

@@ -249,9 +249,10 @@ tar tzf <model>.tar.gz | head -20
 
 Verify: (1) directory nesting depth, (2) no extraneous files (`._*`,
 `.DS_Store`, etc.), (3) expected filenames match what the engine
-bridge loads, (4) `archive_dir_name` in the registry matches the
-top-level dir inside the archive. The extractor in
-`src/model/download.rs` handles single-level nesting automatically.
+bridge loads. The extractor in `src/model/download.rs` unwraps a single
+top-level directory automatically (so the archive's top-level dir name
+doesn't matter), but only when that level contains exactly one entry and
+it is a directory — a mixed files-and-dirs top level is kept as-is.
 
 Add a new entry to `builtin_models()` in `src/engine/registry.rs`,
 covering: `id`, `engine`, archive URL, expected files, languages,
