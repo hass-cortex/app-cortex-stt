@@ -13,8 +13,8 @@ use tokio_stream::Stream;
 use crate::api::system::HardwareCapabilities;
 use crate::engine::registry::builtin_models;
 use crate::error::AsrError;
-use crate::model::download::{DownloadConfig, download_model, start_queued_download};
-use crate::model::download_manager::QueuedDownloadRequest;
+use crate::model::download::{DownloadConfig, download_model, launch_next};
+use crate::model::download_manager::{ClaimOutcome, QueuedDownloadRequest};
 use crate::model::types::DownloadPhase;
 use crate::state::AppState;
 
@@ -58,11 +58,6 @@ async fn start_download(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    // Check if already downloading or queued.
-    if state.downloads.is_downloading(&model_id).await {
-        return Err(AsrError::DownloadInProgress { model_id });
-    }
-
     // Find the model definition in the built-in registry.
     let definition = builtin_models()
         .into_iter()
@@ -73,23 +68,34 @@ async fn start_download(
 
     let dest_path = state.catalog.model_dir().join(&definition.filename);
 
-    let request = QueuedDownloadRequest {
-        model_id: model_id.clone(),
-        url: definition.url.clone(),
+    let request = QueuedDownloadRequest::new(
+        model_id.clone(),
+        definition.url.clone(),
         dest_path,
-        sha256: definition.sha256.clone(),
+        definition.sha256.clone(),
+    );
+
+    // Atomically claim a slot, queue, or reject a duplicate. The duplicate
+    // check lives inside try_claim_slot (under its lock) so two concurrent
+    // POSTs for the same model can't both start.
+    let request = match state.downloads.try_claim_slot(request).await {
+        ClaimOutcome::AlreadyActive => return Err(AsrError::DownloadInProgress { model_id }),
+        ClaimOutcome::Queued => {
+            return Ok((
+                StatusCode::OK,
+                axum::Json(serde_json::json!({ "status": "started", "model_id": model_id })),
+            ));
+        }
+        ClaimOutcome::Claimed(request) => request,
     };
 
-    // Try to claim a download slot; if full, request is queued automatically.
-    if let Some(request) = state.downloads.try_claim_slot(request).await {
-        // Keep a copy of dest_path so we can register the running task
-        // with DownloadManager (cancel-time `.part` cleanup needs it).
-        let dest_path_owned = request.dest_path.clone();
+    {
         let handle = match download_model(
             &request.url,
             request.dest_path,
             &request.sha256,
             &request.model_id,
+            Arc::clone(&request.cancel_flag),
             state.downloads.clone(),
             DownloadConfig::default(),
         )
@@ -97,20 +103,20 @@ async fn start_download(
         {
             Ok(h) => h,
             Err(e) => {
-                // Release the claimed slot on failure.
+                // Slot was claimed but the task never started; release it
+                // (and launch anything queued) on a detached task so the
+                // cap recovers without blocking the error response.
                 let downloads = state.downloads.clone();
+                let model_id = model_id.clone();
                 tokio::spawn(async move {
-                    downloads.release_slot().await;
+                    let next = downloads.finish(&model_id).await;
+                    launch_next(&downloads, next);
                 });
                 return Err(e);
             }
         };
 
         let progress_rx = handle.progress_rx;
-        state
-            .downloads
-            .register_active(model_id.clone(), handle.task_handle, dest_path_owned)
-            .await;
 
         // Auto-register the engine factory when the download finishes so the
         // model is usable without restarting the addon. Watches the download
@@ -221,14 +227,9 @@ async fn cancel_download_handler(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let slot_released = state.downloads.cancel(&model_id).await?;
-
-    // If an active slot was freed, start the next queued download.
-    if slot_released {
-        if let Some(next) = state.downloads.on_finished().await {
-            tokio::spawn(start_queued_download(next, state.downloads.clone()));
-        }
-    }
+    // cancel() owns the slot release; it just hands back the next queued
+    // download (if cancelling freed a slot and one was waiting) to launch.
+    launch_next(&state.downloads, state.downloads.cancel(&model_id).await?);
 
     Ok(axum::Json(serde_json::json!({
         "status": "cancelled",

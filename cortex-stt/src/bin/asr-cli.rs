@@ -201,11 +201,14 @@ async fn cmd_download(
 
     let dest_path = catalog.model_dir().join(&def.filename);
 
+    // One-shot CLI: never cancels, so a fresh flag that stays false.
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let handle = download_model(
         &def.url,
         dest_path.clone(),
         &def.sha256,
         model_id,
+        cancel_flag,
         downloads.clone(),
         DownloadConfig {
             verify_sha256: !def.sha256.is_empty(),
