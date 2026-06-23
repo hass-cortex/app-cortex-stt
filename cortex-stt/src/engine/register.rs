@@ -65,9 +65,13 @@ pub async fn register_downloaded_models(
 }
 
 /// Create the appropriate engine factory for a given engine type and model path.
-/// Returns None if the engine type is not compiled in.
+///
+/// Returns `None` if the engine type is not compiled into this build. This is
+/// the single source of truth for the `EngineType` -> factory dispatch
+/// (quantization parsing, feature gating); both the server startup path
+/// (`register_downloaded_models`) and the `asr-cli` dev tool go through it.
 #[allow(unused_variables)]
-fn create_factory(
+pub fn create_factory(
     engine_type: &EngineType,
     model_path: std::path::PathBuf,
     quantization_str: &str,

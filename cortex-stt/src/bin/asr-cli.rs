@@ -301,17 +301,18 @@ async fn cmd_transcribe(
     let all_models = catalog.list_models().await;
     let model_info = all_models.iter().find(|m| m.id == model_id);
 
+    // Quantization is authoritative in the registry; scanned custom models
+    // (absent from the registry) fall back to int8.
+    let registry = builtin_models();
+    let registry_def = registry.iter().find(|m| m.id == model_id);
     let (model_path, engine_type) = match model_info {
         Some(info) => (model_dir.join(&info.filename), info.engine_type.clone()),
-        None => {
-            // Also check builtin registry
-            let registry = builtin_models();
-            match registry.iter().find(|m| m.id == model_id) {
-                Some(def) => (model_dir.join(&def.filename), def.engine_type.clone()),
-                None => return Err(format!("Model not found: {model_id}").into()),
-            }
-        }
+        None => match registry_def {
+            Some(def) => (model_dir.join(&def.filename), def.engine_type.clone()),
+            None => return Err(format!("Model not found: {model_id}").into()),
+        },
     };
+    let quantization = registry_def.map(|d| d.quantization).unwrap_or("int8");
 
     if !model_path.exists() {
         return Err(format!(
@@ -324,7 +325,19 @@ async fn cmd_transcribe(
     println!("Loading model '{model_id}' ({engine_type:?})...");
     let load_start = Instant::now();
 
-    register_engine(&engine_manager, model_id, model_path, &engine_type).await?;
+    let factory = cortex_stt::engine::register::create_factory(
+        &engine_type,
+        model_path,
+        quantization,
+        cortex_stt::api::settings::ComputeDevice::default(),
+    )
+    .ok_or_else(|| {
+        format!(
+            "Engine type {engine_type:?} not compiled in this build. \
+             Use --features whisper or --features onnx"
+        )
+    })?;
+    engine_manager.register(model_id, factory).await;
 
     // Transcribe
     let options = cortex_stt::engine::traits::TranscribeOptions {
@@ -436,56 +449,6 @@ fn find_test_audio(wav_dir: &Path, languages: &[String]) -> Option<PathBuf> {
                 .unwrap_or(false)
         })
         .map(|e| e.path())
-}
-
-/// Register an engine factory for the given model, dispatching on engine type.
-///
-/// Feature-gated: requires `whisper` for Whisper models and `onnx` for all
-/// ONNX-based engines (Parakeet, SenseVoice, GigaAM, Moonshine, Canary).
-#[allow(
-    unused_variables,
-    unused_imports,
-    unreachable_code,
-    unreachable_patterns
-)]
-async fn register_engine(
-    engine_manager: &EngineManager,
-    model_id: &str,
-    model_path: PathBuf,
-    engine_type: &cortex_stt::engine::registry::EngineType,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use cortex_stt::engine::registry::EngineType;
-
-    match engine_type {
-        #[cfg(feature = "whisper")]
-        EngineType::Whisper => {
-            let factory = cortex_stt::engine::whisper_bridge::whisper_factory(model_path);
-            engine_manager.register(model_id, factory).await;
-        }
-        #[cfg(feature = "onnx")]
-        EngineType::SenseVoice
-        | EngineType::Parakeet
-        | EngineType::GigaAM
-        | EngineType::Moonshine
-        | EngineType::Canary => {
-            let factory = cortex_stt::engine::onnx_bridge::onnx_factory(
-                model_path,
-                engine_type.clone(),
-                transcribe_rs::onnx::Quantization::Int8,
-                cortex_stt::api::settings::ComputeDevice::default(),
-            );
-            engine_manager.register(model_id, factory).await;
-        }
-        _ => {
-            return Err(format!(
-                "Engine type {engine_type:?} not compiled in this build. \
-                 Use --features whisper or --features onnx"
-            )
-            .into());
-        }
-    }
-
-    Ok(())
 }
 
 async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
@@ -630,12 +593,23 @@ async fn cmd_verify(
             idle_check_interval: Duration::from_secs(60),
         });
 
-        if let Err(e) =
-            register_engine(&engine_manager, &def.id, model_path, &def.engine_type).await
-        {
-            println!("✗ register failed: {e}");
-            continue;
-        }
+        let factory = match cortex_stt::engine::register::create_factory(
+            &def.engine_type,
+            model_path,
+            def.quantization,
+            cortex_stt::api::settings::ComputeDevice::default(),
+        ) {
+            Some(f) => f,
+            None => {
+                println!(
+                    "✗ register failed: engine type {:?} not compiled in this build. \
+                     Use --features whisper or --features onnx",
+                    def.engine_type
+                );
+                continue;
+            }
+        };
+        engine_manager.register(&def.id, factory).await;
 
         let guard = match engine_manager.acquire(&def.id).await {
             Ok(g) => g,
