@@ -2,6 +2,7 @@ pub mod auth;
 pub mod discovery;
 pub mod engine;
 pub mod error;
+pub mod ha_event;
 pub mod health;
 pub mod history;
 pub mod keys;

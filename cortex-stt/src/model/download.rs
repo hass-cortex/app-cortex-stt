@@ -65,7 +65,7 @@ pub fn validate_download_url(url: &str) -> bool {
 /// task only ends when its network await resolves, so cap that to a
 /// hung-connect / no-data window rather than forever (generous enough not
 /// to trip a slow-but-live download).
-fn http_client() -> &'static Client {
+pub(crate) fn http_client() -> &'static Client {
     static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         Client::builder()

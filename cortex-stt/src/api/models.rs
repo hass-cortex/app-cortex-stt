@@ -44,6 +44,13 @@ async fn delete_model(
     // Delete files from disk.
     state.catalog.delete_model(&model_id).await?;
 
+    // Notify Home Assistant so it can drop the model's entities without a
+    // reload. Spawned so the DELETE response returns immediately rather than
+    // blocking on the outbound POST (fire-and-forget).
+    tokio::spawn(async move {
+        crate::api::ha_event::notify_models_changed("model_removed", &model_id).await;
+    });
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -149,6 +156,10 @@ async fn start_download(
                             model = %watch_model,
                             "Engine factory registered after download",
                         );
+                        // Notify Home Assistant so it can add the model's
+                        // entities without a reload.
+                        crate::api::ha_event::notify_models_changed("model_added", &watch_model)
+                            .await;
                         return;
                     }
                     DownloadPhase::Failed => return,

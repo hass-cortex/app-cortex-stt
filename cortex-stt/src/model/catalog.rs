@@ -46,6 +46,16 @@ impl ModelCatalog {
                 if let Some(progress) = self.downloads.get_progress(&def.id).await {
                     match progress.status {
                         DownloadPhase::Queued => (ModelStatus::Queued, 0),
+                        // A completed download whose file is in place is
+                        // Downloaded, even if the progress entry has not been
+                        // cleared yet. Otherwise list_models briefly reports
+                        // Downloading right after completion, so the
+                        // event-driven HA reconcile (which fires on the same
+                        // download-complete event) filters the model out and
+                        // never adds it.
+                        DownloadPhase::Completed if path.exists() => {
+                            (ModelStatus::Downloaded, dir_size(&path))
+                        }
                         _ => (ModelStatus::Downloading, 0),
                     }
                 } else if path.exists() {
@@ -210,6 +220,36 @@ mod tests {
         std::fs::write(tmp.path().join("ggml-tiny-q8_0.bin"), b"fake").unwrap();
 
         let catalog = make_catalog(tmp.path().to_path_buf());
+        let models = catalog.list_models().await;
+        let tiny = models.iter().find(|m| m.id == "whisper-tiny-int8").unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert!(tiny.disk_usage_bytes > 0);
+    }
+
+    #[tokio::test]
+    async fn completed_progress_reports_downloaded() {
+        // Regression: right after a download finishes, the Completed progress
+        // entry lingers briefly before being cleared. list_models must report
+        // the model as Downloaded (file is in place), not Downloading — else
+        // the event-driven HA reconcile that fires on completion filters it
+        // out and the model's entities never appear.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("ggml-tiny-q8_0.bin"), b"fake").unwrap();
+
+        let downloads = DownloadManager::new(tmp.path().to_path_buf());
+        downloads
+            .set_progress(crate::model::types::DownloadProgress {
+                model_id: "whisper-tiny-int8".to_string(),
+                status: DownloadPhase::Completed,
+                downloaded_bytes: 4,
+                total_bytes: 4,
+                speed_bps: 0.0,
+                eta_secs: None,
+                error: None,
+            })
+            .await;
+
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads);
         let models = catalog.list_models().await;
         let tiny = models.iter().find(|m| m.id == "whisper-tiny-int8").unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);

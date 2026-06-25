@@ -77,6 +77,7 @@ src/
 │   ├── metrics.rs    aggregate stats (consumes history aggregates + catalog count)
 │   ├── system.rs     system + storage info
 │   ├── discovery.rs  Supervisor /discovery announce (startup task + manual trigger)
+│   ├── ha_event.rs   notify_models_changed: fire HA event on model add/remove (live sync)
 │   └── health.rs     /health (no auth)
 ├── engine/           speech engine lifecycle
 │   ├── traits.rs     SpeechEngine trait (the abstraction)
@@ -235,6 +236,50 @@ Both call `cortex_stt::api::discovery::announce(&state)` which:
 The integration's `async_step_hassio` consumes
 `discovery_info.config['host']` and `['port']` (no scheme) to build
 `http://<host>:<port>` and authenticates with `['api_key']`.
+
+## Live model sync (HA event)
+
+So the HA integration can add/remove a model's entities **without a
+config-entry reload**, the addon **fires an event on the HA event bus**
+whenever the set of downloaded models changes. Implemented in
+`src/api/ha_event.rs`. No inbound endpoint, no URL registration, no
+persistence — the integration just listens on the bus.
+
+Uses the official add-on → HA core path:
+POST the HA core REST API through the **Supervisor
+proxy** at `http://supervisor/core/api/events/cortex_stt_models_changed`,
+authenticated with `SUPERVISOR_TOKEN`. This requires
+**`homeassistant_api: true`** in `config.yaml` (alongside the existing
+`hassio_api: true` used for `/discovery`).
+
+**Notify** — `notify_models_changed(event, model_id)`:
+
+- No-op when `SUPERVISOR_TOKEN` is unset (dev / not under Supervisor).
+- POSTs `{"event", "model_id"}` via the shared `download::http_client()`
+  with a short per-request timeout and `bearer_auth(SUPERVISOR_TOKEN)`.
+- Fire-and-forget: failures are logged, never propagated, so a model
+  download/delete always succeeds.
+- The inner `fire_event(core_api_base, token, …)` is split out so it is
+  unit-testable against a mock receiver.
+
+Fired from two sites in `src/api/models.rs`:
+
+- `"model_added"` — inside the download-complete watch task, right after
+  `register_downloaded_models` (awaited there; the task is already
+  detached so it blocks nothing).
+- `"model_removed"` — in `delete_model`, **`tokio::spawn`-ed** after
+  `catalog.delete_model` so the DELETE response returns immediately.
+
+The payload is advisory — the HA listener re-fetches `/api/models` and
+reconciles the full set, so it self-heals on a missed/duplicate event.
+
+**Critical invariant** — `ModelCatalog::list_models` must report a
+`DownloadPhase::Completed` model whose file exists as `Downloaded`
+(`catalog.rs`), NOT `Downloading`. The event fires on download-complete
+while the `Completed` progress entry still lingers (cleared ~later by
+`remove_progress`); without this, HA's immediate reconcile would see
+`Downloading`, filter the model out, and never add its entities. Any new
+path that fires the event depends on this.
 
 ## How To
 
