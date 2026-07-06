@@ -50,41 +50,63 @@ export interface Metrics {
 // --- Models ---
 
 export type ModelStatus =
-	| "not_downloaded"
 	| "available"
 	| "queued"
 	| "downloading"
 	| "downloaded"
-	| "loading"
-	| "loaded"
 	| "custom"
 	| "error";
-export type EngineType =
-	| "Whisper"
-	| "Parakeet"
-	| "SenseVoice"
-	| "GigaAM"
-	| "Moonshine"
-	| "Canary"
-	| "CohereTranscribe";
+
+export type ModelFamily =
+	| "whisper"
+	| "parakeet"
+	| "sensevoice"
+	| "canary"
+	| "cohere"
+	| "fun"
+	| "gigaam"
+	| "granite"
+	| "medasr"
+	| "moonshine"
+	| "nemotron"
+	| "qwen3"
+	| "voxtral"
+	| "custom";
+
+export type TimestampGranularity = "none" | "segment" | "word";
+
+export interface ModelCapabilities {
+	streaming: boolean;
+	translate: boolean;
+	lang_detect: boolean;
+	timestamps: TimestampGranularity;
+}
+
+/** One installable quantization of a model (GGUF). */
+export interface QuantSummary {
+	quant: string;
+	size_mb: number;
+}
 
 export interface ModelInfo {
 	id: string;
 	name: string;
 	description: string;
-	engine_type: EngineType;
-	filename: string;
-	is_directory: boolean;
+	family: ModelFamily;
+	languages: string[];
+	capabilities: ModelCapabilities;
+	quants: QuantSummary[];
+	default_quant: string;
+	/** Installed quant, or null when not downloaded. */
+	downloaded_quant: string | null;
+	/** Size of the downloaded (or default) quant, in MB. */
 	size_mb: number;
-	accuracy_score: number;
-	speed_score: number;
-	supported_languages: string[];
-	requires_cuda: boolean;
-	requires_avx: boolean;
-	is_recommended: boolean;
-	uses_gpu: boolean;
+	recommended: boolean;
+	recommended_rank: number | null;
+	speed_score: number | null;
+	accuracy_score: number | null;
 	status: ModelStatus;
-	disk_usage_bytes: number | null;
+	disk_usage_bytes: number;
 	is_loaded: boolean;
 }
 
@@ -94,7 +116,7 @@ export interface DownloadProgress {
 	total_bytes: number;
 	speed_bps: number;
 	eta_secs: number | null;
-	status: "queued" | "downloading" | "verifying" | "extracting" | "completed" | "failed";
+	status: "queued" | "downloading" | "verifying" | "completed" | "failed";
 	error: string | null;
 }
 
@@ -178,7 +200,13 @@ export interface GeneratedKey {
 
 // --- Settings ---
 
-export type ComputeDevice = "auto" | "cpu" | "gpu";
+export type BackendKind = "auto" | "cpu" | "cuda";
+
+/** Per-model compute backend override. */
+export interface BackendOverride {
+	backend: BackendKind;
+	gpu_device: number;
+}
 
 export type RetentionPolicyType = "Count" | "Days" | "DiskLimitMb" | "Unlimited";
 
@@ -198,7 +226,7 @@ export interface AppSettings {
 	audio_retention: RetentionPolicy;
 	record_retention: RetentionPolicy;
 	timezone: string;
-	device_overrides: Record<string, ComputeDevice>;
+	backend_overrides: Record<string, BackendOverride>;
 }
 
 // --- Errors ---

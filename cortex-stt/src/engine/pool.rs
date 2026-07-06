@@ -153,16 +153,26 @@ impl PoolGuard {
         }
     }
 
-    /// Run transcription on the pooled engine instance.
+    /// Returns the static capabilities of the pooled engine instance.
+    pub fn capabilities(&self) -> Result<crate::engine::traits::EngineCapabilities, AsrError> {
+        let lock = self.pool.instances[self.index]
+            .lock()
+            .expect("engine mutex poisoned");
+        lock.as_ref()
+            .map(|engine| engine.capabilities())
+            .ok_or_else(|| AsrError::ModelNotLoaded {
+                model_id: self.pool.model_id.to_string(),
+            })
+    }
+
+    /// Run `f` on the pooled engine instance with panic isolation.
     ///
-    /// If the engine panics during inference, the instance is discarded and
-    /// rebuilt using the pool's factory. The caller receives
-    /// [`AsrError::EnginePanic`].
-    pub fn transcribe(
+    /// If the engine panics, the instance is discarded and rebuilt using
+    /// the pool's factory. The caller receives [`AsrError::EnginePanic`].
+    fn with_engine<R>(
         &mut self,
-        samples: &[f32],
-        options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
+        f: impl FnOnce(&mut Box<dyn crate::engine::traits::SpeechEngine>) -> Result<R, AsrError>,
+    ) -> Result<R, AsrError> {
         let mut lock = self.pool.instances[self.index]
             .lock()
             .expect("engine mutex poisoned");
@@ -170,8 +180,7 @@ impl PoolGuard {
             model_id: self.pool.model_id.to_string(),
         })?;
 
-        let result =
-            std::panic::catch_unwind(AssertUnwindSafe(|| engine.transcribe(samples, options)));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(engine)));
 
         match result {
             Ok(inner) => inner,
@@ -191,6 +200,40 @@ impl PoolGuard {
                 })
             }
         }
+    }
+
+    /// Run transcription on the pooled engine instance.
+    pub fn transcribe(
+        &mut self,
+        samples: &[f32],
+        options: &TranscribeOptions,
+    ) -> Result<TranscriptionResult, AsrError> {
+        self.with_engine(|engine| engine.transcribe(samples, options))
+    }
+
+    // Streaming delegates — same panic isolation as `transcribe`.
+
+    pub fn stream_begin(&mut self, options: &TranscribeOptions) -> Result<(), AsrError> {
+        self.with_engine(|engine| engine.stream_begin(options))
+    }
+
+    pub fn stream_feed(
+        &mut self,
+        samples: &[f32],
+    ) -> Result<crate::engine::traits::StreamSnapshot, AsrError> {
+        self.with_engine(|engine| engine.stream_feed(samples))
+    }
+
+    pub fn stream_finalize(&mut self) -> Result<TranscriptionResult, AsrError> {
+        self.with_engine(|engine| engine.stream_finalize())
+    }
+
+    /// Abandon any active stream, leaving the engine reusable.
+    pub fn stream_reset(&mut self) {
+        let _ = self.with_engine(|engine| {
+            engine.stream_reset();
+            Ok(())
+        });
     }
 }
 
@@ -213,6 +256,8 @@ mod tests {
                 name: "mock".into(),
                 languages: vec!["en".into()],
                 supports_translation: false,
+                supports_streaming: false,
+                max_audio_ms: 0,
             }
         }
 
@@ -223,7 +268,7 @@ mod tests {
         ) -> Result<TranscriptionResult, AsrError> {
             Ok(TranscriptionResult {
                 text: "ok".into(),
-                segments: vec![],
+                ..Default::default()
             })
         }
     }

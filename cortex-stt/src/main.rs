@@ -5,12 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // CPU feature compatibility is enforced *outside* this binary, by the
-// addon's s6 init oneshot (`rootfs/.../init-cortex-stt/run`). A guard
-// inside `main()` cannot help: the statically-linked ONNX Runtime's
-// C++ global initializers execute AVX2/FMA/F16C/BMI2 instructions
-// before `main()` is ever entered, so any SIGILL on a too-old CPU has
-// already happened by the time Rust code runs. See DOCS.md ->
-// System Requirements for the supported baseline.
+// addon's s6 init oneshot (`rootfs/.../init-cortex-stt/run`). ggml is
+// built with GGML_NATIVE=OFF (see .cargo/config.toml) so the kernels
+// target the same x86-64-v3 baseline the preflight checks. See
+// DOCS.md -> System Requirements for the supported baseline.
 
 use axum::Router;
 use axum::middleware;
@@ -23,6 +21,7 @@ use cortex_stt::api::keys::key_routes;
 use cortex_stt::api::metrics::metrics_routes;
 use cortex_stt::api::models::model_routes;
 use cortex_stt::api::settings::settings_routes;
+use cortex_stt::api::stream::stream_routes;
 use cortex_stt::api::system::system_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
 use cortex_stt::cleanup::spawn_retention_cleanup;
@@ -143,16 +142,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn background idle model watcher.
     engine_manager.spawn_idle_watcher().await;
 
-    // Register engine factories for downloaded registry models.
+    // Clean-cut 0.3.0: remove legacy pre-GGUF artifacts (.bin / ONNX
+    // dirs / orphaned .part) before scanning for downloadable models.
     let model_dir_path = config.model_dir();
-    let device_overrides = db_settings
+    cortex_stt::engine::register::cleanup_legacy_artifacts(&model_dir_path);
+
+    // Register engine factories for downloaded catalog models.
+    let backend_overrides = db_settings
         .as_ref()
-        .map(|s| s.device_overrides.clone())
+        .map(|s| s.backend_overrides.clone())
         .unwrap_or_default();
     cortex_stt::engine::register::register_downloaded_models(
         &engine_manager,
         &model_dir_path,
-        &device_overrides,
+        &backend_overrides,
     )
     .await;
 
@@ -215,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(model_routes())
         .merge(engine_routes())
         .merge(transcribe_routes())
+        .merge(stream_routes())
         .merge(history_routes())
         .merge(key_routes())
         .merge(settings_routes())

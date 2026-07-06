@@ -25,11 +25,9 @@ export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
 				? `${formatBytes(progress.downloaded_bytes)} / ${formatBytes(progress.total_bytes)}`
 				: progress.status === "verifying"
 					? "Verifying SHA256..."
-					: progress.status === "extracting"
-						? "Extracting..."
-						: progress.status === "completed"
-							? "Complete"
-							: `Error: ${progress.error}`;
+					: progress.status === "completed"
+						? "Complete"
+						: `Error: ${progress.error}`;
 
 	const variant =
 		progress.status === "failed"

@@ -1,7 +1,7 @@
 //! Download coordination: a concurrency-bounded queue, live progress
 //! snapshots, and cooperative cancellation of in-flight downloads.
 //!
-//! The actual HTTP + SHA-256 + archive-extract pipeline lives in
+//! The actual HTTP + SHA-256 pipeline lives in
 //! [`crate::model::download`]; this module hands work to it and
 //! tracks the state.
 //!

@@ -4,7 +4,11 @@
 //! testing the actual auto-registration flow.
 //!
 //! Tests SKIP when model files are absent (CI safe).
-//! Run: `cargo test --features "whisper onnx" --test model_pipeline_test -- --nocapture`
+//! Run: `cargo test --features engine --test model_pipeline_test -- --nocapture`
+//!
+//! Real-engine only: the whole binary is compiled out without `engine`, so
+//! `cargo test --no-default-features` builds it as an empty (zero-test) crate.
+#![cfg(feature = "engine")]
 
 mod test_helpers;
 
@@ -52,6 +56,7 @@ async fn run_pipeline(model_id: &str, audio_file: &str, lang: &str) {
     let options = TranscribeOptions {
         language: Some(lang.to_string()),
         translate: false,
+        ..Default::default()
     };
 
     let result = guard
@@ -62,15 +67,17 @@ async fn run_pipeline(model_id: &str, audio_file: &str, lang: &str) {
     println!("[OK] {model_id} → \"{}\"", result.text);
 }
 
-// ─── Whisper models ────────────────────────────────────────────────────────
+// ─── Real-engine model pipeline (GGUF catalog) ──────────────────────────────
+// Gated on the `engine` feature and skip when the model file is absent, so
+// the suite compiles under `--no-default-features` (mod is cfg'd out).
 
-#[cfg(feature = "whisper")]
-mod whisper {
+#[cfg(feature = "engine")]
+mod engine {
     use super::*;
 
     #[tokio::test]
-    async fn whisper_tiny_int8() {
-        run_pipeline("whisper-tiny-int8", "zh.wav", "zh").await;
+    async fn whisper_tiny() {
+        run_pipeline("whisper-tiny", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
@@ -84,71 +91,22 @@ mod whisper {
     }
 
     #[tokio::test]
-    async fn whisper_medium_q4() {
-        run_pipeline("whisper-medium-q4", "zh.wav", "zh").await;
-    }
-
-    #[tokio::test]
     async fn whisper_large_v3_turbo() {
         run_pipeline("whisper-large-v3-turbo", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
-    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5 quantization on CPU
-    async fn whisper_large_v3_q5() {
-        run_pipeline("whisper-large-v3-q5", "zh.wav", "zh").await;
-    }
-
-    #[tokio::test]
-    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5_K quantization on CPU
     async fn breeze_asr() {
-        run_pipeline("breeze-asr", "zh.wav", "zh").await;
+        run_pipeline("Breeze-ASR-25", "zh.wav", "zh").await;
     }
-}
-
-// ─── ONNX models ───────────────────────────────────────────────────────────
-
-#[cfg(feature = "onnx")]
-mod onnx {
-    use super::*;
 
     #[tokio::test]
     async fn sense_voice_zh() {
-        run_pipeline("sense-voice-int8", "zh.wav", "zh").await;
+        run_pipeline("SenseVoiceSmall", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
     async fn sense_voice_en() {
-        run_pipeline("sense-voice-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn parakeet_v2_en() {
-        run_pipeline("parakeet-v2-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn parakeet_v3_en() {
-        run_pipeline("parakeet-v3-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn moonshine_base_en() {
-        run_pipeline("moonshine-base", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn gigaam_v3_en() {
-        run_pipeline("gigaam-v3-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn canary_180m_flash_en() {
-        run_pipeline("canary-180m-flash", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn canary_1b_v2_en() {
-        run_pipeline("canary-1b-v2", "en.wav", "en").await;
+        run_pipeline("SenseVoiceSmall", "en.wav", "en").await;
     }
 }

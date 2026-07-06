@@ -1,11 +1,7 @@
 pub mod manager;
 pub mod pool;
 pub mod register;
-pub mod registry;
 pub mod traits;
 
-#[cfg(feature = "whisper")]
-pub mod whisper_bridge;
-
-#[cfg(feature = "onnx")]
-pub mod onnx_bridge;
+#[cfg(feature = "engine")]
+pub mod transcribe_bridge;

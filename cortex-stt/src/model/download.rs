@@ -17,8 +17,10 @@ use crate::error::AsrError;
 use crate::model::download_manager::{DownloadManager, QueuedDownloadRequest};
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
-/// Hosts allowed for model downloads.
-pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co", "github.com", "blob.handy.computer"];
+/// Hosts allowed for model downloads. The vendored catalog only points
+/// at Hugging Face; the initial URL is validated and redirects (e.g. to
+/// the HF CDN) are followed by reqwest.
+pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co"];
 
 /// Configuration for the download pipeline.
 pub struct DownloadConfig {
@@ -93,7 +95,7 @@ pub(crate) fn part_path(dest_path: &Path) -> PathBuf {
 /// the flag, frees the slot, removes progress, and deletes the `.part`
 /// file — so a task that observes this only needs to stop; it touches no
 /// shared state itself (which avoids racing a same-model re-download).
-/// Checked at the chunk boundary and before the verify / extract phases
+/// Checked at the chunk boundary and before the verify / install phases
 /// so a cancel issued between phases is honoured, not just mid-stream.
 fn is_cancelled(cancel_flag: &AtomicBool, model_id: &str) -> bool {
     let cancelled = cancel_flag.load(Ordering::Relaxed);
@@ -199,7 +201,7 @@ pub async fn download_model(
         // The cancel flag is the single authority that cancel() owns this
         // download's teardown (slot, progress, and .part). If it is set —
         // whether the task ended Cancelled, errored because cancel deleted
-        // the .part mid-verify/extract, or even completed in the instant
+        // the .part mid-verify, or even completed in the instant
         // before observing it — this task must touch NO shared state: the
         // model_id-keyed entry/progress may already belong to a same-model
         // re-download, and finish()/set_progress/remove_progress here would
@@ -513,105 +515,13 @@ async fn download_task(
     }
 
     // Last chance to honour a cancel before we install the model
-    // (extract/rename to the final destination).
+    // (rename to the final destination).
     if is_cancelled(cancel_flag, model_id) {
         return Ok(DownloadOutcome::Cancelled);
     }
 
-    // Handle archive extraction or simple rename.
-    let url_lower = url.to_lowercase();
-    let is_tar_gz = url_lower.ends_with(".tar.gz") || url_lower.ends_with(".tgz");
-    let is_tar_bz2 = url_lower.ends_with(".tar.bz2") || url_lower.ends_with(".tbz2");
-
-    if is_tar_gz || is_tar_bz2 {
-        let extracting = DownloadProgress {
-            model_id: model_id.to_string(),
-            status: DownloadPhase::Extracting,
-            downloaded_bytes,
-            total_bytes: total,
-            speed_bps: 0.0,
-            eta_secs: None,
-            error: None,
-        };
-        downloads.set_progress(extracting.clone()).await;
-        let _ = tx.send(extracting);
-
-        info!(model_id = %model_id, "extracting archive");
-        let parent = dest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let part_path_owned = part_path.clone();
-        let dest_path_owned = dest_path.to_path_buf();
-        let model_id_owned = model_id.to_string();
-
-        tokio::task::spawn_blocking(move || -> Result<(), AsrError> {
-            use std::io::BufReader;
-            let file = std::fs::File::open(&part_path_owned)?;
-
-            let tmp_dir = parent.join(format!(".tmp-extract-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&tmp_dir)?;
-
-            // Extract based on compression format
-            if is_tar_gz {
-                let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-                let mut archive = tar::Archive::new(decoder);
-                archive
-                    .unpack(&tmp_dir)
-                    .map_err(|e| AsrError::DownloadFailed {
-                        model_id: model_id_owned.clone(),
-                        detail: format!("tar.gz extraction failed: {e}"),
-                    })?;
-            } else {
-                let decoder = bzip2::read::BzDecoder::new(BufReader::new(file));
-                let mut archive = tar::Archive::new(decoder);
-                archive
-                    .unpack(&tmp_dir)
-                    .map_err(|e| AsrError::DownloadFailed {
-                        model_id: model_id_owned.clone(),
-                        detail: format!("tar.bz2 extraction failed: {e}"),
-                    })?;
-            }
-
-            // Unwrap single-directory nesting (e.g. archive contains dir/dir/files).
-            // Only unwrap when the level contains exactly one entry AND it is a directory.
-            // This prevents drilling past a top-level dir that contains both files and subdirs.
-            let mut source_dir = tmp_dir.clone();
-            loop {
-                let entries: Vec<_> = std::fs::read_dir(&source_dir)
-                    .map_err(AsrError::Io)?
-                    .filter_map(|e| e.ok())
-                    .collect();
-                if entries.len() == 1
-                    && entries[0]
-                        .file_type()
-                        .map(|ft| ft.is_dir())
-                        .unwrap_or(false)
-                {
-                    source_dir = entries[0].path();
-                } else {
-                    break;
-                }
-            }
-
-            // Rename to final destination (atomic swap)
-            if dest_path_owned.exists() {
-                std::fs::remove_dir_all(&dest_path_owned)?;
-            }
-            std::fs::rename(&source_dir, &dest_path_owned)?;
-
-            // Clean up
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-            let _ = std::fs::remove_file(&part_path_owned);
-
-            Ok(())
-        })
-        .await
-        .map_err(|e| AsrError::DownloadFailed {
-            model_id: model_id.to_string(),
-            detail: format!("extraction task failed: {e}"),
-        })??;
-    } else {
-        // Simple file — just rename .part to final destination.
-        fs::rename(&part_path, dest_path).await?;
-    }
+    // GGUF models are single files — rename .part to final destination.
+    fs::rename(&part_path, dest_path).await?;
 
     info!(model_id = %model_id, path = %dest_path.display(), "model download complete");
     Ok(DownloadOutcome::Completed)

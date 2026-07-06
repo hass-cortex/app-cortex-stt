@@ -53,10 +53,6 @@ pub struct AppConfig {
     #[arg(long, env = "POOL_ACQUIRE_TIMEOUT", default_value_t = 60)]
     pub pool_acquire_timeout_secs: u64,
 
-    /// GPU mode
-    #[arg(long, env = "GPU_MODE", default_value = "auto")]
-    pub gpu_mode: GpuMode,
-
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     pub log_level: String,
@@ -75,13 +71,6 @@ pub struct AppConfig {
     pub api_key: Option<String>,
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum GpuMode {
-    Auto,
-    Cuda,
-    Cpu,
-}
-
 /// Configuration loaded from a TOML file. All fields are optional; only
 /// present values are injected as environment variable defaults before
 /// clap parses CLI args. This gives us: CLI > ENV > config.toml > defaults.
@@ -97,7 +86,6 @@ pub struct FileConfig {
     pub idle_timeout_secs: Option<u64>,
     pub transcription_timeout_secs: Option<u64>,
     pub pool_acquire_timeout_secs: Option<u64>,
-    pub gpu_mode: Option<String>,
     pub log_level: Option<String>,
     pub preload_model: Option<bool>,
     pub static_dir: Option<PathBuf>,
@@ -146,9 +134,6 @@ impl FileConfig {
         }
         if let Some(v) = self.pool_acquire_timeout_secs {
             set_if_unset("POOL_ACQUIRE_TIMEOUT", &v.to_string());
-        }
-        if let Some(ref v) = self.gpu_mode {
-            set_if_unset("GPU_MODE", v);
         }
         if let Some(ref v) = self.log_level {
             set_if_unset("RUST_LOG", v);

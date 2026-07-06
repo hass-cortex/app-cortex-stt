@@ -74,11 +74,11 @@ async fn test_list_models_returns_registry() {
     let first = &models[0];
     assert!(first["id"].is_string());
     assert!(first["name"].is_string());
-    assert!(first["engine_type"].is_string());
+    assert!(first["family"].is_string());
     assert!(first["status"].is_string());
     assert!(first["size_mb"].is_number());
     assert!(first["is_loaded"].is_boolean());
-    assert!(first["is_recommended"].is_boolean());
+    assert!(first["recommended"].is_boolean());
 }
 
 #[tokio::test]
@@ -89,12 +89,12 @@ async fn test_delete_model_not_downloaded() {
 
     let req = Request::builder()
         .method("DELETE")
-        .uri("/api/models/whisper-tiny-int8")
+        .uri("/api/models/whisper-tiny")
         .body(Body::empty())
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    // The model exists in the registry but is not downloaded, so deletion
+    // The model exists in the catalog but is not downloaded, so deletion
     // should fail with a 404 (model file not found on disk).
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

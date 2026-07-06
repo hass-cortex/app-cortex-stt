@@ -1,11 +1,13 @@
 interface ScoreBarProps {
 	label: string;
-	score: number;
+	/** Score on a 0-100 scale, or null when unknown (renders nothing). */
+	score: number | null;
 	variant?: "accent" | "success" | "warning";
 }
 
 export function ScoreBar({ label, score, variant = "accent" }: ScoreBarProps) {
-	const percent = Math.round(score * 100);
+	if (score == null) return null;
+	const percent = Math.max(0, Math.min(100, Math.round(score)));
 	const colorMap = {
 		accent: "bg-accent",
 		success: "bg-success",

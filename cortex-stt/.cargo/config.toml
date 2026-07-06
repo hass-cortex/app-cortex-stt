@@ -16,3 +16,7 @@
 # is what propagates this setting into the addon image).
 [env]
 GGML_NATIVE = "OFF"
+# transcribe-cpp builds ggml through its own CMake configure; the plain
+# GGML_NATIVE env var does not reach that step, so forward the same
+# baseline through the binding's documented escape hatch.
+TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF"

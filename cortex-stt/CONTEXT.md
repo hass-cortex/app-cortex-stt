@@ -1,6 +1,6 @@
 # Cortex STT — Domain Language
 
-Multi-engine speech-to-text HTTP service. The vocabulary below covers
+Multi-model speech-to-text HTTP service (single transcribe.cpp runtime). The vocabulary below covers
 concepts callers reach for across the codebase. General programming
 patterns (RAII guards, semaphores, broadcast channels) are not listed.
 
@@ -9,12 +9,16 @@ patterns (RAII guards, semaphores, broadcast channels) are not listed.
 ### Transcription
 
 **Transcription pipeline**:
-The shared flow `decode audio → acquire engine → run inference → save to history`. Lives in `api/transcribe.rs` today as a set of private helpers; the three handlers (sync / SSE / async) compose it.
+The shared flow `decode audio → acquire engine → run inference → save to history`. Lives in `api/transcribe.rs` today as a set of private helpers; the handlers (sync / async / stream session) compose it.
 _Avoid_: "request handler", "transcription service"
 
 **Speech engine**:
-A loaded model behind the `SpeechEngine` trait — Whisper (ggml), Parakeet (ONNX), SenseVoice (ONNX). Each instance is single-threaded; concurrency comes from the pool.
+A loaded model behind the `SpeechEngine` trait (transcribe.cpp / ggml runtime). Each instance admits one inference at a time; concurrency comes from the pool.
 _Avoid_: "model" (a _model_ is a file on disk; a _speech engine_ is the loaded runtime)
+
+**Stream session**:
+One WebSocket transcription: the client feeds audio chunks and receives a final transcript; models that support streaming also emit partial transcripts along the way. Models that don't are buffered server-side and produce only the final — same wire contract either way.
+_Avoid_: "streaming request", "live transcription" (overloaded with `/api/history/live`)
 
 **Engine pool**:
 A fixed-size set of `SpeechEngine` instances for one loaded model, fronted by a semaphore. One instance per slot.
@@ -26,12 +30,18 @@ _Avoid_: "async request", "deferred task"
 
 ### Models
 
-**Built-in model**:
-An entry in the static registry (`engine/registry.rs`) — id, download URL, archive layout. The set of _downloadable_ models.
-_Avoid_: "supported model"
+**Catalog model**:
+An entry in the vendored catalog (a converted snapshot of Handy's `catalog.json`) — slug, quant matrix, capabilities, languages. The set of _downloadable_ models.
+_Avoid_: "built-in model" (pre-catalog term), "supported model"
+
+**Quant**:
+A precision variant of a catalog model, baked into its GGUF file (`Q4_K_M` … `F32`). Chosen at download time; at most one quant of a model exists on disk, so model identity never carries a quant dimension.
 
 **Loaded model**:
-A built-in model whose pool has been instantiated and is resident in memory. Subset of built-in.
+A catalog (or custom) model whose pool has been instantiated and is resident in memory.
+
+**Custom model**:
+Any `.gguf` file placed in the model directory by hand and picked up by a rescan. Outside the catalog: no quant matrix, no download lifecycle; capabilities are read from the file itself.
 
 **Default model**:
 The model used when a transcription request omits `model=`. Configured via `/api/engine/default`.
@@ -63,7 +73,8 @@ Two independent retention policies applied separately. `record_retention` drives
 - A **Transcription history record** is produced by the **Transcription pipeline** and consumed by the History API + retention sweep.
 - **Record retention** triggers **Delete record**; **Audio retention** triggers **Drop audio**. These two operations are _distinct_ — conflating them produces dangling `audio_path` references.
 - A **Retention policy** is a pure value; applying it yields a set of ids. The policy never touches storage.
-- A **Speech engine** is a loaded **Built-in model**; the **Engine pool** owns one or more instances per loaded model.
+- A **Speech engine** is a loaded **Catalog model** (at its downloaded **Quant**); the **Engine pool** owns one or more instances per loaded model.
+- A **Stream session** rides the same **Transcription pipeline** as sync/async — only the audio arrival and result delivery differ.
 
 ## Example dialogue
 
@@ -78,3 +89,5 @@ Two independent retention policies applied separately. `record_retention` drives
 - "record" alone is ambiguous — `db::records` is a storage backend module; `Record` types are wire shapes. After the history refactor, the public concept is **Transcription history record** and `db::records` collapses into `history::*`.
 - "history" as an HTTP path (`/api/history`) refers to **Transcription history records**, not application logs.
 - "cleanup" in code means _retention sweep_, not garbage collection in the language sense.
+- "multi-engine" is a pre-transcribe.cpp phrase — there is one engine runtime now, many **Catalog models**. Say "multi-model".
+- "streaming" is overloaded: a **Stream session** (WS transcription) is unrelated to `/api/history/live` (SSE tail of new records) and to download-progress SSE.

@@ -28,6 +28,15 @@ pub enum AsrError {
     #[error("audio format error: {detail}")]
     AudioFormatError { detail: String },
 
+    #[error("audio exceeds the {max_audio_ms} ms limit of model {model_id}")]
+    InputTooLong { model_id: String, max_audio_ms: i64 },
+
+    #[error("model does not support streaming")]
+    StreamingUnsupported,
+
+    #[error("stream protocol error: {detail}")]
+    StreamProtocol { detail: String },
+
     #[error("protocol error: {detail}")]
     ProtocolError { detail: String },
 
@@ -84,7 +93,12 @@ impl AsrError {
     pub fn status(&self) -> StatusCode {
         match self {
             // 400
-            Self::AudioFormatError { .. } | Self::ProtocolError { .. } => StatusCode::BAD_REQUEST,
+            Self::AudioFormatError { .. }
+            | Self::ProtocolError { .. }
+            | Self::StreamingUnsupported
+            | Self::StreamProtocol { .. } => StatusCode::BAD_REQUEST,
+            // 413
+            Self::InputTooLong { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             // 401
             Self::AuthRequired | Self::InvalidApiKey => StatusCode::UNAUTHORIZED,
             // 403
@@ -131,6 +145,9 @@ impl AsrError {
             Self::ModelNotLoaded { .. } => "MODEL_NOT_LOADED",
             Self::AudioFormatError { .. } => "AUDIO_FORMAT_ERROR",
             Self::ProtocolError { .. } => "PROTOCOL_ERROR",
+            Self::InputTooLong { .. } => "INPUT_TOO_LONG",
+            Self::StreamingUnsupported => "STREAMING_UNSUPPORTED",
+            Self::StreamProtocol { .. } => "STREAM_PROTOCOL",
             Self::DatabaseError { .. } => "DATABASE_ERROR",
             Self::DownloadFailed { .. } => "DOWNLOAD_FAILED",
             Self::AuthRequired => "AUTH_REQUIRED",
@@ -161,7 +178,8 @@ impl AsrError {
             Self::InferenceFailed { model_id, .. }
             | Self::InferenceTimeout { model_id, .. }
             | Self::PoolAcquireTimeout { model_id, .. }
-            | Self::DownloadFailed { model_id, .. } => Some(model_id.clone()),
+            | Self::DownloadFailed { model_id, .. }
+            | Self::InputTooLong { model_id, .. } => Some(model_id.clone()),
             Self::ModelFileNotFound { path } => Some(path.display().to_string()),
             Self::RecordNotFound { record_id } | Self::NoAudio { record_id } => {
                 Some(record_id.clone())

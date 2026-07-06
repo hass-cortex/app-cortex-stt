@@ -2,10 +2,12 @@
 //!
 //! Usage:
 //!   asr-cli list                              # List available models
-//!   asr-cli download <model-id>               # Download a model
+//!   asr-cli download <model-id> [--quant Q]   # Download a model
 //!   asr-cli transcribe <model-id> <wav-file>  # Transcribe an audio file
+//!   asr-cli stream <model-id> <wav-file>      # Feed chunks through the engine stream
 //!   asr-cli test <model-id> <wav-file>        # Download (if needed) + transcribe
 //!   asr-cli test-all <wav-dir>                # Test all downloaded models
+//!   asr-cli verify [model-id]                 # Verify downloaded models load + run
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,8 +16,8 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::registry::builtin_models;
 use cortex_stt::model::catalog::ModelCatalog;
+use cortex_stt::model::catalog_data::{catalog_models, find_model};
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
 use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::model::types::ModelStatus;
@@ -37,7 +39,12 @@ enum Command {
     List,
 
     /// Download a model by ID
-    Download { model_id: String },
+    Download {
+        model_id: String,
+        /// Quant to install (default: the catalog's default_quant)
+        #[arg(long, short)]
+        quant: Option<String>,
+    },
 
     /// Transcribe a WAV file with a specific model
     Transcribe {
@@ -46,6 +53,18 @@ enum Command {
         /// Language hint (e.g., "zh", "en", "ja")
         #[arg(long, short)]
         language: Option<String>,
+    },
+
+    /// Feed a WAV file through the engine streaming path in real-time-ish
+    /// chunks, printing partial transcripts (no HTTP involved)
+    Stream {
+        model_id: String,
+        wav_file: PathBuf,
+        #[arg(long, short)]
+        language: Option<String>,
+        /// Chunk size in milliseconds
+        #[arg(long, default_value_t = 100)]
+        chunk_ms: usize,
     },
 
     /// Download (if needed) and transcribe — full pipeline test
@@ -62,13 +81,10 @@ enum Command {
         wav_dir: PathBuf,
     },
 
-    /// Verify all model download URLs are reachable (HEAD request)
+    /// Verify all default-quant download URLs are reachable (HEAD request)
     VerifyUrls,
 
-    /// Download all registry models, verifying each stage
-    DownloadAll,
-
-    /// Verify each downloaded model: file exists → correct structure → can load → can transcribe
+    /// Verify each downloaded model: file exists → plausible size → can load → can transcribe
     Verify {
         /// Optional: only verify this model
         model_id: Option<String>,
@@ -92,24 +108,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Command::List => cmd_list(&catalog).await,
-        Command::Download { model_id } => cmd_download(&model_id, &catalog, &downloads).await,
+        Command::Download { model_id, quant } => {
+            cmd_download(&model_id, quant.as_deref(), &catalog, &downloads).await
+        }
         Command::Transcribe {
             model_id,
             wav_file,
             language,
-        } => cmd_transcribe(&model_id, &wav_file, language.as_deref(), &cli.model_dir).await,
+        } => cmd_transcribe(&model_id, &wav_file, language.as_deref(), &catalog).await,
+        Command::Stream {
+            model_id,
+            wav_file,
+            language,
+            chunk_ms,
+        } => {
+            cmd_stream(
+                &model_id,
+                &wav_file,
+                language.as_deref(),
+                chunk_ms,
+                &catalog,
+            )
+            .await
+        }
         Command::Test {
             model_id,
             wav_file,
             language,
         } => {
             cmd_download_if_needed(&model_id, &catalog, &downloads).await?;
-            cmd_transcribe(&model_id, &wav_file, language.as_deref(), &cli.model_dir).await
+            cmd_transcribe(&model_id, &wav_file, language.as_deref(), &catalog).await
         }
-        Command::TestAll { wav_dir } => cmd_test_all(&wav_dir, &catalog, &cli.model_dir).await,
+        Command::TestAll { wav_dir } => cmd_test_all(&wav_dir, &catalog).await,
         Command::VerifyUrls => cmd_verify_urls().await,
-        Command::DownloadAll => cmd_download_all(&catalog, &downloads).await,
-        Command::Verify { model_id } => cmd_verify(model_id.as_deref(), &cli.model_dir).await,
+        Command::Verify { model_id } => cmd_verify(model_id.as_deref(), &catalog).await,
     }
 }
 
@@ -117,37 +149,40 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
     let models = catalog.list_models().await;
 
     println!(
-        "{:<25} {:<12} {:<12} {:<8} Languages",
-        "ID", "Engine", "Status", "Size"
+        "{:<28} {:<12} {:<14} {:<8} {:<6} Languages",
+        "ID", "Family", "Status", "Size", "Stream"
     );
-    println!("{}", "-".repeat(80));
+    println!("{}", "-".repeat(96));
 
     for m in &models {
-        let langs = if m.supported_languages.len() > 5 {
+        let langs = if m.languages.len() > 5 {
             format!(
                 "{} (+{} more)",
-                m.supported_languages[..5].join(","),
-                m.supported_languages.len() - 5
+                m.languages[..5].join(","),
+                m.languages.len() - 5
             )
         } else {
-            m.supported_languages.join(",")
+            m.languages.join(",")
         };
 
         let status = match m.status {
-            ModelStatus::Downloaded => "✓ downloaded",
-            ModelStatus::Available => "  available",
-            ModelStatus::Queued => "⏳ queued",
-            ModelStatus::Custom => "✓ custom",
-            ModelStatus::Downloading => "⟳ downloading",
-            ModelStatus::Error => "✗ error",
+            ModelStatus::Downloaded => {
+                format!("✓ {}", m.downloaded_quant.as_deref().unwrap_or("dl"))
+            }
+            ModelStatus::Available => "  available".to_string(),
+            ModelStatus::Queued => "⏳ queued".to_string(),
+            ModelStatus::Custom => "✓ custom".to_string(),
+            ModelStatus::Downloading => "⟳ downloading".to_string(),
+            ModelStatus::Error => "✗ error".to_string(),
         };
 
         println!(
-            "{:<25} {:<12} {:<12} {:>5}MB  {}",
+            "{:<28} {:<12} {:<14} {:>5}MB {:<6} {}",
             m.id,
-            format!("{:?}", m.engine_type),
+            m.family,
             status,
             m.size_mb,
+            if m.capabilities.streaming { "yes" } else { "" },
             langs
         );
     }
@@ -163,57 +198,45 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
 
 async fn cmd_download(
     model_id: &str,
+    quant: Option<&str>,
     catalog: &ModelCatalog,
     downloads: &Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let models = catalog.list_models().await;
-    let model_info = models
-        .iter()
-        .find(|m| m.id == model_id)
-        .ok_or_else(|| format!("Model not found: {model_id}"))?;
+    let model = find_model(model_id).ok_or_else(|| format!("Model not in catalog: {model_id}"))?;
+    let quant_file = match quant {
+        Some(q) => model
+            .quant(q)
+            .ok_or_else(|| format!("Model {model_id} has no quant {q}"))?,
+        None => model.default_quant_file(),
+    };
 
-    if matches!(
-        model_info.status,
-        ModelStatus::Downloaded | ModelStatus::Custom
-    ) {
+    let dest_path = catalog.model_dir().join(&quant_file.filename);
+    if dest_path.exists() {
         println!(
-            "✓ Model '{model_id}' already downloaded at {}",
-            catalog.model_dir().join(&model_info.filename).display()
+            "✓ Model '{model_id}' ({}) already downloaded at {}",
+            quant_file.quant,
+            dest_path.display()
         );
         return Ok(());
     }
 
-    // Get URL and SHA from registry definition
-    let registry = builtin_models();
-    let def = registry
-        .iter()
-        .find(|d| d.id == model_id)
-        .ok_or_else(|| format!("Model not in registry: {model_id}"))?;
-
-    if def.url.is_empty() {
-        return Err(format!("No download URL for model: {model_id}").into());
-    }
-
     println!(
-        "Downloading '{model_id}' ({} MB) from {}...",
-        def.size_mb, def.url
+        "Downloading '{model_id}' {} ({} MB) from {}...",
+        quant_file.quant,
+        quant_file.size_bytes / (1024 * 1024),
+        quant_file.url
     );
-
-    let dest_path = catalog.model_dir().join(&def.filename);
 
     // One-shot CLI: never cancels, so a fresh flag that stays false.
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let handle = download_model(
-        &def.url,
+        &quant_file.url,
         dest_path.clone(),
-        &def.sha256,
+        &quant_file.sha256,
         model_id,
         cancel_flag,
         downloads.clone(),
-        DownloadConfig {
-            verify_sha256: !def.sha256.is_empty(),
-            ..Default::default()
-        },
+        DownloadConfig::default(),
     )
     .await?;
     let mut rx = handle.progress_rx;
@@ -260,24 +283,52 @@ async fn cmd_download_if_needed(
             println!("✓ Model '{model_id}' already downloaded");
             Ok(())
         }
-        Some(_) => cmd_download(model_id, catalog, downloads).await,
+        Some(_) => cmd_download(model_id, None, catalog, downloads).await,
         None => Err(format!("Model not found: {model_id}").into()),
     }
+}
+
+/// Load a WAV file as 16 kHz mono f32 samples.
+fn load_wav(wav_file: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    if !wav_file.exists() {
+        return Err(format!("WAV file not found: {}", wav_file.display()).into());
+    }
+    let wav_data = std::fs::read(wav_file)?;
+    Ok(cortex_stt::audio::resample::resample_to_16khz_mono(
+        &wav_data,
+    )?)
+}
+
+/// Register `model_id` in a one-shot EngineManager (single pool slot).
+async fn setup_engine(
+    model_id: &str,
+    catalog: &ModelCatalog,
+) -> Result<Arc<EngineManager>, Box<dyn std::error::Error>> {
+    let model_path = catalog.model_path(model_id).ok_or_else(|| {
+        format!("Model not found on disk: {model_id}. Run 'asr-cli download {model_id}' first.")
+    })?;
+
+    let engine_manager = EngineManager::new(EngineManagerConfig {
+        pool_size: 1,
+        max_loaded_models: 1,
+        idle_timeout: None,
+        acquire_timeout: Duration::from_secs(300),
+        idle_check_interval: Duration::from_secs(60),
+    });
+
+    let factory = cortex_stt::engine::register::create_factory(model_id, model_path, None)
+        .ok_or("Engine not compiled in this build — use the default `engine` feature")?;
+    engine_manager.register(model_id, factory).await;
+    Ok(engine_manager)
 }
 
 async fn cmd_transcribe(
     model_id: &str,
     wav_file: &Path,
     language: Option<&str>,
-    model_dir: &Path,
+    catalog: &ModelCatalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !wav_file.exists() {
-        return Err(format!("WAV file not found: {}", wav_file.display()).into());
-    }
-
-    // Read and parse WAV
-    let wav_data = std::fs::read(wav_file)?;
-    let samples = cortex_stt::audio::resample::resample_to_16khz_mono(&wav_data)?;
+    let samples = load_wav(wav_file)?;
     let duration_secs = samples.len() as f32 / cortex_stt::audio::canonical::SAMPLE_RATE_F32;
     println!(
         "Audio: {:.2}s, {} samples (16kHz mono)",
@@ -285,64 +336,13 @@ async fn cmd_transcribe(
         samples.len()
     );
 
-    // Create engine manager and register the model
-    let engine_config = EngineManagerConfig {
-        pool_size: 1,
-        max_loaded_models: 1,
-        idle_timeout: None,
-        acquire_timeout: Duration::from_secs(300),
-        idle_check_interval: Duration::from_secs(60),
-    };
-    let engine_manager = EngineManager::new(engine_config);
-
-    // Determine engine type and model path — check both registry and scanned models
-    let downloads = DownloadManager::new(model_dir.to_path_buf());
-    let catalog = ModelCatalog::new(model_dir.to_path_buf(), downloads);
-    let all_models = catalog.list_models().await;
-    let model_info = all_models.iter().find(|m| m.id == model_id);
-
-    // Quantization is authoritative in the registry; scanned custom models
-    // (absent from the registry) fall back to int8.
-    let registry = builtin_models();
-    let registry_def = registry.iter().find(|m| m.id == model_id);
-    let (model_path, engine_type) = match model_info {
-        Some(info) => (model_dir.join(&info.filename), info.engine_type.clone()),
-        None => match registry_def {
-            Some(def) => (model_dir.join(&def.filename), def.engine_type.clone()),
-            None => return Err(format!("Model not found: {model_id}").into()),
-        },
-    };
-    let quantization = registry_def.map(|d| d.quantization).unwrap_or("int8");
-
-    if !model_path.exists() {
-        return Err(format!(
-            "Model not found on disk: {}. Run 'asr-cli download {model_id}' first.",
-            model_path.display()
-        )
-        .into());
-    }
-
-    println!("Loading model '{model_id}' ({engine_type:?})...");
+    println!("Loading model '{model_id}'...");
     let load_start = Instant::now();
+    let engine_manager = setup_engine(model_id, catalog).await?;
 
-    let factory = cortex_stt::engine::register::create_factory(
-        &engine_type,
-        model_path,
-        quantization,
-        cortex_stt::api::settings::ComputeDevice::default(),
-    )
-    .ok_or_else(|| {
-        format!(
-            "Engine type {engine_type:?} not compiled in this build. \
-             Use --features whisper or --features onnx"
-        )
-    })?;
-    engine_manager.register(model_id, factory).await;
-
-    // Transcribe
     let options = cortex_stt::engine::traits::TranscribeOptions {
         language: language.map(String::from),
-        translate: false,
+        ..Default::default()
     };
 
     let mut guard = engine_manager.acquire(model_id).await?;
@@ -355,7 +355,7 @@ async fn cmd_transcribe(
 
     // Output results
     println!("\n┌─────────────────────────────────────────────");
-    println!("│ Model:      {model_id} ({engine_type:?})");
+    println!("│ Model:      {model_id}");
     println!("│ Language:   {}", language.unwrap_or("auto"));
     println!("│ Audio:      {:.2}s", duration_secs);
     println!("│ Load time:  {load_ms}ms");
@@ -373,6 +373,70 @@ async fn cmd_transcribe(
             println!("│   [{:.2}s - {:.2}s] {}", seg.start, seg.end, seg.text);
         }
     }
+    if result.truncated {
+        println!("│ ⚠ output truncated");
+    }
+    println!("└─────────────────────────────────────────────");
+
+    Ok(())
+}
+
+async fn cmd_stream(
+    model_id: &str,
+    wav_file: &Path,
+    language: Option<&str>,
+    chunk_ms: usize,
+    catalog: &ModelCatalog,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let samples = load_wav(wav_file)?;
+    let duration_secs = samples.len() as f32 / cortex_stt::audio::canonical::SAMPLE_RATE_F32;
+    let chunk_samples =
+        (cortex_stt::audio::canonical::SAMPLE_RATE as usize) * chunk_ms.max(10) / 1000;
+
+    let engine_manager = setup_engine(model_id, catalog).await?;
+    let mut guard = engine_manager.acquire(model_id).await?;
+
+    let caps = guard.capabilities()?;
+    if !caps.supports_streaming {
+        return Err(format!(
+            "Model {model_id} does not support streaming (use `asr-cli transcribe`)"
+        )
+        .into());
+    }
+
+    let options = cortex_stt::engine::traits::TranscribeOptions {
+        language: language.map(String::from),
+        ..Default::default()
+    };
+
+    println!("Streaming {duration_secs:.2}s of audio in {chunk_ms}ms chunks…\n");
+    let start = Instant::now();
+    guard.stream_begin(&options)?;
+
+    let mut last_revision = -1;
+    for chunk in samples.chunks(chunk_samples) {
+        let snapshot = guard.stream_feed(chunk)?;
+        if snapshot.revision != last_revision {
+            last_revision = snapshot.revision;
+            println!(
+                "[{:>6.2}s r{:>3}] {}",
+                start.elapsed().as_secs_f32(),
+                snapshot.revision,
+                snapshot.display
+            );
+        }
+    }
+
+    let result = guard.stream_finalize()?;
+    println!("\n┌─────────────────────────────────────────────");
+    println!(
+        "│ Final ({:.2}s wall): {}",
+        start.elapsed().as_secs_f32(),
+        result.text
+    );
+    if result.truncated {
+        println!("│ ⚠ output truncated");
+    }
     println!("└─────────────────────────────────────────────");
 
     Ok(())
@@ -381,7 +445,6 @@ async fn cmd_transcribe(
 async fn cmd_test_all(
     wav_dir: &Path,
     catalog: &ModelCatalog,
-    model_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !wav_dir.exists() {
         return Err(format!("WAV directory not found: {}", wav_dir.display()).into());
@@ -406,7 +469,7 @@ async fn cmd_test_all(
 
     for model in &downloaded {
         // Find a matching audio file
-        let wav_file = find_test_audio(wav_dir, &model.supported_languages);
+        let wav_file = find_test_audio(wav_dir, &model.languages);
         let wav_file = match wav_file {
             Some(f) => f,
             None => {
@@ -421,7 +484,7 @@ async fn cmd_test_all(
             .map(String::from);
 
         println!("Testing {} with {}...", model.id, wav_file.display());
-        match cmd_transcribe(&model.id, &wav_file, lang.as_deref(), model_dir).await {
+        match cmd_transcribe(&model.id, &wav_file, lang.as_deref(), catalog).await {
             Ok(_) => println!(),
             Err(e) => println!("  ✗ Error: {e}\n"),
         }
@@ -452,29 +515,28 @@ fn find_test_audio(wav_dir: &Path, languages: &[String]) -> Option<PathBuf> {
 }
 
 async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
-    let models = builtin_models();
+    let models = catalog_models();
     let client = reqwest::Client::new();
 
-    println!("Verifying {} model download URLs...\n", models.len());
+    println!(
+        "Verifying {} default-quant download URLs...\n",
+        models.len()
+    );
 
-    for model in &models {
-        if model.url.is_empty() {
-            println!("⏭  {}: no URL", model.id);
-            continue;
-        }
-
-        if !validate_download_url(&model.url) {
-            println!("✗  {}: URL rejected by whitelist: {}", model.id, model.url);
+    for model in models {
+        let quant = model.default_quant_file();
+        if !validate_download_url(&quant.url) {
+            println!("✗  {}: URL rejected by whitelist: {}", model.id, quant.url);
             continue;
         }
 
         print!(
             "   {}: HEAD {}... ",
             model.id,
-            &model.url[..model.url.len().min(60)]
+            &quant.url[..quant.url.len().min(60)]
         );
 
-        match client.head(&model.url).send().await {
+        match client.head(&quant.url).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 let size = resp
@@ -501,129 +563,59 @@ async fn cmd_verify_urls() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn cmd_download_all(
-    catalog: &ModelCatalog,
-    downloads: &Arc<DownloadManager>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let models = builtin_models();
-    let mut ok = 0u32;
-    let mut fail = 0u32;
-
-    for def in &models {
-        println!("--- {} ---", def.id);
-        match cmd_download(&def.id, catalog, downloads).await {
-            Ok(_) => ok += 1,
-            Err(e) => {
-                println!("  ✗ FAILED: {e}");
-                fail += 1;
-            }
-        }
-        println!();
-    }
-
-    println!(
-        "=== Download Summary: {ok} ok, {fail} failed, {} total ===",
-        models.len()
-    );
-    if fail > 0 {
-        Err(format!("{fail} downloads failed").into())
-    } else {
-        Ok(())
-    }
-}
-
-/// Staged verification for each model:
-///   Stage 1: File/directory exists on disk
-///   Stage 2: Correct structure (ONNX: has model*.onnx; Whisper: .bin > 1MB)
+/// Staged verification for each downloaded model:
+///   Stage 1: GGUF file exists on disk
+///   Stage 2: Plausible size (> 1 MB)
 ///   Stage 3: Engine factory loads successfully
 ///   Stage 4: Can transcribe 1 second of silence
 async fn cmd_verify(
     model_id_filter: Option<&str>,
-    model_dir: &Path,
+    catalog: &ModelCatalog,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let models = builtin_models();
-    let targets: Vec<_> = match model_id_filter {
-        Some(id) => models.iter().filter(|m| m.id == id).collect(),
-        None => models.iter().collect(),
-    };
+    let models = catalog.list_models().await;
+    let targets: Vec<_> = models
+        .iter()
+        .filter(|m| model_id_filter.is_none_or(|id| m.id == id))
+        .collect();
 
     if targets.is_empty() {
         return Err("No matching models found".into());
     }
 
     let mut pass_count = 0usize;
+    let mut downloaded = 0usize;
 
-    for def in &targets {
-        let model_path = model_dir.join(&def.filename);
-        print!("{:<25} ", def.id);
+    for info in &targets {
+        print!("{:<28} ", info.id);
 
         // Stage 1: File exists
-        if !model_path.exists() {
+        let Some(model_path) = catalog.model_path(&info.id) else {
             println!("⏭ not downloaded");
             continue;
-        }
-
-        // Stage 2: Structure check
-        let structure_ok = if def.is_directory {
-            std::fs::read_dir(&model_path)
-                .map(|entries| {
-                    entries.filter_map(|e| e.ok()).any(|e| {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        name.contains("model") && name.ends_with(".onnx")
-                    })
-                })
-                .unwrap_or(false)
-        } else {
-            std::fs::metadata(&model_path)
-                .map(|m| m.len() > 1_000_000)
-                .unwrap_or(false)
         };
+        downloaded += 1;
 
-        if !structure_ok {
-            println!("✗ bad structure (missing model files)");
+        // Stage 2: Plausible size
+        let size_ok = std::fs::metadata(&model_path)
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false);
+        if !size_ok {
+            println!("✗ implausibly small file");
             continue;
         }
 
-        // Stage 3: Engine loads
-        let engine_manager = EngineManager::new(EngineManagerConfig {
-            pool_size: 1,
-            max_loaded_models: 1,
-            idle_timeout: None,
-            acquire_timeout: Duration::from_secs(300),
-            idle_check_interval: Duration::from_secs(60),
-        });
-
-        let factory = match cortex_stt::engine::register::create_factory(
-            &def.engine_type,
-            model_path,
-            def.quantization,
-            cortex_stt::api::settings::ComputeDevice::default(),
-        ) {
-            Some(f) => f,
-            None => {
-                println!(
-                    "✗ register failed: engine type {:?} not compiled in this build. \
-                     Use --features whisper or --features onnx",
-                    def.engine_type
-                );
-                continue;
-            }
-        };
-        engine_manager.register(&def.id, factory).await;
-
-        let guard = match engine_manager.acquire(&def.id).await {
-            Ok(g) => g,
+        // Stage 3 + 4: Engine loads and transcribes silence
+        let engine_manager = match setup_engine(&info.id, catalog).await {
+            Ok(m) => m,
             Err(e) => {
-                println!("✗ load failed: {e}");
+                println!("✗ register failed: {e}");
                 continue;
             }
         };
-        drop(guard);
 
-        // Stage 4: Transcribe silence
         let silence = vec![0.0f32; cortex_stt::audio::canonical::SAMPLE_RATE as usize];
         let opts = cortex_stt::engine::traits::TranscribeOptions::default();
-        match engine_manager.acquire(&def.id).await {
+        match engine_manager.acquire(&info.id).await {
             Ok(mut g) => match g.transcribe(&silence, &opts) {
                 Ok(r) => {
                     println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
@@ -631,16 +623,10 @@ async fn cmd_verify(
                 }
                 Err(e) => println!("✗ transcribe failed: {e}"),
             },
-            Err(e) => println!("✗ acquire failed: {e}"),
+            Err(e) => println!("✗ load failed: {e}"),
         }
     }
 
-    println!("\n{pass_count}/{} models verified", targets.len());
-    let downloaded = targets
-        .iter()
-        .filter(|d| model_dir.join(&d.filename).exists())
-        .count();
-    println!("{downloaded}/{} models downloaded", targets.len());
-
+    println!("\n{pass_count}/{downloaded} downloaded models verified");
     Ok(())
 }

@@ -11,14 +11,16 @@ use crate::error::AsrError;
 use crate::retention::RetentionPolicy;
 use crate::state::AppState;
 
-/// Compute device preference for a model.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ComputeDevice {
-    #[default]
-    Auto,
-    Cpu,
-    Gpu,
+use crate::engine::traits::EngineBackend;
+
+/// Per-model compute backend override.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BackendOverride {
+    #[serde(default)]
+    pub backend: EngineBackend,
+    /// GPU device registry index (0 = auto / first matching device).
+    #[serde(default)]
+    pub gpu_device: u32,
 }
 
 /// Application settings exposed via the REST API.
@@ -39,9 +41,9 @@ pub struct Settings {
     /// Timezone for display. "auto" = browser detection, or IANA timezone (e.g., "Asia/Taipei")
     #[serde(default = "default_timezone")]
     pub timezone: String,
-    /// Per-model compute device override. Key = model_id.
+    /// Per-model compute backend override. Key = model_id.
     #[serde(default)]
-    pub device_overrides: HashMap<String, ComputeDevice>,
+    pub backend_overrides: HashMap<String, BackendOverride>,
 }
 
 fn default_timezone() -> String {
@@ -61,7 +63,7 @@ impl Default for Settings {
             audio_retention: RetentionPolicy::Days(7),
             record_retention: RetentionPolicy::Days(30),
             timezone: default_timezone(),
-            device_overrides: HashMap::new(),
+            backend_overrides: HashMap::new(),
         }
     }
 }

@@ -3,16 +3,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
 use axum::routing::{delete, get, post};
+use serde::Deserialize;
 use tokio_stream::Stream;
 
-use crate::api::system::HardwareCapabilities;
-use crate::engine::registry::builtin_models;
 use crate::error::AsrError;
+use crate::model::catalog_data::find_model;
 use crate::model::download::{DownloadConfig, download_model, launch_next};
 use crate::model::download_manager::{ClaimOutcome, QueuedDownloadRequest};
 use crate::model::types::DownloadPhase;
@@ -22,12 +22,10 @@ use crate::state::AppState;
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut models = state.catalog.list_models().await;
 
-    // Enrich with engine load status and hardware recommendations.
+    // Enrich with engine load status.
     let loaded = state.engine_manager.loaded_models().await;
-    let hw = HardwareCapabilities::detect();
     for model in &mut models {
         model.is_loaded = loaded.contains(&model.id);
-        model.evaluate_recommendation(&hw);
     }
 
     axum::Json(models)
@@ -60,26 +58,36 @@ async fn scan_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(custom)
 }
 
+#[derive(Debug, Deserialize)]
+struct DownloadQuery {
+    /// Quant to install; defaults to the catalog's `default_quant`.
+    quant: Option<String>,
+}
+
 /// POST /api/models/{model_id}/download — start or queue a model download.
 async fn start_download(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
+    Query(query): Query<DownloadQuery>,
 ) -> Result<impl IntoResponse, AsrError> {
-    // Find the model definition in the built-in registry.
-    let definition = builtin_models()
-        .into_iter()
-        .find(|d| d.id == model_id)
-        .ok_or_else(|| AsrError::ModelNotFound {
-            model_id: model_id.clone(),
+    let model = find_model(&model_id).ok_or_else(|| AsrError::ModelNotFound {
+        model_id: model_id.clone(),
+    })?;
+
+    let quant_name = query.quant.as_deref().unwrap_or(&model.default_quant);
+    let quant = model
+        .quant(quant_name)
+        .ok_or_else(|| AsrError::ProtocolError {
+            detail: format!("model {model_id} has no quant {quant_name}"),
         })?;
 
-    let dest_path = state.catalog.model_dir().join(&definition.filename);
+    let dest_path = state.catalog.model_dir().join(&quant.filename);
 
     let request = QueuedDownloadRequest::new(
         model_id.clone(),
-        definition.url.clone(),
+        quant.url.clone(),
         dest_path,
-        definition.sha256.clone(),
+        quant.sha256.clone(),
     );
 
     // Atomically claim a slot, queue, or reject a duplicate. The duplicate
@@ -88,6 +96,9 @@ async fn start_download(
     let request = match state.downloads.try_claim_slot(request).await {
         ClaimOutcome::AlreadyActive => return Err(AsrError::DownloadInProgress { model_id }),
         ClaimOutcome::Queued => {
+            // The queued request is promoted by a background task with no
+            // watch channel — the polling watch covers its completion too.
+            spawn_completion_watch(state.clone(), model_id.clone(), quant.filename.clone());
             return Ok((
                 StatusCode::OK,
                 axum::Json(serde_json::json!({ "status": "started", "model_id": model_id })),
@@ -96,78 +107,30 @@ async fn start_download(
         ClaimOutcome::Claimed(request) => request,
     };
 
+    if let Err(e) = download_model(
+        &request.url,
+        request.dest_path,
+        &request.sha256,
+        &request.model_id,
+        Arc::clone(&request.cancel_flag),
+        state.downloads.clone(),
+        DownloadConfig::default(),
+    )
+    .await
     {
-        let handle = match download_model(
-            &request.url,
-            request.dest_path,
-            &request.sha256,
-            &request.model_id,
-            Arc::clone(&request.cancel_flag),
-            state.downloads.clone(),
-            DownloadConfig::default(),
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                // Slot was claimed but the task never started; release it
-                // (and launch anything queued) on a detached task so the
-                // cap recovers without blocking the error response.
-                let downloads = state.downloads.clone();
-                let model_id = model_id.clone();
-                tokio::spawn(async move {
-                    let next = downloads.finish(&model_id).await;
-                    launch_next(&downloads, next);
-                });
-                return Err(e);
-            }
-        };
-
-        let progress_rx = handle.progress_rx;
-
-        // Auto-register the engine factory when the download finishes so the
-        // model is usable without restarting the addon. Watches the download
-        // progress channel; exits silently on Failed or channel close.
-        let watch_state = state.clone();
-        let watch_model = model_id.clone();
-        let mut rx = progress_rx;
+        // Slot was claimed but the task never started; release it
+        // (and launch anything queued) on a detached task so the
+        // cap recovers without blocking the error response.
+        let downloads = state.downloads.clone();
+        let model_id = model_id.clone();
         tokio::spawn(async move {
-            loop {
-                if rx.changed().await.is_err() {
-                    return;
-                }
-                let status = rx.borrow().status.clone();
-                match status {
-                    DownloadPhase::Completed => {
-                        let device_overrides = watch_state
-                            .db
-                            .load_settings()
-                            .await
-                            .ok()
-                            .map(|s| s.device_overrides)
-                            .unwrap_or_default();
-                        crate::engine::register::register_downloaded_models(
-                            &watch_state.engine_manager,
-                            watch_state.catalog.model_dir(),
-                            &device_overrides,
-                        )
-                        .await;
-                        tracing::info!(
-                            model = %watch_model,
-                            "Engine factory registered after download",
-                        );
-                        // Notify Home Assistant so it can add the model's
-                        // entities without a reload.
-                        crate::api::ha_event::notify_models_changed("model_added", &watch_model)
-                            .await;
-                        return;
-                    }
-                    DownloadPhase::Failed => return,
-                    _ => continue,
-                }
-            }
+            let next = downloads.finish(&model_id).await;
+            launch_next(&downloads, next);
         });
+        return Err(e);
     }
+
+    spawn_completion_watch(state.clone(), model_id.clone(), quant.filename.clone());
 
     Ok((
         StatusCode::OK,
@@ -176,6 +139,90 @@ async fn start_download(
             "model_id": model_id,
         })),
     ))
+}
+
+/// Watch a model's download until it reaches a terminal state, then
+/// install it: remove any other quant (one quant per model), refresh
+/// the engine registration, and notify Home Assistant.
+///
+/// Polling-based so it covers both immediately-claimed and queued
+/// downloads (a queued request is promoted by a background task that
+/// exposes no watch channel). The previously installed quant is removed
+/// only AFTER the new file is fully downloaded and verified — a failed
+/// download must never destroy a working model.
+fn spawn_completion_watch(state: Arc<AppState>, model_id: String, new_filename: String) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            match state
+                .downloads
+                .get_progress(&model_id)
+                .await
+                .map(|p| p.status)
+            {
+                Some(DownloadPhase::Completed) => break,
+                Some(DownloadPhase::Failed) => return,
+                Some(_) => continue,
+                // Terminal progress entries are cleared shortly after they
+                // land; the installed file tells us which terminal it was
+                // (a cancel also deletes the .part, never the dest file).
+                None => {
+                    if state.catalog.model_dir().join(&new_filename).is_file() {
+                        break;
+                    }
+                    return;
+                }
+            }
+        }
+
+        // One quant per model: drop any other quant now that the new file
+        // is in place, and unload so the next acquire uses the new file.
+        if let Some(model) = find_model(&model_id) {
+            let mut removed_old = false;
+            for other in &model.quants {
+                if other.filename == new_filename {
+                    continue;
+                }
+                let old = state.catalog.model_dir().join(&other.filename);
+                if !old.is_file() {
+                    continue;
+                }
+                match tokio::fs::remove_file(&old).await {
+                    Ok(()) => {
+                        removed_old = true;
+                        tracing::info!(model_id = %model_id, path = %old.display(),
+                            "removed previous quant after successful download");
+                    }
+                    Err(e) => tracing::warn!(model_id = %model_id, path = %old.display(),
+                        error = %e, "failed to remove previous quant"),
+                }
+            }
+            if removed_old {
+                state.engine_manager.unload(&model_id).await;
+            }
+        }
+
+        // Auto-register the engine factory so the model is usable without
+        // restarting the addon.
+        let backend_overrides = state
+            .db
+            .load_settings()
+            .await
+            .ok()
+            .map(|s| s.backend_overrides)
+            .unwrap_or_default();
+        crate::engine::register::register_downloaded_models(
+            &state.engine_manager,
+            state.catalog.model_dir(),
+            &backend_overrides,
+        )
+        .await;
+        tracing::info!(model = %model_id, "Engine factory registered after download");
+
+        // Notify Home Assistant so it can add the model's entities
+        // without a reload.
+        crate::api::ha_event::notify_models_changed("model_added", &model_id).await;
+    });
 }
 
 /// GET /api/models/{model_id}/download/progress — SSE stream of download progress.

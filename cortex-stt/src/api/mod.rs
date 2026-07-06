@@ -9,5 +9,6 @@ pub mod keys;
 pub mod metrics;
 pub mod models;
 pub mod settings;
+pub mod stream;
 pub mod system;
 pub mod transcribe;

@@ -23,7 +23,10 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
         status: AsyncJobStatus::Completed {
             result: TranscribeResponse {
                 text: "ok".to_string(),
+                language: None,
                 segments: vec![],
+                words: vec![],
+                truncated: false,
                 model: "mock".to_string(),
                 duration_ms: 0,
                 inference_ms: 0,

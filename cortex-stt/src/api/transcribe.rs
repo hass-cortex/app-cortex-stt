@@ -3,34 +3,31 @@
 //! [`crate::transcriber`]. This file handles:
 //!
 //! - decoding the request body to 16 kHz mono `f32` samples,
-//! - dispatching between sync / SSE / async response shapes,
-//! - mapping pipeline stages to SSE events,
+//! - the sync JSON handler,
 //! - wiring async jobs into the in-memory `JobStore`.
+//!
+//! Streaming lives on the WebSocket endpoint (`crate::api::stream`);
+//! the former SSE stage-event variant was removed in 0.3.0 (ADR 0001).
 
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
-use tokio_stream::{Stream, StreamExt};
 
 use crate::api::auth::AuthKeyId;
 use crate::audio::canonical::{SAMPLE_RATE, SAMPLE_RATE_F64};
 use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
-use crate::engine::traits::TranscribeOptions;
+use crate::engine::traits::{Timestamps, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::TranscriptionSource;
 use crate::state::{AppState, AsyncJob, AsyncJobStatus};
-use crate::transcriber::{TranscribeRequest, TranscribeResponse, TranscribeStage};
+use crate::transcriber::{TranscribeRequest, TranscribeResponse};
 
-/// Query parameters for the sync transcribe endpoint.
+/// Query parameters for the transcribe endpoints.
 #[derive(Debug, Deserialize)]
 pub struct TranscribeQuery {
     /// Model ID to use for transcription.
@@ -40,10 +37,30 @@ pub struct TranscribeQuery {
     /// Whether to translate to English.
     #[serde(default)]
     pub translate: bool,
+    /// Whisper-family custom-vocabulary prompt.
+    pub initial_prompt: Option<String>,
+    /// Inverse text normalization (model default when omitted).
+    pub itn: Option<bool>,
+    /// Timestamp granularity: none | auto | segment | word.
+    #[serde(default)]
+    pub timestamps: Timestamps,
     /// Sample rate of raw PCM input (required for `application/octet-stream`).
     pub sample_rate: Option<u32>,
     /// Number of audio channels in raw PCM input (required for `application/octet-stream`).
     pub channels: Option<u16>,
+}
+
+impl TranscribeQuery {
+    /// Engine-shaped options (language normalized to a base code).
+    pub fn to_options(&self) -> TranscribeOptions {
+        TranscribeOptions {
+            language: normalize_language(self.language.clone()),
+            translate: self.translate,
+            initial_prompt: self.initial_prompt.clone(),
+            itn: self.itn,
+            timestamps: self.timestamps,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,18 +113,14 @@ fn prepare(
         );
     }
 
-    let language = query.language;
-    let options = TranscribeOptions {
-        language: normalize_language(language.clone()),
-        translate: query.translate,
-    };
+    let options = query.to_options();
 
     Ok(TranscribeRequest {
         model: query.model,
         samples: Arc::from(samples),
         duration_ms,
         options,
-        language,
+        language: query.language,
         source: TranscriptionSource::HttpApi,
         api_key_id,
     })
@@ -132,137 +145,26 @@ fn decode_audio(
 
 /// Normalize a BCP-47 locale (e.g. "zh-TW") to a base language code ("zh").
 /// Engines like SenseVoice only accept base codes.
-fn normalize_language(lang: Option<String>) -> Option<String> {
+pub fn normalize_language(lang: Option<String>) -> Option<String> {
     lang.map(|l| l.split(['-', '_']).next().unwrap_or(&l).to_string())
-}
-
-// ---------------------------------------------------------------------------
-// SSE stage events
-// ---------------------------------------------------------------------------
-
-/// Wire-format event emitted on the SSE stream. Each event maps 1:1 to
-/// a [`TranscribeStage`] or a pipeline error.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
-enum SseEvent {
-    EngineAcquired {
-        pool_wait_ms: u64,
-        cold_load_ms: u64,
-    },
-    InferenceStarted,
-    Result {
-        #[serde(flatten)]
-        response: TranscribeResponse,
-    },
-    Error {
-        code: String,
-        message: String,
-    },
-}
-
-impl SseEvent {
-    fn event_name(&self) -> &'static str {
-        match self {
-            SseEvent::EngineAcquired { .. } => "engine_acquired",
-            SseEvent::InferenceStarted => "inference_started",
-            SseEvent::Result { .. } => "result",
-            SseEvent::Error { .. } => "error",
-        }
-    }
-}
-
-impl From<TranscribeStage> for SseEvent {
-    fn from(stage: TranscribeStage) -> Self {
-        match stage {
-            TranscribeStage::EngineAcquired {
-                pool_wait_ms,
-                cold_load_ms,
-            } => SseEvent::EngineAcquired {
-                pool_wait_ms,
-                cold_load_ms,
-            },
-            TranscribeStage::InferenceStarted => SseEvent::InferenceStarted,
-            TranscribeStage::Completed(response) => SseEvent::Result { response },
-        }
-    }
-}
-
-fn to_sse(event: &SseEvent) -> Event {
-    let data = serde_json::to_string(event).unwrap_or_default();
-    Event::default().event(event.event_name()).data(data)
-}
-
-fn error_event(err: &AsrError) -> SseEvent {
-    SseEvent::Error {
-        code: err.code().to_string(),
-        message: err.to_string(),
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// POST /api/transcribe — dispatcher: checks `Accept` header and delegates
-/// to the sync JSON handler or the SSE streaming handler.
-async fn transcribe_dispatch(
-    state: State<Arc<AppState>>,
-    query: Query<TranscribeQuery>,
-    headers: HeaderMap,
-    auth_key: Option<axum::Extension<AuthKeyId>>,
-    body: Bytes,
-) -> Response {
-    let api_key_id = auth_key.map(|ext| ext.0.0);
-    let accept = headers
-        .get("accept")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if accept.contains("text/event-stream") {
-        transcribe_sse(state, query, headers, api_key_id, body)
-            .await
-            .into_response()
-    } else {
-        transcribe_sync(state, query, headers, api_key_id, body)
-            .await
-            .into_response()
-    }
-}
-
-/// Synchronous JSON transcription handler.
+/// POST /api/transcribe — synchronous JSON transcription.
 async fn transcribe_sync(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TranscribeQuery>,
     headers: HeaderMap,
-    api_key_id: Option<String>,
+    auth_key: Option<axum::Extension<AuthKeyId>>,
     body: Bytes,
 ) -> Result<axum::Json<TranscribeResponse>, AsrError> {
+    let api_key_id = auth_key.map(|ext| ext.0.0);
     let req = prepare(&headers, query, &body, api_key_id)?;
     let response = state.transcriber.transcribe(req).await?;
     Ok(axum::Json(response))
-}
-
-/// SSE streaming transcription handler. Emits real stage events as the
-/// pipeline reaches each async milestone.
-async fn transcribe_sse(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<TranscribeQuery>,
-    headers: HeaderMap,
-    api_key_id: Option<String>,
-    body: Bytes,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
-    let req = prepare(&headers, query, &body, api_key_id)?;
-    let pipeline = Arc::clone(&state.transcriber).transcribe_stream(req);
-
-    let stream = pipeline.map(|item| {
-        let event = match item {
-            Ok(stage) => SseEvent::from(stage),
-            Err(e) => error_event(&e),
-        };
-        Ok(to_sse(&event))
-    });
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +311,7 @@ async fn cancel_job(
 /// Routes for the transcription API.
 pub fn transcribe_routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/transcribe", post(transcribe_dispatch))
+        .route("/api/transcribe", post(transcribe_sync))
         .route("/api/transcribe/async", post(transcribe_async))
         .route("/api/transcribe/jobs/{job_id}", get(get_job_status))
         .route("/api/transcribe/jobs/{job_id}/result", get(get_job_result))

@@ -25,7 +25,8 @@ export function useModels() {
 
 export function useDownloadModel() {
 	return useInvalidatingMutation({
-		mutationFn: (modelId: string) => downloadModel(modelId),
+		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string }) =>
+			downloadModel(modelId, quant),
 		invalidates: [queryKeys.models.all],
 	});
 }

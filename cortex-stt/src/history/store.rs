@@ -17,12 +17,15 @@ use crate::retention::RetentionCandidate;
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionSource {
     HttpApi,
+    /// WebSocket stream session.
+    WsApi,
 }
 
 impl TranscriptionSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::HttpApi => "http_api",
+            Self::WsApi => "ws_api",
         }
     }
 }
@@ -33,6 +36,7 @@ impl FromStr for TranscriptionSource {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "http_api" => Ok(Self::HttpApi),
+            "ws_api" => Ok(Self::WsApi),
             other => Err(format!("unknown transcription source: {other}")),
         }
     }

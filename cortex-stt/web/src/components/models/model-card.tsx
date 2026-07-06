@@ -1,9 +1,10 @@
-import { Clock, Download, Play, PowerOff, Trash2, X } from "lucide-react";
+import { Clock, Download, Play, PowerOff, Star, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { ModelInfo, SystemInfo } from "@/api/types";
+import type { ModelInfo } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { useLoadModel, useUnloadModel } from "@/hooks/use-engine";
 import { useCancelDownload, useDeleteModel, useDownloadModel } from "@/hooks/use-models";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
@@ -13,10 +14,14 @@ import { ScoreBar } from "./score-bar";
 
 interface ModelCardProps {
 	model: ModelInfo;
-	systemInfo?: SystemInfo;
 }
 
-export function ModelCard({ model, systemInfo }: ModelCardProps) {
+/** Title-case a family slug for display (e.g. "sensevoice" → "Sensevoice"). */
+function familyLabel(family: string): string {
+	return family.charAt(0).toUpperCase() + family.slice(1);
+}
+
+export function ModelCard({ model }: ModelCardProps) {
 	const downloadMutation = useDownloadModel();
 	const deleteMutation = useDeleteModel();
 	const cancelMutation = useCancelDownload();
@@ -45,22 +50,13 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 	});
 
 	const [showAllLangs, setShowAllLangs] = useState(false);
+	const [selectedQuant, setSelectedQuant] = useState(model.default_quant);
 
-	const incompatibleReasons: string[] = [];
-	if (systemInfo) {
-		if (model.requires_avx && !systemInfo.has_avx) incompatibleReasons.push("Requires AVX");
-		if (model.requires_cuda && !(systemInfo.cuda_available && systemInfo.gpu_engines?.whisper))
-			incompatibleReasons.push("Requires CUDA");
-	}
-	const isIncompatible = incompatibleReasons.length > 0;
+	const hasQuantChoice = model.quants.length > 1;
 
 	const isQueued = model.status === "queued";
 	const isDownloading = model.status === "downloading";
-	const isDownloaded =
-		model.status === "downloaded" ||
-		model.status === "loaded" ||
-		model.status === "loading" ||
-		model.status === "custom";
+	const isDownloaded = model.status === "downloaded" || model.status === "custom";
 	const isLoaded = model.is_loaded;
 
 	return (
@@ -75,10 +71,19 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 
 			{/* Tags */}
 			<div className="flex flex-wrap gap-1.5 mb-3">
-				<Badge>{model.engine_type}</Badge>
+				<Badge>{familyLabel(model.family)}</Badge>
 				<Badge>{formatMB(model.size_mb)}</Badge>
-				{model.uses_gpu && <Badge variant="accent">GPU</Badge>}
-				{!model.uses_gpu && <Badge variant="default">CPU</Badge>}
+				{model.recommended && (
+					<Badge variant="accent" className="gap-1">
+						<Star size={11} />
+						Recommended
+					</Badge>
+				)}
+				{model.capabilities.streaming && <Badge variant="info">streaming</Badge>}
+				{model.capabilities.translate && <Badge variant="info">translate</Badge>}
+				{isDownloaded && model.downloaded_quant && (
+					<Badge variant="success">{model.downloaded_quant}</Badge>
+				)}
 				{model.status === "error" && <Badge variant="error">Error</Badge>}
 			</div>
 
@@ -90,11 +95,11 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 
 			{/* Languages */}
 			<div className="text-xs text-text-muted mb-3">
-				{model.supported_languages.length <= 5 ? (
-					<span>{model.supported_languages.join(", ")}</span>
+				{model.languages.length <= 5 ? (
+					<span>{model.languages.join(", ")}</span>
 				) : showAllLangs ? (
 					<>
-						<span>{model.supported_languages.join(", ")}</span>
+						<span>{model.languages.join(", ")}</span>
 						<button
 							type="button"
 							className="ml-1 text-accent-primary hover:underline"
@@ -105,13 +110,13 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 					</>
 				) : (
 					<>
-						<span>{model.supported_languages.slice(0, 5).join(", ")}</span>
+						<span>{model.languages.slice(0, 5).join(", ")}</span>
 						<button
 							type="button"
 							className="ml-1 text-accent-primary hover:underline"
 							onClick={() => setShowAllLangs(true)}
 						>
-							+{model.supported_languages.length - 5} more
+							+{model.languages.length - 5} more
 						</button>
 					</>
 				)}
@@ -134,22 +139,34 @@ export function ModelCard({ model, systemInfo }: ModelCardProps) {
 
 			{/* Actions */}
 			<div className="flex items-center gap-2 mt-auto pt-3 border-t border-border">
-				{!isDownloaded &&
-					!isDownloading &&
-					!isQueued &&
-					model.status !== "custom" &&
-					(isIncompatible ? (
-						<span className="text-xs text-text-muted">{incompatibleReasons.join(", ")}</span>
-					) : (
+				{!isDownloaded && !isDownloading && !isQueued && (
+					<>
+						{hasQuantChoice && (
+							<Select
+								options={model.quants.map((q) => ({
+									value: q.quant,
+									label: `${q.quant} · ${formatMB(q.size_mb)}`,
+								}))}
+								value={selectedQuant}
+								onChange={(e) => setSelectedQuant(e.target.value)}
+								className="w-36"
+							/>
+						)}
 						<Button
 							size="sm"
 							icon={<Download size={14} />}
-							onClick={() => runDownload(model.id)}
+							onClick={() =>
+								runDownload({
+									modelId: model.id,
+									quant: hasQuantChoice ? selectedQuant : undefined,
+								})
+							}
 							loading={downloadMutation.isPending}
 						>
 							Download
 						</Button>
-					))}
+					</>
+				)}
 				{isQueued && (
 					<Button
 						size="sm"

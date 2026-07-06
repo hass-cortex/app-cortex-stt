@@ -14,6 +14,8 @@ impl SpeechEngine for MockEngine {
             name: "mock".into(),
             languages: vec!["en".into()],
             supports_translation: false,
+            supports_streaming: false,
+            max_audio_ms: 0,
         }
     }
 
@@ -24,7 +26,7 @@ impl SpeechEngine for MockEngine {
     ) -> Result<TranscriptionResult, AsrError> {
         Ok(TranscriptionResult {
             text: "hello".into(),
-            segments: vec![],
+            ..Default::default()
         })
     }
 }

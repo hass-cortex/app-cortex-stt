@@ -213,10 +213,7 @@ impl EngineManager {
             match warmup_pool.acquire(warmup_timeout).await {
                 Ok(mut guard) => {
                     let warmup_samples = vec![0.0f32; SAMPLE_RATE as usize]; // 1 second of silence
-                    let warmup_options = crate::engine::traits::TranscribeOptions {
-                        language: None,
-                        translate: false,
-                    };
+                    let warmup_options = crate::engine::traits::TranscribeOptions::default();
                     let _ = tokio::task::spawn_blocking(move || {
                         guard.transcribe(&warmup_samples, &warmup_options)
                     })

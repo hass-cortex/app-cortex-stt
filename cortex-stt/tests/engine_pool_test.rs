@@ -17,6 +17,8 @@ impl SpeechEngine for MockEngine {
             name: self.name.clone(),
             languages: vec!["en".to_string()],
             supports_translation: false,
+            supports_streaming: false,
+            max_audio_ms: 0,
         }
     }
 
@@ -27,7 +29,7 @@ impl SpeechEngine for MockEngine {
     ) -> Result<TranscriptionResult, AsrError> {
         Ok(TranscriptionResult {
             text: format!("mock-{}", self.name),
-            segments: vec![],
+            ..Default::default()
         })
     }
 }
