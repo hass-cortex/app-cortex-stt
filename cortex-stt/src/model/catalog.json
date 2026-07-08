@@ -1,6 +1,6 @@
 {
   "catalog_version": 1,
-  "generated_at": "2026-07-06T00:53:23Z",
+  "generated_at": "2026-07-08T09:57:32Z",
   "source": "cjpais/Handy catalog.json",
   "models": [
     {
@@ -1279,7 +1279,7 @@
     {
       "id": "gigaam-v3-ctc",
       "name": "GigaAM v3 CTC",
-      "description": "English speech-to-text with token-level timestamps.",
+      "description": "Russian speech-to-text with token-level timestamps.",
       "family": "gigaam",
       "parameters": "221M",
       "base_model": "ai-sage/GigaAM-v3",
@@ -1346,7 +1346,7 @@
     {
       "id": "gigaam-v3-e2e-ctc",
       "name": "GigaAM v3 E2E-CTC",
-      "description": "English speech-to-text with token-level timestamps.",
+      "description": "Russian speech-to-text with token-level timestamps.",
       "family": "gigaam",
       "parameters": "221M",
       "base_model": "ai-sage/GigaAM-v3",
@@ -1413,7 +1413,7 @@
     {
       "id": "gigaam-v3-rnnt",
       "name": "GigaAM v3 RNN-T",
-      "description": "English speech-to-text with token-level timestamps.",
+      "description": "Russian speech-to-text with token-level timestamps.",
       "family": "gigaam",
       "parameters": "222M",
       "base_model": "ai-sage/GigaAM-v3",
@@ -1480,7 +1480,7 @@
     {
       "id": "gigaam-v3-e2e-rnnt",
       "name": "GigaAM v3 E2E-RNN-T",
-      "description": "English speech-to-text with token-level timestamps.",
+      "description": "Russian speech-to-text with token-level timestamps.",
       "family": "gigaam",
       "parameters": "223M",
       "base_model": "ai-sage/GigaAM-v3",
