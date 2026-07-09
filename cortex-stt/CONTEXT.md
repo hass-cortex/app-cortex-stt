@@ -46,6 +46,14 @@ Any `.gguf` file placed in the model directory by hand and picked up by a rescan
 **Default model**:
 The model used when a transcription request omits `model=`. Configured via `/api/engine/default`.
 
+**Install**:
+The transition "download reached Completed → model usable": remove any other quant (one quant per model), refresh the engine factory registration, announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
+_Avoid_: "register" alone (the engine-factory step is one part of an Install), "post-download hook", "completion watch" (the old polling mechanism)
+
+**Uninstall**:
+The mirror operation: unload the Loaded model, delete its files, announce to HA. Deleting files is one step of an Uninstall, not the whole of it.
+_Avoid_: "delete model" when the whole operation is meant
+
 ### History + retention
 
 **Transcription history record**:
@@ -75,6 +83,7 @@ Two independent retention policies applied separately. `record_retention` drives
 - A **Retention policy** is a pure value; applying it yields a set of ids. The policy never touches storage.
 - A **Speech engine** is a loaded **Catalog model** (at its downloaded **Quant**); the **Engine pool** owns one or more instances per loaded model.
 - A **Stream session** rides the same **Transcription pipeline** as sync/async — only the audio arrival and result delivery differ.
+- **Install** and **Uninstall** are the only two operations that change the installed set, and both announce the change to HA. An Install is triggered by a download reaching Completed; an Uninstall by `DELETE /api/models/{id}`.
 
 ## Example dialogue
 

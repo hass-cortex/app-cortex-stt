@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod engine;
 pub mod error;
+pub mod ha_event;
 pub mod history;
 pub mod model;
 pub mod retention;

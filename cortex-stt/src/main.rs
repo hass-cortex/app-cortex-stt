@@ -31,6 +31,7 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::History;
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::download_manager::DownloadManager;
+use cortex_stt::model::install::ModelInstaller;
 use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
 use cortex_stt::transcriber::Transcriber;
 use tokio::net::TcpListener;
@@ -184,6 +185,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the transcription pipeline (engine + history + settings).
     let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
 
+    // Build the installer and wire it as the download-completion hook
+    // (set_installer breaks the catalog → downloads → installer cycle).
+    let installer = ModelInstaller::new(
+        model_dir_path.clone(),
+        engine_manager.clone(),
+        catalog.clone(),
+        db.clone(),
+    );
+    downloads.set_installer(installer.clone());
+
     // Build shared application state.
     let state = Arc::new(AppState {
         engine_manager: engine_manager.clone(),
@@ -198,6 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         started_at: std::time::Instant::now(),
         history: history.clone(),
         transcriber,
+        installer,
     });
 
     // Spawn background retention cleanup (hourly).

@@ -223,6 +223,20 @@ pub async fn download_model(
                 };
                 downloads.set_progress(progress.clone()).await;
                 let _ = tx.send(progress);
+
+                // Install BEFORE finish(): the active entry still blocks a
+                // same-model re-download, so the quant switch can't interleave
+                // with a new download writing the same files. list_models
+                // reports Downloaded throughout (Completed progress + file on
+                // disk), so the HA reconcile triggered by the Install's
+                // announce sees the model.
+                if let Some(installer) = downloads.installer() {
+                    let filename = dest_path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    installer.install(&model_id, &filename).await;
+                }
             }
             Ok(DownloadOutcome::Cancelled) => unreachable!("handled above"),
             Err(e) => {

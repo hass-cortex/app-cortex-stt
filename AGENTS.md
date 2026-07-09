@@ -64,6 +64,7 @@ src/
 ├── error.rs          AsrError enum + status()/code()/related_id() (HTTP mapping lives on the variant)
 ├── cleanup.rs        background retention sweeper (hourly)
 ├── retention.rs      pure policy: (candidates, policy) → ids to drop
+├── ha_event.rs       notify_models_changed: fire HA event on Install/Uninstall (live sync)
 ├── history/          transcription history records (DB row + paired Opus audio)
 │   ├── mod.rs        History struct; Delete record / Drop audio operations
 │   └── store.rs      private SQL + types (CreateRecord, TranscriptionRecord, …)
@@ -81,7 +82,6 @@ src/
 │   ├── metrics.rs    aggregate stats (consumes history aggregates + catalog count)
 │   ├── system.rs     system + storage info
 │   ├── discovery.rs  Supervisor /discovery announce (startup task + manual trigger)
-│   ├── ha_event.rs   notify_models_changed: fire HA event on model add/remove (live sync)
 │   └── health.rs     /health (no auth)
 ├── engine/           speech engine lifecycle
 │   ├── traits.rs     SpeechEngine trait (transcribe + streaming seam)
@@ -95,6 +95,7 @@ src/
 │   ├── catalog.rs          ModelCatalog: list / get / delete / scan custom *.gguf
 │   ├── download_manager.rs DownloadManager: queue + progress + active handles + cancel
 │   ├── download.rs         async download pipeline (HTTP + SHA-256; single-file GGUF)
+│   ├── install.rs          ModelInstaller: Install (quant switch + register + notify) / Uninstall
 │   ├── storage.rs          disk usage helpers (layout is flat: `{model_dir}/{filename}.gguf`)
 │   └── types.rs            model type definitions (ModelInfo, DownloadPhase, …)
 ├── audio/              preprocessing
@@ -115,6 +116,7 @@ src/
 - **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. The hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint share this code path.
 - **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The HTTP handlers (sync / async) and the WebSocket handler are thin shells over `transcribe()` and `open_stream()`; a `StreamSession` holds a pool slot from open to finalize/drop and writes an aborted row when dropped mid-session.
 - **`model::ModelCatalog` reads the registry + scans disk**; `DownloadManager` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `DownloadManager`.
+- **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (CONTEXT.md). Install (quant switch → engine re-registration → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled (the cancel-flag guard). Uninstall (unload → delete files → HA notify) backs `DELETE /api/models/{id}`.
 
 See [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) for the domain
 vocabulary (Transcription history record, Delete record vs Drop audio,
@@ -248,7 +250,7 @@ The integration's `async_step_hassio` consumes
 So the HA integration can add/remove a model's entities **without a
 config-entry reload**, the addon **fires an event on the HA event bus**
 whenever the set of downloaded models changes. Implemented in
-`src/api/ha_event.rs`. No inbound endpoint, no URL registration, no
+`src/ha_event.rs`. No inbound endpoint, no URL registration, no
 persistence — the integration just listens on the bus.
 
 Uses the official add-on → HA core path:
@@ -268,13 +270,14 @@ authenticated with `SUPERVISOR_TOKEN`. This requires
 - The inner `fire_event(core_api_base, token, …)` is split out so it is
   unit-testable against a mock receiver.
 
-Fired from two sites in `src/api/models.rs`:
+Fired from the two operations owned by `model::install::ModelInstaller`:
 
-- `"model_added"` — inside the download-complete watch task, right after
-  `register_downloaded_models` (awaited there; the task is already
-  detached so it blocks nothing).
-- `"model_removed"` — in `delete_model`, **`tokio::spawn`-ed** after
-  `catalog.delete_model` so the DELETE response returns immediately.
+- `"model_added"` — at the end of an **Install**, right after
+  `register_downloaded_models`. The download task awaits the Install on
+  `Completed` (it is already detached, so it blocks nothing).
+- `"model_removed"` — at the end of an **Uninstall**,
+  **`tokio::spawn`-ed** after `catalog.delete_model` so the DELETE
+  response returns immediately.
 
 The payload is advisory — the HA listener re-fetches `/api/models` and
 reconciles the full set, so it self-heals on a missed/duplicate event.

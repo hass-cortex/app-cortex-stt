@@ -15,7 +15,6 @@ use crate::error::AsrError;
 use crate::model::catalog_data::find_model;
 use crate::model::download::{DownloadConfig, download_model, launch_next};
 use crate::model::download_manager::{ClaimOutcome, QueuedDownloadRequest};
-use crate::model::types::DownloadPhase;
 use crate::state::AppState;
 
 /// GET /api/models — list all models with status.
@@ -31,24 +30,12 @@ async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(models)
 }
 
-/// DELETE /api/models/{model_id} — delete model files and unload from engine.
+/// DELETE /api/models/{model_id} — Uninstall: unload, delete files, notify HA.
 async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    // Unload from engine if loaded.
-    state.engine_manager.unload(&model_id).await;
-
-    // Delete files from disk.
-    state.catalog.delete_model(&model_id).await?;
-
-    // Notify Home Assistant so it can drop the model's entities without a
-    // reload. Spawned so the DELETE response returns immediately rather than
-    // blocking on the outbound POST (fire-and-forget).
-    tokio::spawn(async move {
-        crate::api::ha_event::notify_models_changed("model_removed", &model_id).await;
-    });
-
+    state.installer.uninstall(&model_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -92,13 +79,12 @@ async fn start_download(
 
     // Atomically claim a slot, queue, or reject a duplicate. The duplicate
     // check lives inside try_claim_slot (under its lock) so two concurrent
-    // POSTs for the same model can't both start.
+    // POSTs for the same model can't both start. Install (quant switch +
+    // engine registration + HA notify) is fired by the download task itself
+    // on completion, so queued promotions are covered too.
     let request = match state.downloads.try_claim_slot(request).await {
         ClaimOutcome::AlreadyActive => return Err(AsrError::DownloadInProgress { model_id }),
         ClaimOutcome::Queued => {
-            // The queued request is promoted by a background task with no
-            // watch channel — the polling watch covers its completion too.
-            spawn_completion_watch(state.clone(), model_id.clone(), quant.filename.clone());
             return Ok((
                 StatusCode::OK,
                 axum::Json(serde_json::json!({ "status": "started", "model_id": model_id })),
@@ -130,8 +116,6 @@ async fn start_download(
         return Err(e);
     }
 
-    spawn_completion_watch(state.clone(), model_id.clone(), quant.filename.clone());
-
     Ok((
         StatusCode::OK,
         axum::Json(serde_json::json!({
@@ -139,90 +123,6 @@ async fn start_download(
             "model_id": model_id,
         })),
     ))
-}
-
-/// Watch a model's download until it reaches a terminal state, then
-/// install it: remove any other quant (one quant per model), refresh
-/// the engine registration, and notify Home Assistant.
-///
-/// Polling-based so it covers both immediately-claimed and queued
-/// downloads (a queued request is promoted by a background task that
-/// exposes no watch channel). The previously installed quant is removed
-/// only AFTER the new file is fully downloaded and verified — a failed
-/// download must never destroy a working model.
-fn spawn_completion_watch(state: Arc<AppState>, model_id: String, new_filename: String) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            match state
-                .downloads
-                .get_progress(&model_id)
-                .await
-                .map(|p| p.status)
-            {
-                Some(DownloadPhase::Completed) => break,
-                Some(DownloadPhase::Failed) => return,
-                Some(_) => continue,
-                // Terminal progress entries are cleared shortly after they
-                // land; the installed file tells us which terminal it was
-                // (a cancel also deletes the .part, never the dest file).
-                None => {
-                    if state.catalog.model_dir().join(&new_filename).is_file() {
-                        break;
-                    }
-                    return;
-                }
-            }
-        }
-
-        // One quant per model: drop any other quant now that the new file
-        // is in place, and unload so the next acquire uses the new file.
-        if let Some(model) = find_model(&model_id) {
-            let mut removed_old = false;
-            for other in &model.quants {
-                if other.filename == new_filename {
-                    continue;
-                }
-                let old = state.catalog.model_dir().join(&other.filename);
-                if !old.is_file() {
-                    continue;
-                }
-                match tokio::fs::remove_file(&old).await {
-                    Ok(()) => {
-                        removed_old = true;
-                        tracing::info!(model_id = %model_id, path = %old.display(),
-                            "removed previous quant after successful download");
-                    }
-                    Err(e) => tracing::warn!(model_id = %model_id, path = %old.display(),
-                        error = %e, "failed to remove previous quant"),
-                }
-            }
-            if removed_old {
-                state.engine_manager.unload(&model_id).await;
-            }
-        }
-
-        // Auto-register the engine factory so the model is usable without
-        // restarting the addon.
-        let backend_overrides = state
-            .db
-            .load_settings()
-            .await
-            .ok()
-            .map(|s| s.backend_overrides)
-            .unwrap_or_default();
-        crate::engine::register::register_downloaded_models(
-            &state.engine_manager,
-            state.catalog.model_dir(),
-            &backend_overrides,
-        )
-        .await;
-        tracing::info!(model = %model_id, "Engine factory registered after download");
-
-        // Notify Home Assistant so it can add the model's entities
-        // without a reload.
-        crate::api::ha_event::notify_models_changed("model_added", &model_id).await;
-    });
 }
 
 /// GET /api/models/{model_id}/download/progress — SSE stream of download progress.

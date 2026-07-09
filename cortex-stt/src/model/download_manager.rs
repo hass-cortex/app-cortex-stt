@@ -54,13 +54,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
 use crate::error::AsrError;
+use crate::model::install::ModelInstaller;
 use crate::model::types::DownloadProgress;
 
 /// Maximum number of concurrent model downloads.
@@ -148,6 +149,10 @@ pub struct DownloadManager {
     model_dir: PathBuf,
     queue: Mutex<DownloadQueue>,
     progress: RwLock<HashMap<String, DownloadProgress>>,
+    /// Install hook, fired by the download task on Completed (see
+    /// [`ModelInstaller::install`]). Set once after construction —
+    /// the installer needs the catalog, which needs this manager.
+    installer: OnceLock<Arc<ModelInstaller>>,
 }
 
 impl DownloadManager {
@@ -159,7 +164,19 @@ impl DownloadManager {
                 active: HashMap::new(),
             }),
             progress: RwLock::new(HashMap::new()),
+            installer: OnceLock::new(),
         })
+    }
+
+    /// Wire the Install hook. Call once at startup; later calls are
+    /// ignored (OnceLock). Tests that never set it simply skip Installs.
+    pub fn set_installer(&self, installer: Arc<ModelInstaller>) {
+        let _ = self.installer.set(installer);
+    }
+
+    /// The Install hook, if wired.
+    pub fn installer(&self) -> Option<Arc<ModelInstaller>> {
+        self.installer.get().cloned()
     }
 
     /// Directory under which model files (and their `.part` siblings)

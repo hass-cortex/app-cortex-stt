@@ -12,6 +12,7 @@ use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::History;
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::download_manager::DownloadManager;
+use cortex_stt::model::install::ModelInstaller;
 use cortex_stt::state::{AppState, JobStore};
 use cortex_stt::transcriber::Transcriber;
 
@@ -24,6 +25,13 @@ async fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
         .await
         .unwrap();
     let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
+    let installer = ModelInstaller::new(
+        downloads.model_dir().to_path_buf(),
+        engine_manager.clone(),
+        catalog.clone(),
+        db.clone(),
+    );
+    downloads.set_installer(installer.clone());
 
     Arc::new(AppState {
         engine_manager,
@@ -38,6 +46,7 @@ async fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
         started_at: std::time::Instant::now(),
         history,
         transcriber,
+        installer,
     })
 }
 

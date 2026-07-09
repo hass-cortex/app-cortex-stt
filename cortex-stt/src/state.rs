@@ -11,6 +11,7 @@ use crate::engine::manager::EngineManager;
 use crate::history::History;
 use crate::model::catalog::ModelCatalog;
 use crate::model::download_manager::DownloadManager;
+use crate::model::install::ModelInstaller;
 use crate::transcriber::Transcriber;
 
 /// Default maximum number of jobs (any status) retained in memory.
@@ -238,4 +239,6 @@ pub struct AppState {
     pub history: Arc<History>,
     /// Transcription pipeline (engine acquire → inference → save).
     pub transcriber: Arc<Transcriber>,
+    /// Install / Uninstall operations (quant switch, engine registration, HA notify).
+    pub installer: Arc<ModelInstaller>,
 }

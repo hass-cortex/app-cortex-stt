@@ -8,8 +8,8 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::api::settings::BackendOverride;
 use crate::engine::manager::EngineManager;
+use crate::engine::traits::BackendOverride;
 use crate::model::catalog::downloaded_quant;
 use crate::model::catalog_data::{catalog_models, find_by_filename};
 

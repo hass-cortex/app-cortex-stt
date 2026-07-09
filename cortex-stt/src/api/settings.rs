@@ -11,17 +11,7 @@ use crate::error::AsrError;
 use crate::retention::RetentionPolicy;
 use crate::state::AppState;
 
-use crate::engine::traits::EngineBackend;
-
-/// Per-model compute backend override.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct BackendOverride {
-    #[serde(default)]
-    pub backend: EngineBackend,
-    /// GPU device registry index (0 = auto / first matching device).
-    #[serde(default)]
-    pub gpu_device: u32,
-}
+pub use crate::engine::traits::BackendOverride;
 
 /// Application settings exposed via the REST API.
 #[derive(Debug, Clone, Serialize, Deserialize)]

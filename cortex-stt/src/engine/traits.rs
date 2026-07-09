@@ -45,6 +45,16 @@ pub enum EngineBackend {
     Cuda,
 }
 
+/// Per-model compute backend override.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BackendOverride {
+    #[serde(default)]
+    pub backend: EngineBackend,
+    /// GPU device registry index (0 = auto / first matching device).
+    #[serde(default)]
+    pub gpu_device: u32,
+}
+
 /// Options controlling transcription behavior.
 #[derive(Debug, Clone, Default)]
 pub struct TranscribeOptions {
