@@ -24,7 +24,8 @@ use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::engine::traits::{Timestamps, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::TranscriptionSource;
-use crate::state::{AppState, AsyncJob, AsyncJobStatus, CancelOutcome};
+use crate::job::{AsyncJob, AsyncJobStatus, CancelOutcome};
+use crate::state::AppState;
 use crate::transcriber::{TranscribeRequest, TranscribeResponse};
 
 /// Query parameters for the transcribe endpoints.

@@ -10,35 +10,15 @@ use std::time::Duration;
 // target the same x86-64-v3 baseline the preflight checks. See
 // DOCS.md -> System Requirements for the supported baseline.
 
-use axum::Router;
-use axum::middleware;
-use cortex_stt::api::auth::auth_middleware;
-use cortex_stt::api::discovery::discovery_routes;
-use cortex_stt::api::engine::engine_routes;
-use cortex_stt::api::health::health_routes;
-use cortex_stt::api::history::history_routes;
-use cortex_stt::api::keys::key_routes;
-use cortex_stt::api::metrics::metrics_routes;
-use cortex_stt::api::models::model_routes;
-use cortex_stt::api::settings::settings_routes;
-use cortex_stt::api::stream::stream_routes;
-use cortex_stt::api::system::system_routes;
-use cortex_stt::api::transcribe::transcribe_routes;
+use cortex_stt::api::build_router;
 use cortex_stt::cleanup::spawn_retention_cleanup;
 use cortex_stt::config::AppConfig;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::model::install::ModelInstaller;
-use cortex_stt::model::progress::ProgressBoard;
-use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::job::spawn_job_sweeper;
+use cortex_stt::state::AppState;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -72,9 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
 
-    // Build the transcription history store (owns audio_dir + broadcast tx).
-    let history = History::new(db.clone(), audio_dir.clone()).await?;
-
     // Load stored settings once; reused below for the default model,
     // engine config, and preload flag.
     let db_settings = match db.load_stored_settings().await {
@@ -104,14 +81,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `API_KEY` env var (set from the `discovery_api_key` addon option) are
     // marked system-managed so the Admin UI can surface them read-only.
     if let Some(ref api_key) = config.api_key {
-        db.ensure_api_key("home-assistant-discovery", api_key, true)
+        db.ensure_api_key(cortex_stt::api::discovery::SYSTEM_KEY_NAME, api_key, true)
             .await?;
         tracing::info!("Pre-configured Home Assistant discovery API key registered");
     }
-
-    // Shared download-progress board (written by DownloadManager, read
-    // by ModelCatalog) — keeps the construction graph acyclic.
-    let progress = ProgressBoard::new();
 
     // Create engine manager (returns Arc<EngineManager>). The DB-overridable
     // fields come from the resolved EffectiveConfig; acquire timeout and the
@@ -125,23 +98,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let engine_manager = EngineManager::new(engine_config);
 
-    // Build the model catalog: reads the registry + scans the model_dir,
-    // consults the ProgressBoard for in-flight status and EngineManager
-    // for load state during list_models.
-    let catalog = ModelCatalog::new(model_dir, progress.clone(), engine_manager.clone());
-
     // Spawn background idle model watcher.
     engine_manager.spawn_idle_watcher().await;
 
     // Clean-cut 0.3.0: remove legacy pre-GGUF artifacts (.bin / ONNX
     // dirs / orphaned .part) before scanning for downloadable models.
-    let model_dir_path = config.model_dir();
-    cortex_stt::engine::register::cleanup_legacy_artifacts(&model_dir_path);
+    cortex_stt::model::maintenance::cleanup_legacy_artifacts(&model_dir);
 
     // Register engine factories for downloaded catalog models.
     cortex_stt::engine::register::register_downloaded_models(
         &engine_manager,
-        &model_dir_path,
+        &model_dir,
         &effective.backend_overrides,
     )
     .await;
@@ -160,87 +127,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Create job store for async transcription jobs.
-    let job_store = Arc::new(JobStore::with_defaults());
-
-    // Build the transcription pipeline (engine + history + settings).
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    // Build the installer, then the download coordinator with the
-    // installer injected — the completion tail (Install + slot release)
-    // is wired at construction, not late-bound.
-    let installer = ModelInstaller::new(
-        model_dir_path.clone(),
-        engine_manager.clone(),
-        catalog.clone(),
+    // Assemble the service object graph (single assembly point — the
+    // test harness builds the identical graph through the same call).
+    let state = AppState::assemble(
         db.clone(),
-    );
-    let downloads = DownloadManager::new(
-        model_dir_path.clone(),
-        progress.clone(),
-        Some(installer.clone()),
-    );
-
-    // Build shared application state.
-    let state = Arc::new(AppState {
-        engine_manager: engine_manager.clone(),
-        catalog,
-        downloads,
-        db: db.clone(),
-        job_store,
-        data_dir: config.data_dir.clone(),
+        engine_manager,
+        model_dir,
+        config.data_dir.clone(),
         default_model,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        http_port: config.http_port,
-        started_at: std::time::Instant::now(),
-        history: history.clone(),
-        transcriber,
-        installer,
-    });
+        env!("CARGO_PKG_VERSION").to_string(),
+        config.http_port,
+    )
+    .await?;
 
     // Spawn background retention cleanup (hourly).
-    let _cleanup_handle = spawn_retention_cleanup(db.clone(), history.clone());
+    let _cleanup_handle = spawn_retention_cleanup(db.clone(), state.history.clone());
 
     // Spawn background job-store sweeper (every 60s) to enforce TTL +
     // max_jobs on async transcription jobs.
     let _job_sweeper_handle = spawn_job_sweeper(state.job_store.clone());
 
-    // Build Axum router.
-
-    // Public routes (no auth required).
-    let public_routes = Router::new().merge(health_routes());
-
-    // Protected routes (require authentication).
-    let protected_routes = Router::new()
-        .merge(system_routes())
-        .merge(model_routes())
-        .merge(engine_routes())
-        .merge(transcribe_routes())
-        .merge(stream_routes())
-        .merge(history_routes())
-        .merge(key_routes())
-        .merge(settings_routes())
-        .merge(metrics_routes())
-        .merge(discovery_routes())
-        .layer(middleware::from_fn(move |req, next| {
-            auth_middleware(req, next, db.clone())
-        }));
-
-    let mut app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .with_state(state.clone())
-        .layer(CorsLayer::permissive())
-        // Catch-all per-request access log (method, path, status, latency).
-        // Outermost layer so it also records auth rejections and CORS-handled
-        // requests. Span + response are emitted at INFO so the access log is
-        // visible at the default log level — the single highest-leverage signal
-        // for "did a request reach the server and how did it end".
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
-        );
+    // Build the API router (routes + auth + CORS + access log); the
+    // static web UI / SPA fallback is layered on below.
+    let mut app = build_router(state.clone());
 
     // Serve web UI static files with SPA fallback routing.
     // For HA ingress support, inject X-Ingress-Path into index.html at runtime.

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio_rusqlite::Connection;
 
@@ -17,6 +17,12 @@ pub(crate) fn map_db_err(e: CallError) -> AsrError {
 /// Async SQLite database wrapper backed by a dedicated background thread.
 pub struct Database {
     conn: Connection,
+    /// Backing file path (`None` for in-memory databases). The module
+    /// owns its storage location — callers ask [`disk_usage_bytes`]
+    /// instead of re-deriving the filename.
+    ///
+    /// [`disk_usage_bytes`]: Self::disk_usage_bytes
+    file_path: Option<PathBuf>,
     /// Serializes read-modify-write cycles on the settings blob (see
     /// `db::settings`) so concurrent writers can't lose updates.
     settings_write_lock: tokio::sync::Mutex<()>,
@@ -32,6 +38,7 @@ impl Database {
             })?;
         let db = Self {
             conn,
+            file_path: Some(path.to_path_buf()),
             settings_write_lock: tokio::sync::Mutex::new(()),
         };
         db.run_migrations().await?;
@@ -47,10 +54,23 @@ impl Database {
             })?;
         let db = Self {
             conn,
+            file_path: None,
             settings_write_lock: tokio::sync::Mutex::new(()),
         };
         db.run_migrations().await?;
         Ok(db)
+    }
+
+    /// Size of the backing database file in bytes (0 for in-memory or
+    /// when the file cannot be inspected).
+    pub async fn disk_usage_bytes(&self) -> u64 {
+        match &self.file_path {
+            Some(path) => tokio::fs::metadata(path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0),
+            None => 0,
+        }
     }
 
     /// Add `column` to `table` if it is not already present. `definition`

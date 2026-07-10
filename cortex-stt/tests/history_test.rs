@@ -286,8 +286,39 @@ async fn delete_many_skips_rows_whose_audio_removal_fails_and_returns_count() {
 
 #[tokio::test]
 async fn database_init_creates_tables() {
-    // Sanity check that the schema migrations ran — countable empty
-    // history is the simplest probe.
+    // Sanity check that the schema migrations ran — an empty metrics
+    // snapshot is the simplest probe.
     let (history, _tmp) = setup().await;
-    assert_eq!(history.count(None).await.unwrap(), 0);
+    let snapshot = history.metrics_snapshot().await.unwrap();
+    assert_eq!(snapshot.total_transcriptions, 0);
+    assert_eq!(snapshot.error_count, 0);
+}
+
+#[tokio::test]
+async fn metrics_snapshot_aggregates_by_source_and_error() {
+    let (history, _tmp) = setup().await;
+
+    // Two successful http records, one successful ws record, one error.
+    history.create(sample_record(), None).await.unwrap();
+    history.create(sample_record(), None).await.unwrap();
+    let mut ws = sample_record();
+    ws.source = TranscriptionSource::WsApi;
+    ws.audio_duration_ms = 1000;
+    ws.inference_ms = 150;
+    history.create(ws, None).await.unwrap();
+    let mut err = sample_record();
+    err.has_error = true;
+    err.error_message = Some("boom".into());
+    history.create(err, None).await.unwrap();
+
+    let s = history.metrics_snapshot().await.unwrap();
+    assert_eq!(s.total_transcriptions, 3);
+    assert_eq!(s.http_transcriptions, 2);
+    assert_eq!(s.today_transcriptions, 3);
+    assert_eq!(s.total_audio_duration_ms, 3200 + 3200 + 1000);
+    assert_eq!(s.today_audio_duration_ms, 3200 + 3200 + 1000);
+    // avg over successful rows only: (450 + 450 + 150) / 3
+    assert!((s.avg_inference_ms - 350.0).abs() < f64::EPSILON);
+    assert_eq!(s.error_count, 1);
+    assert_eq!(s.today_error_count, 1);
 }

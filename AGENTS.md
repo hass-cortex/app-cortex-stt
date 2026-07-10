@@ -60,16 +60,21 @@ src/
 ├── main.rs           Axum server bootstrap, signal handling
 ├── lib.rs            library exports
 ├── config.rs         clap CLI + env + TOML config (priority: CLI > ENV > config.toml > defaults)
-├── state.rs          AppState (Arc<…>) shared across handlers; JobStore
+├── state.rs          AppState (Arc<…>) shared across handlers + AppState::assemble (the single assembly point of the service object graph; main.rs and tests both call it)
+├── job.rs            Async job concept: JobStore (terminal-is-terminal) + sweeper
 ├── error.rs          AsrError enum + status()/code()/related_id() (HTTP mapping lives on the variant)
 ├── cleanup.rs        background retention sweeper (hourly)
 ├── retention.rs      pure policy: (candidates, policy) → ids to drop
-├── ha_event.rs       notify_models_changed: fire HA event on Install/Uninstall (live sync)
+├── settings.rs       Settings struct (single owned shape; db stores it, api exposes it)
+├── supervisor.rs     addon → Supervisor adapter: discovery POST + HA event on Install/Uninstall (live sync)
+├── http.rs           shared pooled reqwest client (downloads + Supervisor calls)
 ├── history/          transcription history records (DB row + paired Opus audio)
 │   ├── mod.rs        History struct; Delete record / Drop audio operations
-│   └── store.rs      private SQL + types (CreateRecord, TranscriptionRecord, …)
+│   ├── analytics.rs  aggregates for /api/metrics
+│   └── store.rs      private SQL + types + records table DDL/migrations
 ├── transcriber.rs    transcription pipeline (acquire → infer → save to history) + StreamSession
 ├── api/              Axum routes & middleware
+│   ├── router.rs     build_router: the SHIPPED route + middleware stack (auth, CORS, access log); main serves it, tests exercise it
 │   ├── auth.rs       Bearer token middleware (also `?api_key=` for SSE/WS)
 │   ├── error.rs      ApiError DTO + IntoResponse glue (thin)
 │   ├── transcribe.rs HTTP shell: decode audio + dispatch to Transcriber (sync/async)
@@ -87,15 +92,18 @@ src/
 │   ├── traits.rs     SpeechEngine trait (transcribe + streaming seam)
 │   ├── manager.rs    engine selection, load/unload coordination, LRU eviction
 │   ├── pool.rs       per-model thread-safe pool (Arc<Mutex<…>>)
-│   ├── register.rs   factory registration + legacy-artifact startup cleanup
+│   ├── register.rs   factory registration + settings→engine sync (apply_engine_settings; idle-timeout projection lives on Settings::engine_idle_timeout)
+│   ├── testing.rs    FakeEngine — the single configurable SpeechEngine test double (all tests use it)
 │   └── transcribe_bridge.rs transcribe-cpp binding (the single engine path)
 ├── model/                  model installation
 │   ├── catalog_data.rs     vendored catalog (include_str catalog.json; slug/quants/capabilities)
 │   ├── catalog.json        converted Handy catalog snapshot (sync-catalog.py output)
-│   ├── catalog.rs          ModelCatalog: list / get / delete / scan custom *.gguf
-│   ├── download_manager.rs DownloadManager: queue + progress + active handles + cancel
+│   ├── catalog.rs          ModelCatalog: list / get / resolve (Catalog|Custom) / delete / scan custom *.gguf
+│   ├── download_manager.rs DownloadManager facade: start / cancel_download + queue + slots + completion tail
 │   ├── download.rs         async download pipeline (HTTP + SHA-256; single-file GGUF)
+│   ├── progress.rs         ProgressBoard: shared download-progress snapshots (manager writes, catalog reads)
 │   ├── install.rs          ModelInstaller: Install (quant switch + register + notify) / Uninstall
+│   ├── maintenance.rs      startup-once model-dir cleanup (legacy .bin/ONNX/.part artifacts)
 │   ├── storage.rs          disk usage helpers (layout is flat: `{model_dir}/{filename}.gguf`)
 │   └── types.rs            model type definitions (ModelInfo, DownloadPhase, …)
 ├── audio/              preprocessing
@@ -107,15 +115,18 @@ src/
 │   ├── settings.rs   key-value settings
 │   ├── keys.rs       API keys
 │   └── mod.rs
-└── bin/asr-cli.rs    one-shot CLI for direct STT testing (no HTTP)
+└── bin/asr-cli.rs    one-shot CLI over the SAME Transcriber pipeline (in-memory throwaway history; no HTTP)
 ```
 
 ### Cross-module guarantees
 
 - **`history::History` owns the row + audio file pair.** Delete operations remove the audio file before the DB row so a partial failure can never orphan a file. `audio_retention` triggers **Drop audio** (NULL the `audio_path`, remove the file; row survives), not Delete record. New rows store audio as Ogg Opus (`.opus`); legacy `.wav` files are served as-is via the file-extension-driven MIME on the replay endpoint.
-- **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. The hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint share this code path.
-- **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The HTTP handlers (sync / async) and the WebSocket handler are thin shells over `transcribe()` and `open_stream()`; a `StreamSession` holds a pool slot from open to finalize/drop and writes an aborted row when dropped mid-session.
-- **`model::ModelCatalog` reads the registry + scans disk**; `DownloadManager` owns concurrency control + cancellation. `list_models` overlays live download status by consulting `DownloadManager`.
+- **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. **`History::run_retention_sweep(record_policy, audio_policy)` is the single composer** of the gather → `select_to_delete` → apply flow (both policies, one best-effort error rule, returns a `SweepOutcome`); the hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint both call it rather than re-wiring the ingredients.
+- **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The HTTP handlers (sync / async), the WebSocket handler, and `asr-cli` are thin shells over `transcribe()` and `open_stream()` (the CLI wires an in-memory DB so history rows are discarded); a `StreamSession` holds a pool slot from open to finalize/drop and writes an aborted row when dropped mid-session.
+- **`job::JobStore` owns the async-job lifecycle**: `complete`/`fail` transition only a still-`Processing` job and `cancel` marks a running job `Cancelled` — _terminal is terminal_, so a cancel that lands mid-inference is not clobbered by the worker's later completion. Handlers call these intent transitions; there is no blind status setter.
+- **`model::ModelCatalog` is the single assembly point for model state**: registry + disk scan + live download status (via the shared `ProgressBoard`) + engine load state (via `EngineManager`) — `list_models`/`get_model` return the complete state, so no caller re-joins it. `DownloadManager` is the download facade: `start(model, quant)` and `cancel_download` own path resolution, slot claiming/compensation, and the completion tail (`complete`: Install → slot release → next-launch → delayed progress clear); the `ModelInstaller` is injected at construction.
+- **`state::AppState::assemble` is the single assembly point of the service object graph** (`ProgressBoard → ModelCatalog → History → Transcriber → ModelInstaller → DownloadManager`): `main.rs` and the test harness (`tests/test_helpers.rs`) both call it, so adding a dependency is a one-place change. `api::build_router` is the analogous seam for the route + middleware stack — `tests/api_router_test.rs` exercises the shipped router including auth. `asr-cli` deliberately wires a documented subset (no installer, throwaway history).
+- **`History::metrics_snapshot` owns the metrics aggregate** — one SQL pass computes every history-derived figure; `api/metrics.rs` is a shell that joins in the engine/catalog/key counts. Storage figures likewise come from their owners (`History::audio_disk_usage_bytes`, `Database::disk_usage_bytes`) — handlers never re-derive another module's disk layout.
 - **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (CONTEXT.md). Install (quant switch → engine re-registration → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled (the cancel-flag guard). Uninstall (unload → delete files → HA notify) backs `DELETE /api/models/{id}`.
 
 See [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) for the domain
@@ -238,8 +249,11 @@ Both call `cortex_stt::api::discovery::announce(&state)` which:
   `host` comes from `gethostname` and `port` from `state.http_port`
   (so a custom `--http-port` is correctly announced).
 - Maps Supervisor 4xx/5xx into
-  `DiscoveryError::SupervisorRejected{status, body}` — unlike
-  `bashio::discovery`, real HTTP status codes propagate.
+  `AsrError::SupervisorRejected{status, body}` — unlike
+  `bashio::discovery`, real HTTP status codes propagate. The transport
+  (token, pooled client, POST) lives in `src/supervisor.rs`; discovery
+  errors are ordinary `AsrError` variants (codes `NOT_IN_SUPERVISOR`,
+  `NO_API_KEY`, `SUPERVISOR_REJECTED`, …).
 
 The integration's `async_step_hassio` consumes
 `discovery_info.config['host']` and `['port']` (no scheme) to build
@@ -250,7 +264,8 @@ The integration's `async_step_hassio` consumes
 So the HA integration can add/remove a model's entities **without a
 config-entry reload**, the addon **fires an event on the HA event bus**
 whenever the set of downloaded models changes. Implemented in
-`src/ha_event.rs`. No inbound endpoint, no URL registration, no
+`src/supervisor.rs` (the addon → Supervisor adapter, shared with the
+discovery announce). No inbound endpoint, no URL registration, no
 persistence — the integration just listens on the bus.
 
 Uses the official add-on → HA core path:
@@ -263,8 +278,9 @@ authenticated with `SUPERVISOR_TOKEN`. This requires
 **Notify** — `notify_models_changed(event, model_id)`:
 
 - No-op when `SUPERVISOR_TOKEN` is unset (dev / not under Supervisor).
-- POSTs `{"event", "model_id"}` via the shared `download::http_client()`
-  with a short per-request timeout and `bearer_auth(SUPERVISOR_TOKEN)`.
+- POSTs `{"event", "model_id"}` via the shared pooled client
+  (`src/http.rs`) with a short per-request timeout and
+  `bearer_auth(SUPERVISOR_TOKEN)`.
 - Fire-and-forget: failures are logged, never propagated, so a model
   download/delete always succeeds.
 - The inner `fire_event(core_api_base, token, …)` is split out so it is
@@ -288,7 +304,10 @@ reconciles the full set, so it self-heals on a missed/duplicate event.
 while the `Completed` progress entry still lingers (cleared ~later by
 `remove_progress`); without this, HA's immediate reconcile would see
 `Downloading`, filter the model out, and never add its entities. Any new
-path that fires the event depends on this.
+path that fires the event depends on this. Guarded end-to-end by
+`completion_tail_reports_downloaded_to_catalog_before_progress_clears`
+(`download_manager.rs`), which spans the completion tail and the catalog
+view together.
 
 ## How To
 

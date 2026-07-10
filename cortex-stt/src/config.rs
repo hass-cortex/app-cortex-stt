@@ -11,7 +11,7 @@ use crate::settings::Settings;
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "cortex-stt",
-    about = "Multi-engine STT HTTP service powered by transcribe-rs"
+    about = "Multi-model STT HTTP service powered by transcribe.cpp"
 )]
 pub struct AppConfig {
     /// Path to config file (TOML)
@@ -296,14 +296,11 @@ impl EffectiveConfig {
             .unwrap_or_else(|| config.default_model.clone());
 
         // idle_timeout precedence, with the null-means-forever subtlety:
-        //   DB Some(0)      → None (never unload)
-        //   DB Some(secs)   → Some(secs)
-        //   DB present, null → None (explicit "keep forever"; do NOT use CLI)
-        //   no DB settings  → CLI (0 → None, else Some)
-        let idle_timeout = match stored.and_then(|s| s.idle_timeout_secs) {
-            Some(0) => None,
-            Some(secs) => Some(Duration::from_secs(secs)),
-            None if stored.is_some() => None,
+        //   DB settings present → Settings::engine_idle_timeout (the single
+        //     home for "0 or null means keep forever"; do NOT use CLI)
+        //   no DB settings      → CLI (0 → None, else Some)
+        let idle_timeout = match stored {
+            Some(s) => s.engine_idle_timeout(),
             None if config.idle_timeout_secs == 0 => None,
             None => Some(Duration::from_secs(config.idle_timeout_secs)),
         };

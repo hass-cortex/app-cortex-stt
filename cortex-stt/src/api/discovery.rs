@@ -21,7 +21,9 @@ use crate::error::AsrError;
 use crate::state::AppState;
 use crate::supervisor;
 
-const SYSTEM_KEY_NAME: &str = "home-assistant-discovery";
+/// Name of the system-managed API key created at startup (`main.rs`) and
+/// preferred by [`resolve_api_key`] — one constant, both sites.
+pub const SYSTEM_KEY_NAME: &str = "home-assistant-discovery";
 const DISCOVERY_SERVICE: &str = "cortex_stt";
 
 #[derive(Debug, Serialize)]

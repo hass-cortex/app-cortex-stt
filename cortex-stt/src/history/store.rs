@@ -519,112 +519,42 @@ pub(super) async fn list_audio_rows(
 // Analytics aggregates (consumed by api/metrics.rs via History)
 // ---------------------------------------------------------------------------
 
-pub(super) async fn count_records(
+/// Compute every history aggregate in one SQL pass over `records`.
+/// The FILTER clauses mirror the field definitions on
+/// [`MetricsSnapshot`](crate::history::analytics::MetricsSnapshot).
+pub(super) async fn metrics_snapshot(
     db: &Arc<Database>,
-    source: Option<TranscriptionSource>,
-) -> Result<usize, AsrError> {
+) -> Result<super::analytics::MetricsSnapshot, AsrError> {
     db.connection()
         .call(move |conn| {
-            let count: i64 = if let Some(src) = source {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0",
-                    params![src.as_str()],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 0",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn count_records_today(
-    db: &Arc<Database>,
-    source: Option<TranscriptionSource>,
-) -> Result<usize, AsrError> {
-    db.connection()
-        .call(move |conn| {
-            let count: i64 = if let Some(src) = source {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                    params![src.as_str()],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn total_audio_duration_ms(db: &Arc<Database>) -> Result<i64, AsrError> {
-    db.connection()
-        .call(|conn| {
             conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0",
-                [],
-                |row| row.get(0),
+                "SELECT
+                    COUNT(*) FILTER (WHERE has_error = 0),
+                    COUNT(*) FILTER (WHERE has_error = 0 AND source = ?1),
+                    COUNT(*) FILTER (WHERE has_error = 0
+                        AND timestamp >= datetime('now', 'start of day')),
+                    COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0), 0),
+                    COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0
+                        AND timestamp >= datetime('now', 'start of day')), 0),
+                    COALESCE(AVG(inference_ms) FILTER (WHERE has_error = 0), 0.0),
+                    COUNT(*) FILTER (WHERE has_error = 1),
+                    COUNT(*) FILTER (WHERE has_error = 1
+                        AND timestamp >= datetime('now', 'start of day'))
+                 FROM records",
+                params![TranscriptionSource::HttpApi.as_str()],
+                |row| {
+                    Ok(super::analytics::MetricsSnapshot {
+                        total_transcriptions: row.get::<_, i64>(0)? as usize,
+                        http_transcriptions: row.get::<_, i64>(1)? as usize,
+                        today_transcriptions: row.get::<_, i64>(2)? as usize,
+                        total_audio_duration_ms: row.get(3)?,
+                        today_audio_duration_ms: row.get(4)?,
+                        avg_inference_ms: row.get(5)?,
+                        error_count: row.get::<_, i64>(6)? as usize,
+                        today_error_count: row.get::<_, i64>(7)? as usize,
+                    })
+                },
             )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn today_audio_duration_ms(db: &Arc<Database>) -> Result<i64, AsrError> {
-    db.connection()
-        .call(|conn| {
-            conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn avg_inference_ms(db: &Arc<Database>) -> Result<f64, AsrError> {
-    db.connection()
-        .call(|conn| {
-            conn.query_row(
-                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records WHERE has_error = 0",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn count_errors(db: &Arc<Database>, today_only: bool) -> Result<usize, AsrError> {
-    db.connection()
-        .call(move |conn| {
-            let count: i64 = if today_only {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 1 AND timestamp >= datetime('now', 'start of day')",
-                    [],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 1",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
         })
         .await
         .map_err(map_db_err)

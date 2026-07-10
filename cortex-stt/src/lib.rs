@@ -7,6 +7,7 @@ pub mod engine;
 pub mod error;
 pub mod history;
 mod http;
+pub mod job;
 pub mod model;
 pub mod retention;
 pub mod settings;

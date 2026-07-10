@@ -1,9 +1,9 @@
-//! Tests for [`cortex_stt::state::JobStore`] retention behavior.
+//! Tests for [`cortex_stt::job::JobStore`] retention behavior.
 
 use std::time::Duration;
 
 use chrono::Utc;
-use cortex_stt::state::{AsyncJob, AsyncJobStatus, CancelOutcome, JobStore};
+use cortex_stt::job::{AsyncJob, AsyncJobStatus, CancelOutcome, JobStore};
 use cortex_stt::transcriber::TranscribeResponse;
 
 fn response(text: &str) -> TranscribeResponse {

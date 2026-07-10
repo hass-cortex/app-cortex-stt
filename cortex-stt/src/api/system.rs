@@ -34,10 +34,11 @@ struct GpuInfo {
     driver_version: String,
 }
 
+/// GPU acceleration per engine runtime. There is exactly one runtime
+/// (transcribe.cpp); the field name matches its GGUF/whisper lineage.
 #[derive(Debug, Serialize)]
 struct GpuEngines {
     whisper: bool,
-    onnx: bool,
 }
 
 /// Parse a field from /proc/meminfo and return its value in kB.
@@ -128,7 +129,9 @@ fn query_gpu_info() -> Option<GpuInfo> {
     None
 }
 
-/// Runtime hardware capabilities used for model recommendation.
+/// Runtime hardware capabilities, surfaced in the `/api/system`
+/// response. (Model recommendation does NOT consult this — the
+/// `recommended` flags are static catalog data.)
 #[derive(Debug, Clone)]
 pub struct HardwareCapabilities {
     pub available_memory_mb: u64,
@@ -190,7 +193,6 @@ async fn get_system_info(State(_state): State<Arc<AppState>>) -> axum::Json<Syst
         gpu_info,
         gpu_engines: GpuEngines {
             whisper: cfg!(feature = "cuda"),
-            onnx: cfg!(feature = "cuda"),
         },
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
@@ -205,24 +207,21 @@ struct StorageResponse {
     free_bytes: u64,
 }
 
+/// Storage figures come from the modules that own each location:
+/// audio from `History`, the DB file from `Database`. Only the model
+/// dir (public on `ModelCatalog`) and the free-space probe on
+/// `data_dir` are measured here.
 async fn get_storage_info(State(state): State<Arc<AppState>>) -> axum::Json<StorageResponse> {
     let model_dir = state.catalog.model_dir().to_path_buf();
-    let audio_dir = state.data_dir.join("audio");
-    let db_path = state.data_dir.join("records.db");
     let free_path = state.data_dir.clone();
 
     // Compute sizes on a blocking thread to avoid blocking the async runtime.
-    let (models_bytes, audio_bytes, database_bytes, free_bytes) =
-        tokio::task::spawn_blocking(move || {
-            (
-                dir_size(&model_dir),
-                dir_size(&audio_dir),
-                dir_size(&db_path),
-                free_disk_space(&free_path),
-            )
-        })
-        .await
-        .unwrap_or((0, 0, 0, 0));
+    let (models_bytes, free_bytes) =
+        tokio::task::spawn_blocking(move || (dir_size(&model_dir), free_disk_space(&free_path)))
+            .await
+            .unwrap_or((0, 0));
+    let audio_bytes = state.history.audio_disk_usage_bytes().await;
+    let database_bytes = state.db.disk_usage_bytes().await;
 
     axum::Json(StorageResponse {
         models_bytes,

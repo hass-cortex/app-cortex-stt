@@ -28,6 +28,7 @@ use crate::db::database::Database;
 use crate::error::AsrError;
 use crate::retention::{RetentionCandidate, RetentionPolicy, select_to_delete};
 
+pub use analytics::MetricsSnapshot;
 pub use store::{
     CreateRecord, ListRecordsFilter, RecordSegment, TranscriptionRecord, TranscriptionSource,
 };
@@ -323,6 +324,20 @@ impl History {
                 0
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Storage
+    // -----------------------------------------------------------------
+
+    /// Total size of the audio files this store owns, in bytes. The
+    /// audio directory layout is private to `History` — callers ask
+    /// this instead of re-deriving the path.
+    pub async fn audio_disk_usage_bytes(&self) -> u64 {
+        let dir = self.audio_dir.clone();
+        tokio::task::spawn_blocking(move || crate::model::storage::dir_size(&dir))
+            .await
+            .unwrap_or(0)
     }
 
     // -----------------------------------------------------------------
