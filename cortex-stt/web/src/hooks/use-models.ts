@@ -9,10 +9,15 @@ import {
 	scanCustomModels,
 } from "@/api/models";
 import type { DownloadProgress } from "@/api/types";
+import { useEngineLive } from "@/hooks/use-engine";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { queryKeys } from "@/lib/constants";
 
 export function useModels() {
+	// Live load-state updates (lazy load by STT requests, idle/LRU
+	// offload) — `is_loaded` refreshes without polling.
+	useEngineLive();
+
 	return useQuery({
 		queryKey: queryKeys.models.list(),
 		queryFn: listModels,

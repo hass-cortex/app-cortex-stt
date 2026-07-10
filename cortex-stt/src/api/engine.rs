@@ -1,11 +1,15 @@
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
+use tokio_stream::Stream;
 
 use crate::error::AsrError;
 use crate::state::AppState;
@@ -39,17 +43,14 @@ async fn engine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     })
 }
 
-/// PUT /api/engine/default — set the default model.
-///
-/// NOTE: This currently validates the model exists in the registry but does
-/// not persist the setting (runtime-only). Full persistence will be added
-/// when the settings system is implemented.
+/// PUT /api/engine/default — validate the model exists, then persist the
+/// default to the settings DB (read back at startup and per request).
 async fn set_default_model(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<SetDefaultRequest>,
 ) -> Result<impl IntoResponse, AsrError> {
     // Verify the model exists.
-    if state.catalog.get_model(&body.model_id).await.is_none() {
+    if !state.catalog.exists(&body.model_id) {
         return Err(AsrError::ModelNotFound {
             model_id: body.model_id,
         });
@@ -95,9 +96,35 @@ async fn unload_model(
     }))
 }
 
+/// GET /api/engine/live — SSE stream that emits an `engine_changed`
+/// event on every load-state change (lazy load by an STT request,
+/// manual load/unload, idle or LRU eviction, registration). Payload is
+/// empty — clients refetch `/api/models` + `/api/engine` on receipt.
+/// Same contract as `/api/history/live`.
+async fn engine_live(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.engine_manager.subscribe_live();
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(()) => {
+                    yield Ok(Event::default().event("engine_changed").data("{}"));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(30)))
+}
+
 pub fn engine_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/engine", get(engine_status))
+        .route("/api/engine/live", get(engine_live))
         .route("/api/engine/default", put(set_default_model))
         .route("/api/engine/load", post(load_model))
         .route("/api/engine/unload", post(unload_model))

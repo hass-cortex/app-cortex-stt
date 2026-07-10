@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 
 use crate::audio::canonical::SAMPLE_RATE;
@@ -79,17 +79,34 @@ pub struct EngineManager {
     /// given model_id acquires this lock; concurrent requests wait here
     /// instead of racing to build duplicate pools.
     load_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Broadcast fired on any load-state change (load, unload, LRU/idle
+    /// eviction, registration). Payload-free — subscribers refetch.
+    events: broadcast::Sender<()>,
 }
 
 impl EngineManager {
     /// Create a new engine manager with the given configuration.
     pub fn new(config: EngineManagerConfig) -> Arc<Self> {
+        let (events, _) = broadcast::channel(16);
         Arc::new(Self {
             config: RwLock::new(config),
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
             load_locks: RwLock::new(HashMap::new()),
+            events,
         })
+    }
+
+    /// Subscribe to "engine state changed" notifications. Each event is a
+    /// unit `()` — subscribers refetch on receipt (same contract as
+    /// `History::subscribe_live`).
+    pub fn subscribe_live(&self) -> broadcast::Receiver<()> {
+        self.events.subscribe()
+    }
+
+    /// Best-effort notify — "no listeners" is not an error.
+    fn notify_changed(&self) {
+        let _ = self.events.send(());
     }
 
     /// Get (or create) the per-model load coordination lock.
@@ -121,6 +138,7 @@ impl EngineManager {
         let model_id = model_id.into();
         debug!(model_id = %model_id, "registering engine factory");
         self.factories.write().await.insert(model_id, factory);
+        self.notify_changed();
     }
 
     /// Acquire an engine instance for the given model.
@@ -267,18 +285,27 @@ impl EngineManager {
                 last_used: Instant::now(),
             },
         );
+        drop(pools);
+        // Covers both the load and any LRU eviction performed above.
+        self.notify_changed();
 
         Ok(true)
     }
 
     /// Unload a specific model, freeing its pool resources and load lock.
     pub async fn unload(&self, model_id: &str) -> bool {
-        let mut pools = self.pools.write().await;
-        let mut locks = self.load_locks.write().await;
-        let present = pools.contains_key(model_id);
+        let present = {
+            let mut pools = self.pools.write().await;
+            let mut locks = self.load_locks.write().await;
+            let present = pools.contains_key(model_id);
+            if present {
+                remove_model(&mut pools, &mut locks, model_id);
+                info!(model_id = %model_id, "model unloaded");
+            }
+            present
+        };
         if present {
-            remove_model(&mut pools, &mut locks, model_id);
-            info!(model_id = %model_id, "model unloaded");
+            self.notify_changed();
         }
         present
     }
@@ -338,12 +365,15 @@ impl EngineManager {
                 };
 
                 if !to_unload.is_empty() {
-                    let mut pools = mgr.pools.write().await;
-                    let mut locks = mgr.load_locks.write().await;
-                    for id in &to_unload {
-                        warn!(model_id = %id, "unloading idle model");
-                        remove_model(&mut pools, &mut locks, id);
+                    {
+                        let mut pools = mgr.pools.write().await;
+                        let mut locks = mgr.load_locks.write().await;
+                        for id in &to_unload {
+                            warn!(model_id = %id, "unloading idle model");
+                            remove_model(&mut pools, &mut locks, id);
+                        }
                     }
+                    mgr.notify_changed();
                 }
             }
         })

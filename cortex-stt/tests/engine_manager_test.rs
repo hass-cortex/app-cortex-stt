@@ -152,3 +152,30 @@ async fn test_concurrent_acquire_same_model_loads_once() {
     );
     assert_eq!(manager.loaded_count().await, 1);
 }
+
+/// Every load-state change (register, lazy load, unload) fires a live
+/// notification — the SSE endpoint relies on this to keep the UI fresh.
+#[tokio::test]
+async fn load_state_changes_notify_live_subscribers() {
+    let manager = EngineManager::new(EngineManagerConfig::default());
+    let mut rx = manager.subscribe_live();
+
+    // Registration notifies.
+    manager.register("model-a", mock_factory()).await;
+    rx.recv().await.expect("register should notify");
+
+    // Lazy load (via acquire) notifies.
+    drop(manager.acquire("model-a").await.unwrap());
+    rx.recv().await.expect("load should notify");
+
+    // Unload notifies.
+    assert!(manager.unload("model-a").await);
+    rx.recv().await.expect("unload should notify");
+
+    // Unloading a not-loaded model does NOT notify.
+    assert!(!manager.unload("model-a").await);
+    assert!(
+        rx.try_recv().is_err(),
+        "no-op unload must not fire an event"
+    );
+}
