@@ -33,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ── Configuration ────────────────────────────────────────────────────────────
-DEFAULT_FAST_MODELS="whisper-tiny-int8 moonshine-base sense-voice-int8 gigaam-v3-int8 canary-180m-flash"
+DEFAULT_FAST_MODELS="whisper-tiny moonshine-base SenseVoiceSmall gigaam-v3-ctc canary-180m-flash"
 TEST_MODELS="${TEST_MODELS:-$DEFAULT_FAST_MODELS}"
 TEST_AUDIO="${TEST_AUDIO:-${PROJECT_ROOT}/data/test-audio}"
 MODEL_DIR="${MODEL_DIR:-${PROJECT_ROOT}/data/models}"
@@ -79,8 +79,8 @@ model_test_lang() {
 echo -e "${BOLD}=== Step 1: Build ===${RESET}"
 
 if [ -z "${ASR_CLI}" ] || [ "${REBUILD:-1}" = "1" ]; then
-  echo "Building asr-cli with all engine features..."
-  (cd "${PROJECT_ROOT}" && cargo build --features "whisper onnx" --bin asr-cli --release)
+  echo "Building asr-cli (default features: transcribe.cpp engine)..."
+  (cd "${PROJECT_ROOT}" && cargo build --bin asr-cli --release)
   ASR_CLI="${PROJECT_ROOT}/target/release/asr-cli"
   echo -e "${GREEN}Build succeeded.${RESET}"
 else

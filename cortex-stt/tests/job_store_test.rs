@@ -1,10 +1,27 @@
-//! Tests for [`cortex_stt::state::JobStore`] retention behavior.
+//! Tests for [`cortex_stt::job::JobStore`] retention behavior.
 
 use std::time::Duration;
 
 use chrono::Utc;
-use cortex_stt::state::{AsyncJob, AsyncJobStatus, JobStore};
+use cortex_stt::job::{AsyncJob, AsyncJobStatus, CancelOutcome, JobStore};
 use cortex_stt::transcriber::TranscribeResponse;
+
+fn response(text: &str) -> TranscribeResponse {
+    TranscribeResponse {
+        text: text.to_string(),
+        language: None,
+        segments: vec![],
+        words: vec![],
+        truncated: false,
+        model: "mock".to_string(),
+        duration_ms: 0,
+        inference_ms: 0,
+        model_load_ms: 0,
+        pool_wait_ms: 0,
+        cold_load_ms: 0,
+        device: "cpu".to_string(),
+    }
+}
 
 fn make_processing(id: &str) -> AsyncJob {
     AsyncJob {
@@ -23,7 +40,10 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
         status: AsyncJobStatus::Completed {
             result: TranscribeResponse {
                 text: "ok".to_string(),
+                language: None,
                 segments: vec![],
+                words: vec![],
+                truncated: false,
                 model: "mock".to_string(),
                 duration_ms: 0,
                 inference_ms: 0,
@@ -92,6 +112,61 @@ async fn insert_enforces_cap_without_explicit_sweep() {
     assert!(store.get("c").await.is_some());
     assert!(store.get("a").await.is_none(), "oldest must be evicted");
     assert!(store.get("b").await.is_none());
+}
+
+#[tokio::test]
+async fn cancel_after_start_wins_over_a_later_completion() {
+    // Regression: a DELETE that lands after inference starts must stick.
+    // Previously the completing task's blind status write clobbered the
+    // Cancelled state back to Completed, silently un-cancelling the job.
+    let store = JobStore::new(100, Duration::from_secs(3600));
+    store.insert(make_processing("job")).await;
+
+    // Client cancels while the worker is mid-inference.
+    assert_eq!(store.cancel("job").await, CancelOutcome::MarkedCancelled);
+
+    // Worker finishes and reports its result — which must be discarded.
+    store.complete("job", response("too late")).await;
+
+    let job = store.get("job").await.unwrap();
+    assert!(
+        matches!(job.status, AsyncJobStatus::Cancelled),
+        "cancellation must survive a later completion, got {:?}",
+        job.status
+    );
+}
+
+#[tokio::test]
+async fn complete_only_transitions_a_processing_job() {
+    let store = JobStore::new(100, Duration::from_secs(3600));
+    store.insert(make_processing("job")).await;
+
+    store.complete("job", response("first")).await;
+    // A second terminal write is a no-op — terminal is terminal.
+    store.fail("job", "should not apply".to_string()).await;
+
+    let job = store.get("job").await.unwrap();
+    match job.status {
+        AsyncJobStatus::Completed { result } => assert_eq!(result.text, "first"),
+        other => panic!("expected Completed{{first}}, got {other:?}"),
+    }
+    assert!(
+        job.completed_at.is_some(),
+        "terminal must stamp completed_at"
+    );
+}
+
+#[tokio::test]
+async fn cancel_removes_an_already_terminal_job_and_reports_unknown() {
+    let store = JobStore::new(100, Duration::from_secs(3600));
+    store.insert(make_completed("done", Utc::now())).await;
+
+    // Cancelling a terminal job removes it.
+    assert_eq!(store.cancel("done").await, CancelOutcome::AlreadyTerminal);
+    assert!(store.get("done").await.is_none());
+
+    // Cancelling an unknown id is reported, not silently OK.
+    assert_eq!(store.cancel("ghost").await, CancelOutcome::NotFound);
 }
 
 #[tokio::test]

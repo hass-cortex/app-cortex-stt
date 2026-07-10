@@ -6,6 +6,53 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use cortex_stt::db::database::Database;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt::state::AppState;
+
+/// Build a fully wired `AppState` for router tests: in-memory DB, the given
+/// engine manager, models under `model_dir`, audio under `data_dir`.
+/// Goes through `AppState::assemble` — the same assembly point `main.rs`
+/// uses — so tests exercise the production object graph.
+pub async fn test_state_full(
+    engine_manager: Arc<EngineManager>,
+    model_dir: &Path,
+    data_dir: &Path,
+) -> Arc<AppState> {
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
+    AppState::assemble(
+        db,
+        engine_manager,
+        model_dir.to_path_buf(),
+        data_dir.to_path_buf(),
+        "whisper-small".to_string(),
+        "0.0.0-test".to_string(),
+        0,
+    )
+    .await
+    .unwrap()
+}
+
+/// `test_state_full` with models and audio sharing one root.
+pub async fn test_state_with(engine_manager: Arc<EngineManager>, data_dir: &Path) -> Arc<AppState> {
+    test_state_full(engine_manager, data_dir, data_dir).await
+}
+
+/// `test_state_with` with a default-config engine manager.
+pub async fn test_state_in(data_dir: &Path) -> Arc<AppState> {
+    test_state_with(EngineManager::new(EngineManagerConfig::default()), data_dir).await
+}
+
+/// Fresh `AppState` on its own temp dir. Hold the returned `TempDir` for
+/// the test's lifetime (`let (state, _tmp) = …`) — dropping it removes
+/// the directory.
+pub async fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = test_state_in(tmp.path()).await;
+    (state, tmp)
+}
 
 /// Get model directory from env or default.
 pub fn model_dir() -> PathBuf {

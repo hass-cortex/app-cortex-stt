@@ -1,5 +1,5 @@
 import { del, get } from "./client";
-import type { HistoryFilters, TranscriptionRecord } from "./types";
+import type { HistoryFacets, HistoryFilters, TranscriptionRecord } from "./types";
 
 /** List transcription records with filters (returns flat array) */
 export function listHistory(filters?: HistoryFilters): Promise<TranscriptionRecord[]> {
@@ -10,9 +10,15 @@ export function listHistory(filters?: HistoryFilters): Promise<TranscriptionReco
 	if (filters?.from) params.from = filters.from;
 	if (filters?.to) params.to = filters.to;
 	if (filters?.has_error !== undefined) params.has_error = String(filters.has_error);
+	if (filters?.capture_device) params.capture_device = filters.capture_device;
 	if (filters?.limit !== undefined) params.limit = String(filters.limit);
 	if (filters?.offset !== undefined) params.offset = String(filters.offset);
 	return get<TranscriptionRecord[]>("/api/history", params);
+}
+
+/** Distinct models + capture devices for the filter dropdowns */
+export function getHistoryFacets(): Promise<HistoryFacets> {
+	return get<HistoryFacets>("/api/history/facets");
 }
 
 /** Get a single transcription record */

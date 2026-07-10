@@ -1,12 +1,13 @@
 # Cortex STT
 
-Multi-engine speech-to-text service for Home Assistant. Supports
-[Whisper](https://github.com/openai/whisper) (multilingual),
-[NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt_ctc-1.1b)
-(English low-latency) and
-[SenseVoice](https://github.com/FunAudioLLM/SenseVoice) (Asian languages)
-via a unified HTTP API, with a built-in admin UI for downloading and
-managing models.
+Multi-model speech-to-text service for Home Assistant, powered by
+[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp).
+Runs [Whisper](https://github.com/openai/whisper) (multilingual),
+[NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+(low-latency), [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
+(Asian languages), Qwen3-ASR, and more — all as GGUF models on one
+runtime — via a unified HTTP API with WebSocket streaming, plus a
+built-in admin UI for downloading and managing models.
 
 ## System Requirements
 
@@ -14,18 +15,11 @@ managing models.
 (Intel Haswell / 2013+, AMD Excavator / 2015+ — the `x86-64-v3`
 micro-architecture level).
 
-The bundled ONNX Runtime (used by the SenseVoice and Parakeet engines)
-is statically linked into the binary and executes AVX2/FMA/F16C/BMI2
-instructions in its C++ **global initializers**, which run before any
-code inside cortex-stt itself. A runtime guard inside the binary
-therefore cannot prevent a `SIGILL` on under-spec hardware. Instead,
-the addon's init oneshot parses `/proc/cpuinfo` and refuses to start
-with a readable diagnostic (exit code 78 / `EX_CONFIG`) if any
-required flag is missing — no crash-loop.
-
-Performance-sensitive libraries (ONNX Runtime, rustfft, sha2, rustls)
-dispatch their own AVX-512 kernels at runtime when available, so newer
-hardware still gets the speed-up.
+The bundled ggml inference kernels are compiled for the `x86-64-v3`
+baseline (AVX/AVX2/FMA/F16C/BMI2/SSE4.2 on; AVX-512 off). The addon's
+init oneshot parses `/proc/cpuinfo` and refuses to start with a
+readable diagnostic (exit code 78 / `EX_CONFIG`) if any required flag
+is missing — no crash-loop.
 
 Verify on the host (not inside HA):
 
@@ -67,7 +61,9 @@ Click the Home Assistant My button below to open the app on your Home Assistant 
 ### 1. Download a model
 
 Open the **Cortex STT** panel from the sidebar → **Models** tab → pick a
-model → **Download**. `SenseVoice (INT8)` is a good first choice. See
+model (and optionally a quantization level — smaller = faster/less RAM,
+larger = more accurate) → **Download**. `SenseVoiceSmall` is a good
+first choice. See
 [MODELS.md](../MODELS.md) for the full catalog with sizes, supported
 languages, and use-case notes.
 
@@ -110,15 +106,15 @@ or per use case.
 
 ## Configuration
 
-| Option              | Default   | Description                                                                                                                                                                                                |
-| ------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `log_level`         | `info`    | One of `trace`, `debug`, `info`, `warning`, `error`, `fatal`. `debug`/`trace` raise only this app's own logs and keep dependency crates at `info`.                                                         |
-| `log_filter`        | _(empty)_ | Advanced. Raw `RUST_LOG` filter that overrides `log_level` when set — e.g. `info,ort=debug` to capture ONNX Runtime logs, or `info,cortex_stt=debug,hyper=debug` for HTTP. Leave empty to use `log_level`. |
-| `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                          |
+| Option              | Default   | Description                                                                                                                                                                                                         |
+| ------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `log_level`         | `info`    | One of `trace`, `debug`, `info`, `warning`, `error`, `fatal`. `debug`/`trace` raise only this app's own logs and keep dependency crates at `info`.                                                                  |
+| `log_filter`        | _(empty)_ | Advanced. Raw `RUST_LOG` filter that overrides `log_level` when set — e.g. `info,cortex_stt::engine=debug` to capture engine logs, or `info,cortex_stt=debug,hyper=debug` for HTTP. Leave empty to use `log_level`. |
+| `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                                   |
 
-The app exposes its HTTP API on port `8769`. Most runtime settings (GPU
-mode, idle timeout, pre-load) live in the **admin UI → Settings**, not in
-addon options.
+The app exposes its HTTP API on port `8769`. Most runtime settings
+(default model, pre-load, idle timeout, history retention, timezone)
+live in the **admin UI → Settings**, not in addon options.
 
 ## Discovery
 
@@ -194,12 +190,10 @@ and pinyin similarity-matching pipeline.
 
 ## Known Limitations
 
-- Audio format is fixed at 16 kHz / 16-bit / mono PCM WAV. Home Assistant
-  voice pipelines already produce this — only matters if you call the
-  HTTP API directly.
-- The model list seen by the integration is captured at setup time. New
-  models downloaded server-side after pairing don't appear until the
-  integration is reloaded.
+- WebSocket streaming input is fixed at 16 kHz / 16-bit / mono PCM
+  frames. The sync/async HTTP API accepts WAV at any sample rate, bit
+  depth (PCM 16/24/32, float), or channel count and resamples
+  server-side.
 
 ## Support & Source
 

@@ -18,8 +18,7 @@ export function QueueCard() {
 		);
 	}
 
-	const statusVariant =
-		health?.status === "ok" ? "success" : health?.status === "degraded" ? "warning" : "info";
+	const statusVariant = health?.status === "ok" ? "success" : "info";
 
 	return (
 		<Card>

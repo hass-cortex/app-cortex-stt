@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use reqwest::Client;
 use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -17,8 +16,10 @@ use crate::error::AsrError;
 use crate::model::download_manager::{DownloadManager, QueuedDownloadRequest};
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
-/// Hosts allowed for model downloads.
-pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co", "github.com", "blob.handy.computer"];
+/// Hosts allowed for model downloads. The vendored catalog only points
+/// at Hugging Face; the initial URL is validated and redirects (e.g. to
+/// the HF CDN) are followed by reqwest.
+pub const ALLOWED_HOSTS: &[&str] = &["huggingface.co"];
 
 /// Configuration for the download pipeline.
 pub struct DownloadConfig {
@@ -58,23 +59,11 @@ pub fn validate_download_url(url: &str) -> bool {
         .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
 }
 
-/// Shared HTTP client for all model downloads. Built once: a fresh
-/// `Client` per download would re-pay DNS/TLS setup and never reuse a
-/// keep-alive connection to the same host. The timeouts bound a stalled
-/// connection — a cancel frees the slot immediately, but the orphaned
-/// task only ends when its network await resolves, so cap that to a
-/// hung-connect / no-data window rather than forever (generous enough not
-/// to trip a slow-but-live download).
-pub(crate) fn http_client() -> &'static Client {
-    static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .read_timeout(std::time::Duration::from_secs(120))
-            .build()
-            .expect("failed to build shared HTTP download client")
-    })
-}
+/// Shared HTTP client (see [`crate::http`]). The pooled timeouts bound a
+/// stalled connection — a cancel frees the slot immediately, but the
+/// orphaned task only ends when its network await resolves, so that is
+/// capped to a hung-connect / no-data window rather than forever.
+pub(crate) use crate::http::client as http_client;
 
 /// The partial-download sibling of `dest_path` (e.g. `model.bin` ->
 /// `model.bin.part`). The single source of truth for this path: the
@@ -93,7 +82,7 @@ pub(crate) fn part_path(dest_path: &Path) -> PathBuf {
 /// the flag, frees the slot, removes progress, and deletes the `.part`
 /// file — so a task that observes this only needs to stop; it touches no
 /// shared state itself (which avoids racing a same-model re-download).
-/// Checked at the chunk boundary and before the verify / extract phases
+/// Checked at the chunk boundary and before the verify / install phases
 /// so a cancel issued between phases is honoured, not just mid-stream.
 fn is_cancelled(cancel_flag: &AtomicBool, model_id: &str) -> bool {
     let cancelled = cancel_flag.load(Ordering::Relaxed);
@@ -136,30 +125,36 @@ enum DownloadOutcome {
 
 /// Start downloading a model file in a background task.
 ///
-/// Returns a [`DownloadHandle`] containing a progress watch receiver and
-/// the spawned task handle. The background task:
+/// Returns a [`DownloadHandle`] containing a progress watch receiver.
+/// The background task:
 /// 1. Resumes from a partial `.part` file if one exists (HTTP Range header).
 /// 2. Streams the response body in chunks, updating progress via the watch channel.
-/// 3. Verifies SHA-256 on completion (if `expected_sha256` is non-empty and config allows).
+/// 3. Verifies SHA-256 on completion (if the request's sha256 is non-empty and config allows).
 /// 4. Deletes corrupted files on hash mismatch.
+/// 5. Hands the terminal state to [`DownloadManager::complete`] — the
+///    Install + slot release + progress-clear policy lives there.
 pub async fn download_model(
-    url: &str,
-    dest_path: PathBuf,
-    expected_sha256: &str,
-    model_id: &str,
-    cancel_flag: Arc<AtomicBool>,
+    request: QueuedDownloadRequest,
     downloads: Arc<DownloadManager>,
     config: DownloadConfig,
 ) -> Result<DownloadHandle, AsrError> {
-    if !validate_download_url(url) {
+    let QueuedDownloadRequest {
+        model_id,
+        url,
+        dest_path,
+        sha256: expected_sha256,
+        cancel_flag,
+    } = request;
+
+    if !validate_download_url(&url) {
         return Err(AsrError::DownloadFailed {
-            model_id: model_id.to_string(),
+            model_id,
             detail: format!("URL rejected: must be HTTPS with allowed host ({ALLOWED_HOSTS:?})"),
         });
     }
 
     let initial_progress = DownloadProgress {
-        model_id: model_id.to_string(),
+        model_id: model_id.clone(),
         status: DownloadPhase::Downloading,
         downloaded_bytes: 0,
         total_bytes: 0,
@@ -179,10 +174,6 @@ pub async fn download_model(
 
     let (tx, rx) = watch::channel(initial_progress.clone());
 
-    let url = url.to_string();
-    let expected_sha256 = expected_sha256.to_string();
-    let model_id = model_id.to_string();
-
     tokio::spawn(async move {
         let result = download_task(
             &url,
@@ -199,33 +190,29 @@ pub async fn download_model(
         // The cancel flag is the single authority that cancel() owns this
         // download's teardown (slot, progress, and .part). If it is set —
         // whether the task ended Cancelled, errored because cancel deleted
-        // the .part mid-verify/extract, or even completed in the instant
+        // the .part mid-verify, or even completed in the instant
         // before observing it — this task must touch NO shared state: the
         // model_id-keyed entry/progress may already belong to a same-model
-        // re-download, and finish()/set_progress/remove_progress here would
-        // free its slot or clobber its progress. cancel() does it all.
+        // re-download, and the completion tail here would free its slot or
+        // clobber its progress. cancel() does it all.
         if cancel_flag.load(Ordering::Relaxed) {
             return;
         }
 
-        match &result {
-            Ok(DownloadOutcome::Completed) => {
-                let progress = DownloadProgress {
-                    model_id: model_id.clone(),
-                    status: DownloadPhase::Completed,
-                    downloaded_bytes: 0,
-                    total_bytes: 0,
-                    speed_bps: 0.0,
-                    eta_secs: None,
-                    error: None,
-                };
-                downloads.set_progress(progress.clone()).await;
-                let _ = tx.send(progress);
-            }
+        let terminal = match &result {
+            Ok(DownloadOutcome::Completed) => DownloadProgress {
+                model_id: model_id.clone(),
+                status: DownloadPhase::Completed,
+                downloaded_bytes: 0,
+                total_bytes: 0,
+                speed_bps: 0.0,
+                eta_secs: None,
+                error: None,
+            },
             Ok(DownloadOutcome::Cancelled) => unreachable!("handled above"),
             Err(e) => {
                 error!(model_id = %model_id, error = %e, "download failed");
-                let progress = DownloadProgress {
+                DownloadProgress {
                     model_id: model_id.clone(),
                     status: DownloadPhase::Failed,
                     downloaded_bytes: 0,
@@ -233,62 +220,29 @@ pub async fn download_model(
                     speed_bps: 0.0,
                     eta_secs: None,
                     error: Some(e.to_string()),
-                };
-                downloads.set_progress(progress.clone()).await;
-                let _ = tx.send(progress);
+                }
             }
-        }
+        };
+        let _ = tx.send(terminal.clone());
 
-        // Release the active slot and start the next queued download.
-        launch_next(&downloads, downloads.finish(&model_id).await);
-
-        // Brief delay so SSE clients can pick up the terminal status, then
-        // clear it — but only if it is still OUR terminal entry. finish()
-        // already freed the slot, so a same-model re-download admitted in
-        // this window owns the model_id-keyed progress now (it shows a
-        // non-terminal status); we must not delete its live progress.
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        if matches!(
-            downloads.get_progress(&model_id).await.map(|p| p.status),
-            Some(DownloadPhase::Completed | DownloadPhase::Failed)
-        ) {
-            downloads.remove_progress(&model_id).await;
-        }
+        // Install (on success) + slot release + next launch + delayed
+        // progress clear — the manager owns the whole tail.
+        downloads.complete(&dest_path, terminal).await;
     });
 
     Ok(DownloadHandle { progress_rx: rx })
 }
 
-/// Launch the next queued download that a [`DownloadManager::finish`] or
-/// [`DownloadManager::cancel`] handed back (its slot is already claimed),
-/// if any. The single place that turns a promoted request into a running
-/// task, so the finish/cancel call sites stay one-liners.
-pub fn launch_next(downloads: &Arc<DownloadManager>, next: Option<QueuedDownloadRequest>) {
-    if let Some(request) = next {
-        tokio::spawn(start_queued_download(request, downloads.clone()));
-    }
-}
-
 /// Start a queued download request. Returns a boxed future to break the
-/// recursive async type cycle (download_model → on_download_finished →
+/// recursive async type cycle (download_model → complete →
 /// start_queued_download → download_model).
-pub fn start_queued_download(
+pub(crate) fn start_queued_download(
     request: QueuedDownloadRequest,
     downloads: Arc<DownloadManager>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
         let model_id = request.model_id.clone();
-        match download_model(
-            &request.url,
-            request.dest_path,
-            &request.sha256,
-            &request.model_id,
-            Arc::clone(&request.cancel_flag),
-            downloads.clone(),
-            DownloadConfig::default(),
-        )
-        .await
-        {
+        match download_model(request, downloads.clone(), DownloadConfig::default()).await {
             // Task launched; it is detached and stops via the cancel flag.
             Ok(_handle) => {}
             Err(e) => {
@@ -296,9 +250,13 @@ pub fn start_queued_download(
                     model_id = %model_id, error = %e,
                     "failed to start queued download"
                 );
+                // Clear the Queued progress entry recorded when this
+                // request was parked — left behind, it would report the
+                // model as downloading forever and block its Uninstall.
+                downloads.remove_progress(&model_id).await;
                 // Slot was claimed when this request was promoted; release
                 // it (and launch anything else queued) so the cap recovers.
-                launch_next(&downloads, downloads.finish(&model_id).await);
+                downloads.finish_and_launch_next(&model_id).await;
             }
         }
     })
@@ -513,105 +471,13 @@ async fn download_task(
     }
 
     // Last chance to honour a cancel before we install the model
-    // (extract/rename to the final destination).
+    // (rename to the final destination).
     if is_cancelled(cancel_flag, model_id) {
         return Ok(DownloadOutcome::Cancelled);
     }
 
-    // Handle archive extraction or simple rename.
-    let url_lower = url.to_lowercase();
-    let is_tar_gz = url_lower.ends_with(".tar.gz") || url_lower.ends_with(".tgz");
-    let is_tar_bz2 = url_lower.ends_with(".tar.bz2") || url_lower.ends_with(".tbz2");
-
-    if is_tar_gz || is_tar_bz2 {
-        let extracting = DownloadProgress {
-            model_id: model_id.to_string(),
-            status: DownloadPhase::Extracting,
-            downloaded_bytes,
-            total_bytes: total,
-            speed_bps: 0.0,
-            eta_secs: None,
-            error: None,
-        };
-        downloads.set_progress(extracting.clone()).await;
-        let _ = tx.send(extracting);
-
-        info!(model_id = %model_id, "extracting archive");
-        let parent = dest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let part_path_owned = part_path.clone();
-        let dest_path_owned = dest_path.to_path_buf();
-        let model_id_owned = model_id.to_string();
-
-        tokio::task::spawn_blocking(move || -> Result<(), AsrError> {
-            use std::io::BufReader;
-            let file = std::fs::File::open(&part_path_owned)?;
-
-            let tmp_dir = parent.join(format!(".tmp-extract-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&tmp_dir)?;
-
-            // Extract based on compression format
-            if is_tar_gz {
-                let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-                let mut archive = tar::Archive::new(decoder);
-                archive
-                    .unpack(&tmp_dir)
-                    .map_err(|e| AsrError::DownloadFailed {
-                        model_id: model_id_owned.clone(),
-                        detail: format!("tar.gz extraction failed: {e}"),
-                    })?;
-            } else {
-                let decoder = bzip2::read::BzDecoder::new(BufReader::new(file));
-                let mut archive = tar::Archive::new(decoder);
-                archive
-                    .unpack(&tmp_dir)
-                    .map_err(|e| AsrError::DownloadFailed {
-                        model_id: model_id_owned.clone(),
-                        detail: format!("tar.bz2 extraction failed: {e}"),
-                    })?;
-            }
-
-            // Unwrap single-directory nesting (e.g. archive contains dir/dir/files).
-            // Only unwrap when the level contains exactly one entry AND it is a directory.
-            // This prevents drilling past a top-level dir that contains both files and subdirs.
-            let mut source_dir = tmp_dir.clone();
-            loop {
-                let entries: Vec<_> = std::fs::read_dir(&source_dir)
-                    .map_err(AsrError::Io)?
-                    .filter_map(|e| e.ok())
-                    .collect();
-                if entries.len() == 1
-                    && entries[0]
-                        .file_type()
-                        .map(|ft| ft.is_dir())
-                        .unwrap_or(false)
-                {
-                    source_dir = entries[0].path();
-                } else {
-                    break;
-                }
-            }
-
-            // Rename to final destination (atomic swap)
-            if dest_path_owned.exists() {
-                std::fs::remove_dir_all(&dest_path_owned)?;
-            }
-            std::fs::rename(&source_dir, &dest_path_owned)?;
-
-            // Clean up
-            let _ = std::fs::remove_dir_all(&tmp_dir);
-            let _ = std::fs::remove_file(&part_path_owned);
-
-            Ok(())
-        })
-        .await
-        .map_err(|e| AsrError::DownloadFailed {
-            model_id: model_id.to_string(),
-            detail: format!("extraction task failed: {e}"),
-        })??;
-    } else {
-        // Simple file — just rename .part to final destination.
-        fs::rename(&part_path, dest_path).await?;
-    }
+    // GGUF models are single files — rename .part to final destination.
+    fs::rename(&part_path, dest_path).await?;
 
     info!(model_id = %model_id, path = %dest_path.display(), "model download complete");
     Ok(DownloadOutcome::Completed)

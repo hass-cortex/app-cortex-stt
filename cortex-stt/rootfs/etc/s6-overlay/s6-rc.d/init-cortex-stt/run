@@ -8,14 +8,12 @@
 # ------------------------------------------------------------------------------
 # Pre-flight CPU feature check
 #
-# The bundled ONNX Runtime (used by SenseVoice / Parakeet engines) is
-# statically linked into the cortex-stt binary, and its C++ global
-# initializers — e.g. `_GLOBAL__sub_I_qlutgemm.cpp` zeroing the global
-# `tmac_kernel_configs` table with `vxorps`/`vmovups` — execute AVX,
-# AVX2, FMA, F16C, and BMI2 instructions *before* `main()` is entered.
-# That means a guard inside the Rust binary cannot save us; the SIGILL
-# happens during dynamic-linker init, leaving HA with nothing to log
-# except a crash-loop. We have to check *outside* the binary.
+# The bundled ggml kernels (transcribe.cpp, statically linked) are
+# compiled for the x86-64-v3 baseline (GGML_NATIVE=OFF): AVX, AVX2,
+# FMA, F16C, BMI2, SSE4.2. On an under-spec CPU the SIGILL happens
+# deep inside inference with nothing useful for HA to log except a
+# crash-loop, so we check *outside* the binary and refuse to start
+# with a readable diagnostic instead.
 #
 # Read /proc/cpuinfo (always available in the addon container, even on
 # masked KVM CPUs) and refuse to start with a readable diagnostic if
@@ -37,10 +35,9 @@ if [ ${#MISSING_CPU_FLAGS[@]} -ne 0 ]; then
     bashio::log.fatal "Missing instruction set(s): ${MISSING_CPU_FLAGS[*]}"
     bashio::log.fatal "Required:                   ${REQUIRED_CPU_FLAGS[*]}"
     bashio::log.fatal ""
-    bashio::log.fatal "The bundled ONNX Runtime (statically linked, used by"
-    bashio::log.fatal "SenseVoice and Parakeet engines) executes AVX2/FMA/F16C/"
-    bashio::log.fatal "BMI2 instructions in its C++ global initializers, which"
-    bashio::log.fatal "run before any code inside cortex-stt itself."
+    bashio::log.fatal "The bundled ggml inference kernels are compiled for the"
+    bashio::log.fatal "x86-64-v3 baseline and execute AVX2/FMA/F16C/BMI2"
+    bashio::log.fatal "instructions during inference."
     bashio::log.fatal ""
     bashio::log.fatal "Running Home Assistant OS in Proxmox VE / KVM / libvirt?"
     bashio::log.fatal "  1. Open the HAOS VM's Hardware -> Processors -> Edit."

@@ -5,24 +5,15 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useModels } from "@/hooks/use-models";
-import { useSystemInfo } from "@/hooks/use-system";
 import { ModelCard } from "./model-card";
 
-const engineOptions = [
-	{ value: "", label: "All engines" },
-	{ value: "Whisper", label: "Whisper" },
-	{ value: "Parakeet", label: "Parakeet" },
-	{ value: "SenseVoice", label: "SenseVoice" },
-	{ value: "GigaAM", label: "GigaAM" },
-	{ value: "Moonshine", label: "Moonshine" },
-	{ value: "Canary", label: "Canary" },
-	{ value: "CohereTranscribe", label: "Cohere" },
-];
+/** Title-case a family slug for display (e.g. "sensevoice" → "Sensevoice"). */
+function familyLabel(family: string): string {
+	return family.charAt(0).toUpperCase() + family.slice(1);
+}
 
 function isDownloaded(status: string): boolean {
-	return (
-		status === "downloaded" || status === "loaded" || status === "loading" || status === "custom"
-	);
+	return status === "downloaded" || status === "custom";
 }
 
 function isInProgress(status: string): boolean {
@@ -31,15 +22,25 @@ function isInProgress(status: string): boolean {
 
 export function ModelList() {
 	const { data: models, isLoading, error } = useModels();
-	const { data: systemInfo } = useSystemInfo();
 	const [search, setSearch] = useState("");
-	const [engineFilter, setEngineFilter] = useState("");
+	const [familyFilter, setFamilyFilter] = useState("");
 	const [languageFilter, setLanguageFilter] = useState("");
+
+	const familyOptions = useMemo(() => {
+		const families = new Set<string>();
+		for (const m of models ?? []) families.add(m.family);
+		return [
+			{ value: "", label: "All families" },
+			...Array.from(families)
+				.sort()
+				.map((f) => ({ value: f, label: familyLabel(f) })),
+		];
+	}, [models]);
 
 	const languageOptions = useMemo(() => {
 		const langs = new Set<string>();
 		for (const m of models ?? []) {
-			for (const l of m.supported_languages) langs.add(l);
+			for (const l of m.languages) langs.add(l);
 		}
 		return [
 			{ value: "", label: "All languages" },
@@ -75,8 +76,8 @@ export function ModelList() {
 		) {
 			return false;
 		}
-		if (engineFilter && m.engine_type !== engineFilter) return false;
-		if (languageFilter && !m.supported_languages.includes(languageFilter)) return false;
+		if (familyFilter && m.family !== familyFilter) return false;
+		if (languageFilter && !m.languages.includes(languageFilter)) return false;
 		return true;
 	});
 
@@ -98,9 +99,9 @@ export function ModelList() {
 					/>
 				</div>
 				<Select
-					options={engineOptions}
-					value={engineFilter}
-					onChange={(e) => setEngineFilter(e.target.value)}
+					options={familyOptions}
+					value={familyFilter}
+					onChange={(e) => setFamilyFilter(e.target.value)}
 					className="sm:w-40"
 				/>
 				<Select
@@ -127,7 +128,7 @@ export function ModelList() {
 							</h2>
 							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{loaded.map((model) => (
-									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
+									<ModelCard key={model.id} model={model} />
 								))}
 							</div>
 						</div>
@@ -141,7 +142,7 @@ export function ModelList() {
 							</h2>
 							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{downloaded.map((model) => (
-									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
+									<ModelCard key={model.id} model={model} />
 								))}
 							</div>
 						</div>
@@ -155,7 +156,7 @@ export function ModelList() {
 							</h2>
 							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{available.map((model) => (
-									<ModelCard key={model.id} model={model} systemInfo={systemInfo} />
+									<ModelCard key={model.id} model={model} />
 								))}
 							</div>
 						</div>

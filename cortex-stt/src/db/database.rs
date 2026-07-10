@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio_rusqlite::Connection;
 
@@ -17,6 +17,15 @@ pub(crate) fn map_db_err(e: CallError) -> AsrError {
 /// Async SQLite database wrapper backed by a dedicated background thread.
 pub struct Database {
     conn: Connection,
+    /// Backing file path (`None` for in-memory databases). The module
+    /// owns its storage location — callers ask [`disk_usage_bytes`]
+    /// instead of re-deriving the filename.
+    ///
+    /// [`disk_usage_bytes`]: Self::disk_usage_bytes
+    file_path: Option<PathBuf>,
+    /// Serializes read-modify-write cycles on the settings blob (see
+    /// `db::settings`) so concurrent writers can't lose updates.
+    settings_write_lock: tokio::sync::Mutex<()>,
 }
 
 impl Database {
@@ -27,7 +36,11 @@ impl Database {
             .map_err(|e| AsrError::DatabaseError {
                 detail: e.to_string(),
             })?;
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            file_path: Some(path.to_path_buf()),
+            settings_write_lock: tokio::sync::Mutex::new(()),
+        };
         db.run_migrations().await?;
         Ok(db)
     }
@@ -39,9 +52,25 @@ impl Database {
             .map_err(|e| AsrError::DatabaseError {
                 detail: e.to_string(),
             })?;
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            file_path: None,
+            settings_write_lock: tokio::sync::Mutex::new(()),
+        };
         db.run_migrations().await?;
         Ok(db)
+    }
+
+    /// Size of the backing database file in bytes (0 for in-memory or
+    /// when the file cannot be inspected).
+    pub async fn disk_usage_bytes(&self) -> u64 {
+        match &self.file_path {
+            Some(path) => tokio::fs::metadata(path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0),
+            None => 0,
+        }
     }
 
     /// Add `column` to `table` if it is not already present. `definition`
@@ -51,7 +80,7 @@ impl Database {
     ///
     /// All three arguments are compile-time constants from migration code
     /// (never user input), so interpolating them into the DDL is safe.
-    async fn add_column_if_missing(
+    pub(crate) async fn add_column_if_missing(
         &self,
         table: &'static str,
         column: &'static str,
@@ -76,34 +105,14 @@ impl Database {
             .map_err(map_db_err)
     }
 
-    /// Run all schema migrations.
+    /// Run schema migrations for the tables this module owns (`api_keys`,
+    /// `settings`). The `records` table belongs to `history::store`, which
+    /// migrates it in `History::new`.
     async fn run_migrations(&self) -> Result<(), AsrError> {
-        // Step 1: ensure tables exist. Indexes are created later so that
-        // ALTER TABLE column-add migrations below can populate columns the
-        // indexes reference before the index is created.
         self.conn
             .call(|conn| {
                 conn.execute_batch(
                     "
-            CREATE TABLE IF NOT EXISTS records (
-                id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-                source TEXT NOT NULL,
-                language TEXT,
-                model_id TEXT NOT NULL,
-                audio_duration_ms INTEGER NOT NULL,
-                inference_ms INTEGER NOT NULL,
-                model_load_ms INTEGER NOT NULL DEFAULT 0,
-                pool_wait_ms INTEGER NOT NULL DEFAULT 0,
-                cold_load_ms INTEGER NOT NULL DEFAULT 0,
-                text TEXT NOT NULL,
-                segments_json TEXT NOT NULL DEFAULT '[]',
-                audio_path TEXT,
-                has_error INTEGER NOT NULL DEFAULT 0,
-                error_message TEXT,
-                api_key_id TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -124,40 +133,8 @@ impl Database {
             .await
             .map_err(map_db_err)?;
 
-        // Migration: backfill `source` on records tables predating its
-        // introduction. Without this, CREATE INDEX idx_records_source below
-        // would fail with "no such column: source" on upgraded installs.
-        self.add_column_if_missing("records", "source", "TEXT NOT NULL DEFAULT 'unknown'")
-            .await?;
-
-        // Step 2: create indexes once all referenced columns are guaranteed
-        // to exist.
-        self.conn
-            .call(|conn| {
-                conn.execute_batch(
-                    "
-            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
-            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
-            ",
-                )?;
-                Ok(())
-            })
-            .await
-            .map_err(map_db_err)?;
-
         // Migration: add raw_key column to api_keys.
         self.add_column_if_missing("api_keys", "raw_key", "TEXT NOT NULL DEFAULT ''")
-            .await?;
-
-        // Migration: add device column to records.
-        self.add_column_if_missing("records", "device", "TEXT NOT NULL DEFAULT 'cpu'")
-            .await?;
-
-        // Migration: add acquire timing breakdown columns to records.
-        self.add_column_if_missing("records", "pool_wait_ms", "INTEGER NOT NULL DEFAULT 0")
-            .await?;
-        self.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
             .await?;
 
         // Migration: add system column to api_keys.
@@ -172,5 +149,10 @@ impl Database {
     /// Access the inner `tokio_rusqlite::Connection` for running queries.
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// The settings-blob write lock (held across load→save cycles).
+    pub(crate) fn settings_write_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.settings_write_lock
     }
 }

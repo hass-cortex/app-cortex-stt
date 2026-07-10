@@ -1,3 +1,5 @@
+mod test_helpers;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -6,40 +8,8 @@ use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
 
 use cortex_stt::api::keys::key_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
-
-async fn create_test_state() -> Arc<AppState> {
-    let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    })
-}
+use cortex_stt::state::AppState;
+use test_helpers::test_state;
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(key_routes()).with_state(state)
@@ -47,7 +17,7 @@ fn test_app(state: Arc<AppState>) -> Router {
 
 #[tokio::test]
 async fn test_create_api_key() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let app = test_app(state);
 
     let resp = app
@@ -75,7 +45,7 @@ async fn test_create_api_key() {
 
 #[tokio::test]
 async fn test_list_api_keys() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Create a key directly via the DB.
     state.db.create_api_key("key-1").await.unwrap();
@@ -105,7 +75,7 @@ async fn test_list_api_keys() {
 
 #[tokio::test]
 async fn test_delete_api_key() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     let (record, _) = state.db.create_api_key("to-delete").await.unwrap();
 
@@ -127,7 +97,7 @@ async fn test_delete_api_key() {
 
 #[tokio::test]
 async fn test_create_key_returns_unique_keys() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Create two keys and verify they are distinct.
     let (_, key1) = state.db.create_api_key("k1").await.unwrap();

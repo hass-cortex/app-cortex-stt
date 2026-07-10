@@ -6,9 +6,10 @@ export function listModels(): Promise<ModelInfo[]> {
 	return get<ModelInfo[]>("/api/models");
 }
 
-/** Start downloading a model */
-export function downloadModel(modelId: string): Promise<{ status: string }> {
-	return post<{ status: string }>(`/api/models/${encodeURIComponent(modelId)}/download`);
+/** Start downloading a model. Omitting `quant` installs the model's default quant. */
+export function downloadModel(modelId: string, quant?: string): Promise<{ status: string }> {
+	const query = quant ? `?quant=${encodeURIComponent(quant)}` : "";
+	return post<{ status: string }>(`/api/models/${encodeURIComponent(modelId)}/download${query}`);
 }
 
 /** Cancel an in-progress download */

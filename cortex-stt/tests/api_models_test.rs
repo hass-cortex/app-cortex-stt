@@ -1,3 +1,5 @@
+mod test_helpers;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -7,39 +9,8 @@ use tower::ServiceExt;
 
 use cortex_stt::api::engine::engine_routes;
 use cortex_stt::api::models::model_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
-
-async fn create_test_state(model_dir: &std::path::Path) -> Arc<AppState> {
-    let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let downloads = DownloadManager::new(model_dir.to_path_buf());
-    let catalog = ModelCatalog::new(model_dir.to_path_buf(), downloads.clone());
-    let history = History::new(db.clone(), model_dir.join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: model_dir.to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    })
-}
+use cortex_stt::state::AppState;
+use test_helpers::test_state_in;
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new()
@@ -51,7 +22,7 @@ fn test_app(state: Arc<AppState>) -> Router {
 #[tokio::test]
 async fn test_list_models_returns_registry() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path()).await;
+    let state = test_state_in(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()
@@ -74,27 +45,27 @@ async fn test_list_models_returns_registry() {
     let first = &models[0];
     assert!(first["id"].is_string());
     assert!(first["name"].is_string());
-    assert!(first["engine_type"].is_string());
+    assert!(first["family"].is_string());
     assert!(first["status"].is_string());
     assert!(first["size_mb"].is_number());
     assert!(first["is_loaded"].is_boolean());
-    assert!(first["is_recommended"].is_boolean());
+    assert!(first["recommended"].is_boolean());
 }
 
 #[tokio::test]
 async fn test_delete_model_not_downloaded() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path()).await;
+    let state = test_state_in(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()
         .method("DELETE")
-        .uri("/api/models/whisper-tiny-int8")
+        .uri("/api/models/whisper-tiny")
         .body(Body::empty())
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    // The model exists in the registry but is not downloaded, so deletion
+    // The model exists in the catalog but is not downloaded, so deletion
     // should fail with a 404 (model file not found on disk).
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -102,7 +73,7 @@ async fn test_delete_model_not_downloaded() {
 #[tokio::test]
 async fn test_engine_status() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = create_test_state(tmp.path()).await;
+    let state = test_state_in(tmp.path()).await;
     let app = test_app(state);
 
     let req = Request::builder()

@@ -1,3 +1,5 @@
+mod test_helpers;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -6,40 +8,9 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use cortex_stt::api::history::history_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::{CreateRecord, History, TranscriptionSource};
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
-
-async fn create_test_state() -> Arc<AppState> {
-    let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    })
-}
+use cortex_stt::state::AppState;
+use test_helpers::test_state;
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(history_routes()).with_state(state)
@@ -60,11 +31,15 @@ async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
                     pool_wait_ms: 0,
                     cold_load_ms: 0,
                     text: format!("test transcription {i}"),
-                    segments_json: "[]".into(),
+                    segments: Vec::new(),
                     has_error: false,
                     error_message: None,
                     api_key_id: None,
                     device: "cpu".to_string(),
+                    capture_device: None,
+                    rms_db: None,
+                    peak_db: None,
+                    clip_ratio: None,
                 },
                 None,
             )
@@ -77,7 +52,7 @@ async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
 
 #[tokio::test]
 async fn test_list_history() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     insert_test_records(&state.history, 5).await;
     let app = test_app(state);
 
@@ -103,7 +78,7 @@ async fn test_list_history() {
 
 #[tokio::test]
 async fn test_list_history_default_limit() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     insert_test_records(&state.history, 3).await;
     let app = test_app(state);
 
@@ -129,7 +104,7 @@ async fn test_list_history_default_limit() {
 
 #[tokio::test]
 async fn test_get_single_history_record() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state);
 
@@ -158,7 +133,7 @@ async fn test_get_single_history_record() {
 
 #[tokio::test]
 async fn test_delete_history_record() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state.clone());
 
@@ -182,7 +157,7 @@ async fn test_delete_history_record() {
 
 #[tokio::test]
 async fn test_get_nonexistent_record_returns_404() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let app = test_app(state);
 
     let resp = app
@@ -200,7 +175,7 @@ async fn test_get_nonexistent_record_returns_404() {
 
 #[tokio::test]
 async fn test_list_history_with_source_filter() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Insert HTTP API records.
     insert_test_records(&state.history, 3).await;
@@ -228,9 +203,81 @@ async fn test_list_history_with_source_filter() {
     assert_eq!(records[0]["source"], "http_api");
 }
 
+/// An invalid `source` filter value must be a 400, not a silently
+/// unfiltered 200 (regression: the filter used to be dropped).
+#[tokio::test]
+async fn test_list_history_rejects_invalid_source_filter() {
+    let (state, _tmp) = test_state().await;
+    insert_test_records(&state.history, 1).await;
+
+    let resp = test_app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?source=bogus")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_list_history_with_capture_device_filter() {
+    let (state, _tmp) = test_state().await;
+    insert_test_records(&state.history, 2).await; // capture_device = None
+    state
+        .history
+        .create(
+            CreateRecord {
+                source: TranscriptionSource::HttpApi,
+                language: Some("en".into()),
+                model_id: "whisper-small".into(),
+                audio_duration_ms: 1000,
+                inference_ms: 50,
+                model_load_ms: 0,
+                pool_wait_ms: 0,
+                cold_load_ms: 0,
+                text: "from the kitchen".into(),
+                segments: Vec::new(),
+                has_error: false,
+                error_message: None,
+                api_key_id: None,
+                device: "cpu".to_string(),
+                capture_device: Some("Kitchen Satellite".into()),
+                rms_db: Some(-28.5),
+                peak_db: Some(-6.0),
+                clip_ratio: Some(0.0),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let resp = test_app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?capture_device=Kitchen%20Satellite")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let records = json.as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["capture_device"], "Kitchen Satellite");
+    assert_eq!(records[0]["rms_db"], -28.5);
+}
+
 #[tokio::test]
 async fn test_list_history_with_has_error_filter() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Two successful records.
     insert_test_records(&state.history, 2).await;
@@ -248,11 +295,15 @@ async fn test_list_history_with_has_error_filter() {
                 pool_wait_ms: 0,
                 cold_load_ms: 0,
                 text: String::new(),
-                segments_json: "[]".into(),
+                segments: Vec::new(),
                 has_error: true,
                 error_message: Some("boom".into()),
                 api_key_id: None,
                 device: "cpu".to_string(),
+                capture_device: None,
+                rms_db: None,
+                peak_db: None,
+                clip_ratio: None,
             },
             None,
         )

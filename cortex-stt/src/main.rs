@@ -5,39 +5,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // CPU feature compatibility is enforced *outside* this binary, by the
-// addon's s6 init oneshot (`rootfs/.../init-cortex-stt/run`). A guard
-// inside `main()` cannot help: the statically-linked ONNX Runtime's
-// C++ global initializers execute AVX2/FMA/F16C/BMI2 instructions
-// before `main()` is ever entered, so any SIGILL on a too-old CPU has
-// already happened by the time Rust code runs. See DOCS.md ->
-// System Requirements for the supported baseline.
+// addon's s6 init oneshot (`rootfs/.../init-cortex-stt/run`). ggml is
+// built with GGML_NATIVE=OFF (see .cargo/config.toml) so the kernels
+// target the same x86-64-v3 baseline the preflight checks. See
+// DOCS.md -> System Requirements for the supported baseline.
 
-use axum::Router;
-use axum::middleware;
-use cortex_stt::api::auth::auth_middleware;
-use cortex_stt::api::discovery::discovery_routes;
-use cortex_stt::api::engine::engine_routes;
-use cortex_stt::api::health::health_routes;
-use cortex_stt::api::history::history_routes;
-use cortex_stt::api::keys::key_routes;
-use cortex_stt::api::metrics::metrics_routes;
-use cortex_stt::api::models::model_routes;
-use cortex_stt::api::settings::settings_routes;
-use cortex_stt::api::system::system_routes;
-use cortex_stt::api::transcribe::transcribe_routes;
+use cortex_stt::api::build_router;
 use cortex_stt::cleanup::spawn_retention_cleanup;
 use cortex_stt::config::AppConfig;
 use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore, spawn_job_sweeper};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::job::spawn_job_sweeper;
+use cortex_stt::state::AppState;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -71,98 +52,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
 
-    // Build the transcription history store (owns audio_dir + broadcast tx).
-    let history = History::new(db.clone(), audio_dir.clone()).await?;
-
-    // Resolve default model: DB override takes precedence over CLI/env config.
-    let default_model = match db.get_default_model().await {
-        Ok(Some(persisted)) => {
-            tracing::info!(model = %persisted, "Using persisted default model");
-            persisted
-        }
-        Ok(None) => config.default_model.clone(),
+    // Load stored settings once; reused below for the default model,
+    // engine config, and preload flag.
+    let db_settings = match db.load_stored_settings().await {
+        Ok(stored) => stored,
         Err(e) => {
-            tracing::warn!(error = %e, "Failed to read persisted default model, using config");
-            config.default_model.clone()
+            tracing::warn!(error = %e, "Failed to read stored settings, using CLI/env config");
+            None
         }
     };
+
+    // Resolve the startup-effective configuration in one place: an
+    // explicit persisted value wins over the CLI/env default, per field
+    // (see EffectiveConfig::resolve for the precedence matrix, incl. the
+    // idle_timeout null-means-forever subtlety).
+    let effective = cortex_stt::config::EffectiveConfig::resolve(&config, db_settings.as_ref());
+    let default_model = effective.default_model.clone();
+    tracing::info!(
+        default_model = %effective.default_model,
+        pool_size = effective.pool_size,
+        max_loaded_models = effective.max_loaded_models,
+        idle_timeout = ?effective.idle_timeout,
+        preload = effective.preload,
+        "Startup config resolved (stored settings take precedence)"
+    );
 
     // Ensure pre-configured API key exists. Keys provided via --api-key or the
     // `API_KEY` env var (set from the `discovery_api_key` addon option) are
     // marked system-managed so the Admin UI can surface them read-only.
     if let Some(ref api_key) = config.api_key {
-        db.ensure_api_key("home-assistant-discovery", api_key, true)
+        db.ensure_api_key(cortex_stt::api::discovery::SYSTEM_KEY_NAME, api_key, true)
             .await?;
         tracing::info!("Pre-configured Home Assistant discovery API key registered");
     }
 
-    // Build the model catalog + download coordinator. Catalog reads
-    // the registry + scans the model_dir; DownloadManager owns queue +
-    // progress + cancellation. Catalog consults DownloadManager for live
-    // status during list_models.
-    let downloads = DownloadManager::new(model_dir.clone());
-    let catalog = ModelCatalog::new(model_dir, downloads.clone());
-
-    // Create engine manager (returns Arc<EngineManager>).
-    // DB settings take precedence over CLI defaults for engine behavior.
-    let db_settings = db.load_settings().await.ok();
-    let idle_timeout = match db_settings.as_ref().and_then(|s| s.idle_timeout_secs) {
-        Some(0) => None,
-        Some(secs) => Some(Duration::from_secs(secs)),
-        None if db_settings.is_some() => None, // DB explicitly set to null = keep loaded forever
-        None => {
-            // No DB settings yet, fall back to CLI
-            if config.idle_timeout_secs == 0 {
-                None
-            } else {
-                Some(Duration::from_secs(config.idle_timeout_secs))
-            }
-        }
-    };
+    // Create engine manager (returns Arc<EngineManager>). The DB-overridable
+    // fields come from the resolved EffectiveConfig; acquire timeout and the
+    // idle-check cadence are CLI-only operational knobs.
     let engine_config = EngineManagerConfig {
-        pool_size: db_settings
-            .as_ref()
-            .map(|s| s.pool_size)
-            .unwrap_or(config.pool_size),
-        max_loaded_models: db_settings
-            .as_ref()
-            .map(|s| s.max_loaded_models)
-            .unwrap_or(config.max_loaded_models),
-        idle_timeout,
+        pool_size: effective.pool_size,
+        max_loaded_models: effective.max_loaded_models,
+        idle_timeout: effective.idle_timeout,
         acquire_timeout: Duration::from_secs(config.pool_acquire_timeout_secs),
         idle_check_interval: Duration::from_secs(10),
     };
-    tracing::info!(
-        pool_size = engine_config.pool_size,
-        max_loaded_models = engine_config.max_loaded_models,
-        idle_timeout = ?engine_config.idle_timeout,
-        "Engine config resolved (DB settings take precedence)"
-    );
     let engine_manager = EngineManager::new(engine_config);
 
     // Spawn background idle model watcher.
     engine_manager.spawn_idle_watcher().await;
 
-    // Register engine factories for downloaded registry models.
-    let model_dir_path = config.model_dir();
-    let device_overrides = db_settings
-        .as_ref()
-        .map(|s| s.device_overrides.clone())
-        .unwrap_or_default();
+    // Clean-cut 0.3.0: remove legacy pre-GGUF artifacts (.bin / ONNX
+    // dirs / orphaned .part) before scanning for downloadable models.
+    cortex_stt::model::maintenance::cleanup_legacy_artifacts(&model_dir);
+
+    // Register engine factories for downloaded catalog models.
     cortex_stt::engine::register::register_downloaded_models(
         &engine_manager,
-        &model_dir_path,
-        &device_overrides,
+        &model_dir,
+        &effective.backend_overrides,
     )
     .await;
 
-    // Pre-load default model if configured (CLI flag OR settings DB).
-    let preload = config.preload_model
-        || db_settings
-            .as_ref()
-            .map(|s| s.preload_default_model)
-            .unwrap_or(false);
-    if preload {
+    // Pre-load default model if the resolved config asks (CLI flag OR DB).
+    if effective.preload {
         tracing::info!(model = %default_model, "Pre-loading default model");
         match engine_manager.acquire(&default_model).await {
             Ok(guard) => {
@@ -175,70 +127,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Create job store for async transcription jobs.
-    let job_store = Arc::new(JobStore::with_defaults());
-
-    // Build the transcription pipeline (engine + history + settings).
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    // Build shared application state.
-    let state = Arc::new(AppState {
-        engine_manager: engine_manager.clone(),
-        catalog,
-        downloads,
-        db: db.clone(),
-        job_store,
-        data_dir: config.data_dir.clone(),
+    // Assemble the service object graph (single assembly point — the
+    // test harness builds the identical graph through the same call).
+    let state = AppState::assemble(
+        db.clone(),
+        engine_manager,
+        model_dir,
+        config.data_dir.clone(),
         default_model,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        http_port: config.http_port,
-        started_at: std::time::Instant::now(),
-        history: history.clone(),
-        transcriber,
-    });
+        env!("CARGO_PKG_VERSION").to_string(),
+        config.http_port,
+    )
+    .await?;
 
     // Spawn background retention cleanup (hourly).
-    let _cleanup_handle = spawn_retention_cleanup(db.clone(), history.clone());
+    let _cleanup_handle = spawn_retention_cleanup(db.clone(), state.history.clone());
 
     // Spawn background job-store sweeper (every 60s) to enforce TTL +
     // max_jobs on async transcription jobs.
     let _job_sweeper_handle = spawn_job_sweeper(state.job_store.clone());
 
-    // Build Axum router.
-
-    // Public routes (no auth required).
-    let public_routes = Router::new().merge(health_routes());
-
-    // Protected routes (require authentication).
-    let protected_routes = Router::new()
-        .merge(system_routes())
-        .merge(model_routes())
-        .merge(engine_routes())
-        .merge(transcribe_routes())
-        .merge(history_routes())
-        .merge(key_routes())
-        .merge(settings_routes())
-        .merge(metrics_routes())
-        .merge(discovery_routes())
-        .layer(middleware::from_fn(move |req, next| {
-            auth_middleware(req, next, db.clone())
-        }));
-
-    let mut app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .with_state(state.clone())
-        .layer(CorsLayer::permissive())
-        // Catch-all per-request access log (method, path, status, latency).
-        // Outermost layer so it also records auth rejections and CORS-handled
-        // requests. Span + response are emitted at INFO so the access log is
-        // visible at the default log level — the single highest-leverage signal
-        // for "did a request reach the server and how did it end".
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
-        );
+    // Build the API router (routes + auth + CORS + access log); the
+    // static web UI / SPA fallback is layered on below.
+    let mut app = build_router(state.clone());
 
     // Serve web UI static files with SPA fallback routing.
     // For HA ingress support, inject X-Ingress-Path into index.html at runtime.
@@ -303,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     uuid = ?resp.uuid,
                     "Discovery announce sent to Home Assistant Supervisor",
                 ),
-                Err(cortex_stt::api::discovery::DiscoveryError::NotInSupervisor) => {
+                Err(cortex_stt::error::AsrError::NotInSupervisor) => {
                     tracing::debug!("Not running under Supervisor; skipping discovery announce");
                 }
                 Err(e) => tracing::warn!(

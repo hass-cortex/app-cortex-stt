@@ -1,13 +1,13 @@
 import { AlertCircle, ChevronDown, ChevronRight, History, Mic, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { HistoryFilters, TranscriptionRecord, TranscriptionSegment } from "@/api/types";
+import type { HistoryFilters, TranscriptionRecord } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { useDeleteHistoryRecord, useHistoryList } from "@/hooks/use-history";
+import { useDeleteHistoryRecord, useHistoryFacets, useHistoryList } from "@/hooks/use-history";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings } from "@/hooks/use-settings";
 import { formatDuration } from "@/lib/format";
@@ -21,20 +21,11 @@ const errorOptions = [
 	{ value: "false", label: "Successful only" },
 ];
 
-/** Parse segments_json string into TranscriptionSegment array */
-function parseSegments(segmentsJson: string | null): TranscriptionSegment[] {
-	if (!segmentsJson) return [];
-	try {
-		return JSON.parse(segmentsJson) as TranscriptionSegment[];
-	} catch {
-		return [];
-	}
-}
-
 export function HistoryList() {
 	const [filters, setFilters] = useState<HistoryFilters>({ limit: 50 });
 	const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 	const { data, isLoading, error } = useHistoryList(filters);
+	const { data: facets } = useHistoryFacets();
 	const { data: settings } = useSettings();
 	const timezone = settings?.timezone ?? "auto";
 
@@ -80,12 +71,23 @@ export function HistoryList() {
 					onChange={(e) => updateFilter("has_error", e.target.value)}
 					className="sm:w-40"
 				/>
-				<Input
-					type="text"
-					placeholder="Model filter..."
+				<Select
+					options={[
+						{ value: "", label: "All capture devices" },
+						...(facets?.capture_devices ?? []).map((d) => ({ value: d, label: d })),
+					]}
+					value={filters.capture_device ?? ""}
+					onChange={(e) => updateFilter("capture_device", e.target.value)}
+					className="sm:w-48"
+				/>
+				<Select
+					options={[
+						{ value: "", label: "All models" },
+						...(facets?.models ?? []).map((m) => ({ value: m, label: m })),
+					]}
 					value={filters.model ?? ""}
 					onChange={(e) => updateFilter("model", e.target.value)}
-					className="sm:w-40"
+					className="sm:w-48"
 				/>
 				<Input
 					type="text"
@@ -207,7 +209,7 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 	const deleteMutation = useDeleteHistoryRecord();
 	const runDelete = useMutationToast(deleteMutation, { success: "Record deleted" });
 
-	const segments = parseSegments(record.segments_json);
+	const segments = record.segments;
 	const hasAudio = !!record.audio_path;
 
 	const handleDelete = () => {
@@ -266,6 +268,28 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 						</Badge>
 					</p>
 				</div>
+				{record.capture_device && (
+					<div>
+						<span className="text-text-muted">Capture Device</span>
+						<p className="text-text-primary">{record.capture_device}</p>
+					</div>
+				)}
+				{record.rms_db != null && (
+					<div>
+						<span className="text-text-muted">Audio Level</span>
+						<p
+							className={
+								record.rms_db < -40 || (record.clip_ratio ?? 0) > 0.01
+									? "text-amber-500"
+									: "text-text-primary"
+							}
+						>
+							{record.rms_db.toFixed(1)} dBFS
+							{(record.clip_ratio ?? 0) > 0 &&
+								` · clip ${((record.clip_ratio ?? 0) * 100).toFixed(1)}%`}
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Error message */}

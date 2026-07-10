@@ -1,28 +1,74 @@
-//! Live model sync: fire a Home Assistant event when the downloaded-model set
-//! changes, so the paired integration can add/remove entities without a reload.
+//! Addon → Home Assistant Supervisor adapter: the single seam for every
+//! outbound Supervisor call. Two operations ride it:
 //!
-//! Uses the official add-on → HA core path: POST the HA core REST API through
-//! the Supervisor proxy (`http://supervisor/core/api/...`) authenticated with
-//! `SUPERVISOR_TOKEN` (granted by `homeassistant_api: true` in `config.yaml`).
-//! No inbound endpoint, no URL registration, no persistence — the integration
-//! just listens on the event bus.
+//! - **Discovery announce** — POST `http://supervisor/discovery`; the
+//!   Supervisor's status code propagates to the caller (unlike
+//!   `bashio::discovery`, which masks non-2xx responses).
+//! - **Live model sync** — fire an event on the HA core event bus through
+//!   the Supervisor proxy whenever an Install/Uninstall changes the model
+//!   set, so the paired integration adds/removes entities without a
+//!   config-entry reload. Fire-and-forget: no inbound endpoint, no
+//!   persistence — the integration just listens on the bus.
+//!
+//! Both authenticate with `SUPERVISOR_TOKEN` (injected by `hassio_api` /
+//! `homeassistant_api: true` in `config.yaml`) and share the pooled
+//! [`crate::http`] client.
 
 use std::time::Duration;
 
-use crate::model::download::http_client;
+use serde_json::Value;
+
+use crate::error::AsrError;
+use crate::http;
+
+const SUPERVISOR_DISCOVERY_URL: &str = "http://supervisor/discovery";
+
+/// HA core REST API base, reached through the Supervisor proxy.
+const SUPERVISOR_CORE_API: &str = "http://supervisor/core/api";
 
 /// HA event type the integration listens for. The payload is advisory — the
 /// integration re-fetches `/api/models` and reconciles — so a missed or
 /// duplicate event self-heals.
 const EVENT_TYPE: &str = "cortex_stt_models_changed";
 
-/// HA core REST API base, reached through the Supervisor proxy.
-const SUPERVISOR_CORE_API: &str = "http://supervisor/core/api";
-
 /// How long a single event POST may take before it is abandoned. Kept short:
 /// notifications are fire-and-forget, so a slow or unreachable core must never
-/// stall a model download/delete.
+/// stall a model Install/Uninstall.
 const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The Supervisor auth token, when running under Supervisor.
+pub fn token() -> Option<String> {
+    std::env::var("SUPERVISOR_TOKEN").ok()
+}
+
+/// POST a discovery payload to the Supervisor and return its JSON reply.
+/// Non-2xx becomes [`AsrError::SupervisorRejected`] with the real status.
+pub async fn post_discovery(token: &str, payload: &Value) -> Result<Value, AsrError> {
+    let resp = http::client()
+        .post(SUPERVISOR_DISCOVERY_URL)
+        .bearer_auth(token)
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| AsrError::SupervisorRequestFailed {
+            detail: e.to_string(),
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AsrError::SupervisorRejected {
+            status: status.as_u16(),
+            body,
+        });
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| AsrError::SupervisorRequestFailed {
+            detail: e.to_string(),
+        })
+}
 
 /// POST a `cortex_stt_models_changed` event to the HA core event bus.
 /// Separated from env lookup so it is unit-testable against a mock receiver.
@@ -34,7 +80,7 @@ async fn fire_event(
 ) -> reqwest::Result<reqwest::Response> {
     let url = format!("{core_api_base}/events/{EVENT_TYPE}");
     let body = serde_json::json!({ "event": event, "model_id": model_id });
-    http_client()
+    http::client()
         .post(&url)
         .bearer_auth(token)
         .timeout(EVENT_TIMEOUT)
@@ -43,11 +89,11 @@ async fn fire_event(
         .await
 }
 
-/// Fire-and-forget notification that the downloaded-model set changed. No-op
+/// Fire-and-forget notification that the installed model set changed. No-op
 /// when not running under Supervisor (no `SUPERVISOR_TOKEN`). Failures are
-/// logged, never propagated — a model download/delete must succeed regardless.
+/// logged, never propagated — an Install/Uninstall must succeed regardless.
 pub async fn notify_models_changed(event: &str, model_id: &str) {
-    let Ok(token) = std::env::var("SUPERVISOR_TOKEN") else {
+    let Some(token) = token() else {
         return;
     };
 
@@ -130,7 +176,7 @@ mod tests {
     async fn notify_is_noop_without_supervisor_token() {
         // SUPERVISOR_TOKEN is unset in the test environment: must not panic.
         // (Avoids mutating process env, which would race other tests.)
-        if std::env::var("SUPERVISOR_TOKEN").is_err() {
+        if token().is_none() {
             notify_models_changed("model_removed", "whisper-tiny-int8").await;
         }
     }

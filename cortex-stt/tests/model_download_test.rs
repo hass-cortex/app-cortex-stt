@@ -14,14 +14,11 @@ fn test_validate_url_allows_huggingface() {
 }
 
 #[test]
-fn test_validate_url_allows_github() {
-    assert!(validate_download_url(
+fn test_validate_url_rejects_other_hosts() {
+    // GitHub is no longer whitelisted — the GGUF catalog is Hugging Face only.
+    assert!(!validate_download_url(
         "https://github.com/rhasspy/models/releases/download/v1.0/model.onnx"
     ));
-}
-
-#[test]
-fn test_validate_url_rejects_other_hosts() {
     // Unknown host.
     assert!(!validate_download_url(
         "https://evil.com/malicious-model.bin"

@@ -2,47 +2,23 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::*;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::engine::traits::TranscribeOptions;
 use cortex_stt::error::AsrError;
 
-struct MockEngine;
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "mock".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "hello".into(),
-            segments: vec![],
-        })
-    }
-}
-
-fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
-    Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+fn mock_factory() -> SharedEngineFactory {
+    FakeEngine::new().named("mock").with_text("hello").factory()
 }
 
 /// Factory that counts how many engine instances have been created.
-fn counting_factory(
-    counter: Arc<AtomicUsize>,
-) -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
+fn counting_factory(counter: Arc<AtomicUsize>) -> SharedEngineFactory {
     Arc::new(move || {
         counter.fetch_add(1, Ordering::SeqCst);
         // Small sleep so concurrent loaders have a chance to overlap if
         // the load-coordination lock is broken.
         std::thread::sleep(Duration::from_millis(20));
-        Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>)
+        FakeEngine::new().named("mock").with_text("hello").factory()()
     })
 }
 
@@ -175,4 +151,31 @@ async fn test_concurrent_acquire_same_model_loads_once() {
         "factory should be called exactly pool_size times — once per slot in a single pool"
     );
     assert_eq!(manager.loaded_count().await, 1);
+}
+
+/// Every load-state change (register, lazy load, unload) fires a live
+/// notification — the SSE endpoint relies on this to keep the UI fresh.
+#[tokio::test]
+async fn load_state_changes_notify_live_subscribers() {
+    let manager = EngineManager::new(EngineManagerConfig::default());
+    let mut rx = manager.subscribe_live();
+
+    // Registration notifies.
+    manager.register("model-a", mock_factory()).await;
+    rx.recv().await.expect("register should notify");
+
+    // Lazy load (via acquire) notifies.
+    drop(manager.acquire("model-a").await.unwrap());
+    rx.recv().await.expect("load should notify");
+
+    // Unload notifies.
+    assert!(manager.unload("model-a").await);
+    rx.recv().await.expect("unload should notify");
+
+    // Unloading a not-loaded model does NOT notify.
+    assert!(!manager.unload("model-a").await);
+    assert!(
+        rx.try_recv().is_err(),
+        "no-op unload must not fire an event"
+    );
 }

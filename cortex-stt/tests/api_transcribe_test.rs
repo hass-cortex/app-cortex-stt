@@ -1,65 +1,65 @@
+mod test_helpers;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
+use cortex_stt::api::stream::stream_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::*;
-use cortex_stt::error::AsrError;
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::state::AppState;
+use test_helpers::test_state_with;
+
+type Factory = SharedEngineFactory;
 
 // ---------------------------------------------------------------------------
-// Mock engine
+// Engine fakes (shared FakeEngine, configured per scenario)
 // ---------------------------------------------------------------------------
 
-struct MockEngine;
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "mock".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        let duration = samples.len() as f32 / 16_000.0;
-        Ok(TranscriptionResult {
-            text: "hello world".into(),
-            segments: vec![TranscriptionSegment {
-                start: 0.0,
-                end: duration,
-                text: "hello world".into(),
-            }],
-        })
-    }
+/// Buffered engine (no streaming) returning "hello world" + one segment.
+fn mock_factory() -> Factory {
+    FakeEngine::new()
+        .named("mock")
+        .with_text("hello world")
+        .with_segment()
+        .factory()
 }
 
-fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
-    Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+/// Engine with real streaming: each feed commits one more "word";
+/// finalize returns the accumulated text.
+fn streaming_factory() -> Factory {
+    FakeEngine::new()
+        .named("streaming")
+        .with_text("batch")
+        .streaming()
+        .factory()
+}
+
+/// Buffered engine with a hard 1 s input ceiling.
+fn limited_factory() -> Factory {
+    FakeEngine::new()
+        .named("limited")
+        .with_text("ok")
+        .with_limit_ms(1000)
+        .factory()
 }
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
-async fn create_test_state() -> Arc<AppState> {
+async fn create_test_state() -> (Arc<AppState>, tempfile::TempDir) {
     let config = EngineManagerConfig {
-        max_loaded_models: 2,
+        max_loaded_models: 4,
         pool_size: 1,
         acquire_timeout: Duration::from_secs(5),
         idle_timeout: Some(Duration::from_secs(300)),
@@ -69,34 +69,40 @@ async fn create_test_state() -> Arc<AppState> {
     engine_manager
         .register("whisper-small", mock_factory())
         .await;
+    engine_manager
+        .register("streaming-model", streaming_factory())
+        .await;
+    engine_manager
+        .register("limited-model", limited_factory())
+        .await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    })
+    let state = test_state_with(engine_manager, tmp.path()).await;
+    (state, tmp)
 }
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(transcribe_routes()).with_state(state)
+}
+
+/// Bind the WebSocket streaming routes to a real ephemeral TCP port and
+/// serve them in the background. No auth middleware — mirrors how the sync
+/// HTTP tests build the router without auth.
+async fn spawn_ws_server(state: Arc<AppState>) -> std::net::SocketAddr {
+    let app = Router::new().merge(stream_routes()).with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+    addr
+}
+
+/// Build a 16 kHz mono PCM16LE frame of `samples` silent samples.
+fn pcm_frame(samples: usize) -> Vec<u8> {
+    vec![0u8; samples * 2]
 }
 
 /// Build a minimal 16-bit PCM WAV file with the given sample rate, channels,
@@ -134,12 +140,12 @@ fn build_wav(sample_rate: u32, channels: u16, num_samples: usize) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Sync HTTP tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_sync_transcribe_wav() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 16_000); // 1 second of 16 kHz mono silence
@@ -174,7 +180,7 @@ async fn test_sync_transcribe_wav() {
 
 #[tokio::test]
 async fn test_sync_transcribe_resamples_48khz() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     // 48 kHz mono, 48000 samples = 1 second — should be resampled to 16 kHz.
@@ -207,7 +213,7 @@ async fn test_sync_transcribe_resamples_48khz() {
 
 #[tokio::test]
 async fn test_sync_transcribe_model_not_found() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 1_600); // 100ms
@@ -233,7 +239,7 @@ async fn test_sync_transcribe_model_not_found() {
 
 #[tokio::test]
 async fn test_sync_transcribe_raw_pcm() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     // 16 kHz mono, 16-bit PCM: 16000 samples * 2 bytes = 32000 bytes for 1 second.
@@ -261,170 +267,34 @@ async fn test_sync_transcribe_raw_pcm() {
     assert_eq!(duration, 1000, "16000 samples at 16kHz = 1000ms");
 }
 
-/// Regression: SSE stream must emit real async-stage events in order
-/// (engine_acquired -> inference_started -> result). Audio decoding
-/// is synchronous and happens before the stream opens, so it no
-/// longer surfaces as a stage event.
 #[tokio::test]
-async fn test_sse_emits_stage_events_in_order() {
-    let state = create_test_state().await;
+async fn test_sync_transcribe_input_too_long() {
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
-    let wav = build_wav(16_000, 1, 16_000); // 1s mono
+    // 2 s of 16 kHz mono PCM against the limited model's 1 s ceiling.
+    let pcm_data = pcm_frame(32_000);
 
     let req = Request::builder()
         .method("POST")
-        .uri("/api/transcribe?model=whisper-small")
-        .header("content-type", "audio/wav")
-        .header("accept", "text/event-stream")
-        .body(Body::from(wav))
+        .uri("/api/transcribe?model=limited-model&sample_rate=16000&channels=1")
+        .header("content-type", "application/octet-stream")
+        .body(Body::from(pcm_data))
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert!(
-        resp.headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .contains("text/event-stream"),
-        "expected SSE content-type"
-    );
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
-    let text = std::str::from_utf8(&body).unwrap();
-
-    // Collect event names in the order they were emitted (skip keep-alive
-    // pings, which are comment lines).
-    let events: Vec<&str> = text
-        .lines()
-        .filter_map(|l| l.strip_prefix("event: "))
-        .collect();
-
-    assert_eq!(
-        events,
-        vec!["engine_acquired", "inference_started", "result"],
-        "stage events must arrive in pipeline order"
-    );
-
-    // The result must carry through the transcription text + the audio
-    // duration the pipeline derived from the decoded samples.
-    assert!(text.contains("\"text\":\"hello world\""));
-    assert!(text.contains("\"duration_ms\":1000"));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "INPUT_TOO_LONG");
 }
 
-/// Regression: SSE deadline must cover model acquisition, not just
-/// inference. With `transcription_timeout_secs=1` and a factory that
-/// sleeps for 2s during pool construction, the request must emit an
-/// `error` event before the factory finishes — i.e. the timeout fires
-/// during acquire, not after it completes.
-#[tokio::test]
-async fn test_sse_timeout_covers_acquire_phase() {
-    use cortex_stt::api::settings::Settings;
-
-    // Slow factory: simulates a cold load that takes longer than the
-    // configured request timeout.
-    let slow_factory: Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> =
-        Arc::new(|| {
-            std::thread::sleep(Duration::from_millis(2000));
-            Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>)
-        });
-
-    let config = EngineManagerConfig {
-        max_loaded_models: 2,
-        pool_size: 1,
-        acquire_timeout: Duration::from_secs(5),
-        idle_timeout: Some(Duration::from_secs(300)),
-        idle_check_interval: Duration::from_secs(10),
-    };
-    let engine_manager = EngineManager::new(config);
-    engine_manager.register("slow-model", slow_factory).await;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-
-    // Configure a 1-second transcription timeout via settings.
-    let settings = Settings {
-        transcription_timeout_secs: Some(1),
-        ..Settings::default()
-    };
-    db.save_settings(&settings).await.unwrap();
-
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    let state = Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "slow-model".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    });
-    let app = test_app(state);
-
-    let wav = build_wav(16_000, 1, 16_000); // 1s mono
-
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/transcribe?model=slow-model")
-        .header("content-type", "audio/wav")
-        .header("accept", "text/event-stream")
-        .body(Body::from(wav))
-        .unwrap();
-
-    let started = std::time::Instant::now();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK); // SSE streams open with 200
-
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let elapsed = started.elapsed();
-    let text = std::str::from_utf8(&body).unwrap();
-
-    // The stream must close well before the factory finishes (2s). Give a
-    // generous buffer (1.5s) to absorb test-runner jitter while still
-    // catching the regression where timeout doesn't cover acquire.
-    assert!(
-        elapsed < Duration::from_millis(1500),
-        "SSE should error out within ~1s deadline, took {:?}",
-        elapsed
-    );
-
-    let event_names: Vec<&str> = text
-        .lines()
-        .filter_map(|l| l.strip_prefix("event: "))
-        .collect();
-    // The audio decoded ok (sync, before the stream opens), then the
-    // pipeline tried to acquire the engine and hit the deadline. The
-    // stream must NOT include engine_acquired, inference_started, or
-    // result — only the error event.
-    assert_eq!(event_names, vec!["error"]);
-    assert!(
-        text.contains("INFERENCE_TIMEOUT"),
-        "error event must carry InferenceTimeout code, body: {text}"
-    );
-}
-
-/// Regression: response carries pool_wait_ms + cold_load_ms in addition to
-/// model_load_ms. On the cold-load path the cold_load value is what was
-/// previously bundled into model_load_ms.
 #[tokio::test]
 async fn test_response_has_pool_wait_and_cold_load_fields() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 16_000);
@@ -456,4 +326,133 @@ async fn test_response_has_pool_wait_and_cold_load_fields() {
         model_load,
         "model_load_ms must equal pool_wait_ms + cold_load_ms"
     );
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket streaming tests
+// ---------------------------------------------------------------------------
+
+/// Drive the client protocol and collect server events (as JSON values)
+/// until a terminal (`final`/`error`) event or socket close.
+///
+/// `finalize` controls whether a `finalize` message is sent after the audio
+/// frames — the input-too-long case aborts server-side on the first feed,
+/// so no finalize is sent.
+async fn run_ws_protocol(
+    addr: std::net::SocketAddr,
+    model: &str,
+    frames: &[Vec<u8>],
+    finalize: bool,
+) -> Vec<serde_json::Value> {
+    let url = format!("ws://{addr}/api/transcribe/stream");
+    let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
+
+    let start = format!(r#"{{"type":"start","model":"{model}"}}"#);
+    ws.send(WsMessage::Text(start)).await.unwrap();
+
+    for frame in frames {
+        ws.send(WsMessage::Binary(frame.clone())).await.unwrap();
+    }
+
+    if finalize {
+        ws.send(WsMessage::Text(r#"{"type":"finalize"}"#.to_string()))
+            .await
+            .unwrap();
+    }
+
+    let mut events = Vec::new();
+    while let Some(Ok(msg)) = ws.next().await {
+        if msg.is_close() {
+            break;
+        }
+        let Ok(text) = msg.to_text() else { continue };
+        if text.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        let terminal = matches!(value["type"].as_str(), Some("final") | Some("error"));
+        events.push(value);
+        if terminal {
+            break;
+        }
+    }
+    events
+}
+
+#[tokio::test]
+async fn test_ws_stream_buffered_fallback_final() {
+    let (state, _tmp) = create_test_state().await;
+    let addr = spawn_ws_server(state).await;
+
+    // whisper-small mock does not stream → buffered fallback, no partials.
+    let frames = vec![pcm_frame(8_000), pcm_frame(8_000)];
+    let events = run_ws_protocol(addr, "whisper-small", &frames, true).await;
+
+    assert_eq!(events[0]["type"], "ready");
+    assert_eq!(
+        events[0]["streaming"], false,
+        "buffered fallback advertises streaming=false"
+    );
+    assert!(
+        events.iter().all(|e| e["type"] != "partial"),
+        "buffered fallback must not emit partials"
+    );
+
+    let final_event = events.last().unwrap();
+    assert_eq!(final_event["type"], "final");
+    assert_eq!(final_event["text"], "hello world");
+    assert_eq!(final_event["model"], "whisper-small");
+}
+
+#[tokio::test]
+async fn test_ws_stream_emits_partials_then_final() {
+    let (state, _tmp) = create_test_state().await;
+    let addr = spawn_ws_server(state).await;
+
+    let frames = vec![pcm_frame(8_000), pcm_frame(8_000)];
+    let events = run_ws_protocol(addr, "streaming-model", &frames, true).await;
+
+    assert_eq!(events[0]["type"], "ready");
+    assert_eq!(
+        events[0]["streaming"], true,
+        "streaming engine advertises streaming=true"
+    );
+
+    let partials: Vec<&serde_json::Value> =
+        events.iter().filter(|e| e["type"] == "partial").collect();
+    assert!(
+        !partials.is_empty(),
+        "streaming engine must emit at least one partial"
+    );
+    // Revisions must be strictly increasing across partials.
+    let revisions: Vec<i64> = partials
+        .iter()
+        .map(|p| p["revision"].as_i64().unwrap())
+        .collect();
+    assert!(
+        revisions.windows(2).all(|w| w[1] > w[0]),
+        "partial revisions must increase: {revisions:?}"
+    );
+
+    let final_event = events.last().unwrap();
+    assert_eq!(final_event["type"], "final");
+    assert_eq!(final_event["text"], "word word");
+}
+
+#[tokio::test]
+async fn test_ws_stream_input_too_long_error() {
+    let (state, _tmp) = create_test_state().await;
+    let addr = spawn_ws_server(state).await;
+
+    // limited-model caps at 1 s; a single 2 s frame must trip the guard on
+    // the first feed (buffered fallback), producing a terminal error event.
+    let frames = vec![pcm_frame(32_000)];
+    let events = run_ws_protocol(addr, "limited-model", &frames, false).await;
+
+    assert_eq!(events[0]["type"], "ready");
+    assert_eq!(events[0]["streaming"], false);
+
+    let error_event = events.last().unwrap();
+    assert_eq!(error_event["type"], "error");
+    assert_eq!(error_event["code"], "INPUT_TOO_LONG");
 }

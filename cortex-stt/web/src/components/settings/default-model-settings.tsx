@@ -24,11 +24,7 @@ export function DefaultModelSettings() {
 	const [preloadModel, setPreloadModel] = useState(settings?.preload_default_model ?? false);
 
 	const downloadedModels = (models ?? []).filter(
-		(m) =>
-			m.status === "downloaded" ||
-			m.status === "loaded" ||
-			m.status === "loading" ||
-			m.status === "custom",
+		(m) => m.status === "downloaded" || m.status === "custom",
 	);
 
 	const modelOptions = [

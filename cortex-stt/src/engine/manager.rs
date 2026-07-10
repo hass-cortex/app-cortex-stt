@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 
 use crate::audio::canonical::SAMPLE_RATE;
@@ -79,17 +79,34 @@ pub struct EngineManager {
     /// given model_id acquires this lock; concurrent requests wait here
     /// instead of racing to build duplicate pools.
     load_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Broadcast fired on any load-state change (load, unload, LRU/idle
+    /// eviction, registration). Payload-free — subscribers refetch.
+    events: broadcast::Sender<()>,
 }
 
 impl EngineManager {
     /// Create a new engine manager with the given configuration.
     pub fn new(config: EngineManagerConfig) -> Arc<Self> {
+        let (events, _) = broadcast::channel(16);
         Arc::new(Self {
             config: RwLock::new(config),
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
             load_locks: RwLock::new(HashMap::new()),
+            events,
         })
+    }
+
+    /// Subscribe to "engine state changed" notifications. Each event is a
+    /// unit `()` — subscribers refetch on receipt (same contract as
+    /// `History::subscribe_live`).
+    pub fn subscribe_live(&self) -> broadcast::Receiver<()> {
+        self.events.subscribe()
+    }
+
+    /// Best-effort notify — "no listeners" is not an error.
+    fn notify_changed(&self) {
+        let _ = self.events.send(());
     }
 
     /// Get (or create) the per-model load coordination lock.
@@ -121,6 +138,7 @@ impl EngineManager {
         let model_id = model_id.into();
         debug!(model_id = %model_id, "registering engine factory");
         self.factories.write().await.insert(model_id, factory);
+        self.notify_changed();
     }
 
     /// Acquire an engine instance for the given model.
@@ -129,6 +147,15 @@ impl EngineManager {
     /// LRU model if at capacity). Returns a [`PoolGuard`] providing
     /// exclusive access to one engine instance.
     pub async fn acquire(&self, model_id: &str) -> Result<PoolGuard, AsrError> {
+        self.acquire_traced(model_id).await.map(|(guard, _)| guard)
+    }
+
+    /// [`acquire`](Self::acquire), also reporting whether this call
+    /// performed the cold load (weights + warmup) rather than hitting an
+    /// already-loaded pool. The manager knows the real load boundary, so
+    /// callers attributing acquire latency (pool wait vs cold load) don't
+    /// have to guess from wall-clock heuristics.
+    pub async fn acquire_traced(&self, model_id: &str) -> Result<(PoolGuard, bool), AsrError> {
         let acquire_timeout = self.config.read().await.acquire_timeout;
 
         // Fast path: model already loaded.
@@ -138,12 +165,13 @@ impl EngineManager {
                 loaded.last_used = Instant::now();
                 let pool = loaded.pool.clone();
                 drop(pools);
-                return pool.acquire(acquire_timeout).await;
+                return Ok((pool.acquire(acquire_timeout).await?, false));
             }
         }
 
-        // Slow path: need to load the model.
-        self.load_model(model_id).await?;
+        // Slow path: need to load the model (unless a concurrent loader
+        // beat us to it — then this was a wait, not a cold load).
+        let cold_load = self.load_model(model_id).await?;
 
         let mut pools = self.pools.write().await;
         let loaded = pools
@@ -155,15 +183,17 @@ impl EngineManager {
         let pool = loaded.pool.clone();
         drop(pools);
 
-        pool.acquire(acquire_timeout).await
+        Ok((pool.acquire(acquire_timeout).await?, cold_load))
     }
 
     /// Load a model pool, evicting the LRU model if at capacity.
+    /// Returns `true` if this call actually built the pool, `false` if a
+    /// concurrent loader already had.
     ///
     /// Serializes concurrent loads of the *same* model via a per-model
     /// async mutex — two requests racing on `model_id` will not both
     /// build a pool. Different model_ids still load in parallel.
-    async fn load_model(&self, model_id: &str) -> Result<(), AsrError> {
+    async fn load_model(&self, model_id: &str) -> Result<bool, AsrError> {
         // Serialize against concurrent loaders of this same model.
         let load_lock = self.load_lock_for(model_id).await;
         let _guard = load_lock.lock().await;
@@ -173,7 +203,7 @@ impl EngineManager {
         {
             let pools = self.pools.read().await;
             if pools.contains_key(model_id) {
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -213,10 +243,7 @@ impl EngineManager {
             match warmup_pool.acquire(warmup_timeout).await {
                 Ok(mut guard) => {
                     let warmup_samples = vec![0.0f32; SAMPLE_RATE as usize]; // 1 second of silence
-                    let warmup_options = crate::engine::traits::TranscribeOptions {
-                        language: None,
-                        translate: false,
-                    };
+                    let warmup_options = crate::engine::traits::TranscribeOptions::default();
                     let _ = tokio::task::spawn_blocking(move || {
                         guard.transcribe(&warmup_samples, &warmup_options)
                     })
@@ -258,18 +285,27 @@ impl EngineManager {
                 last_used: Instant::now(),
             },
         );
+        drop(pools);
+        // Covers both the load and any LRU eviction performed above.
+        self.notify_changed();
 
-        Ok(())
+        Ok(true)
     }
 
     /// Unload a specific model, freeing its pool resources and load lock.
     pub async fn unload(&self, model_id: &str) -> bool {
-        let mut pools = self.pools.write().await;
-        let mut locks = self.load_locks.write().await;
-        let present = pools.contains_key(model_id);
+        let present = {
+            let mut pools = self.pools.write().await;
+            let mut locks = self.load_locks.write().await;
+            let present = pools.contains_key(model_id);
+            if present {
+                remove_model(&mut pools, &mut locks, model_id);
+                info!(model_id = %model_id, "model unloaded");
+            }
+            present
+        };
         if present {
-            remove_model(&mut pools, &mut locks, model_id);
-            info!(model_id = %model_id, "model unloaded");
+            self.notify_changed();
         }
         present
     }
@@ -329,12 +365,15 @@ impl EngineManager {
                 };
 
                 if !to_unload.is_empty() {
-                    let mut pools = mgr.pools.write().await;
-                    let mut locks = mgr.load_locks.write().await;
-                    for id in &to_unload {
-                        warn!(model_id = %id, "unloading idle model");
-                        remove_model(&mut pools, &mut locks, id);
+                    {
+                        let mut pools = mgr.pools.write().await;
+                        let mut locks = mgr.load_locks.write().await;
+                        for id in &to_unload {
+                            warn!(model_id = %id, "unloading idle model");
+                            remove_model(&mut pools, &mut locks, id);
+                        }
                     }
+                    mgr.notify_changed();
                 }
             }
         })

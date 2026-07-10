@@ -1,7 +1,11 @@
 //! API-level integration tests — full register→transcribe→history via HTTP.
 //!
 //! Tests SKIP when model files are absent (CI safe).
-//! Run: `cargo test --features "whisper onnx" --test api_pipeline_test -- --nocapture`
+//! Run: `cargo test --features engine --test api_pipeline_test -- --nocapture`
+//!
+//! Real-engine only: the whole binary is compiled out without `engine`, so
+//! `cargo test --no-default-features` builds it as an empty (zero-test) crate.
+#![cfg(feature = "engine")]
 
 mod test_helpers;
 
@@ -17,14 +21,9 @@ use cortex_stt::api::engine::engine_routes;
 use cortex_stt::api::history::history_routes;
 use cortex_stt::api::models::model_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
-use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::register::register_downloaded_models;
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::state::AppState;
 use test_helpers::{audio_dir, model_dir};
 
 /// Build a test app with real engines registered from downloaded models.
@@ -51,28 +50,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
     eprintln!("Registered {registered} models from {}", mdir.display());
 
-    let downloads = DownloadManager::new(mdir.clone());
-    let catalog = ModelCatalog::new(mdir, downloads.clone());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let history = History::new(db.clone(), data_dir.join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-
-    let state = Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir,
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-    });
+    let state = test_helpers::test_state_full(engine_manager, &mdir, &data_dir).await;
 
     let app = Router::new()
         .merge(model_routes())
@@ -184,15 +162,17 @@ async fn run_api_pipeline(model_id: &str, audio_file: &str, lang: &str) {
     );
 }
 
-// ─── Whisper models ────────────────────────────────────────────────────────
+// ─── Real-engine API pipeline (GGUF catalog) ────────────────────────────────
+// Gated on the `engine` feature and skip when the model file is absent, so
+// the suite compiles under `--no-default-features` (mod is cfg'd out).
 
-#[cfg(feature = "whisper")]
-mod whisper {
+#[cfg(feature = "engine")]
+mod engine {
     use super::*;
 
     #[tokio::test]
-    async fn api_whisper_tiny_int8() {
-        run_api_pipeline("whisper-tiny-int8", "zh.wav", "zh").await;
+    async fn api_whisper_tiny() {
+        run_api_pipeline("whisper-tiny", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
@@ -206,71 +186,22 @@ mod whisper {
     }
 
     #[tokio::test]
-    async fn api_whisper_medium_q4() {
-        run_api_pipeline("whisper-medium-q4", "zh.wav", "zh").await;
-    }
-
-    #[tokio::test]
     async fn api_whisper_large_v3_turbo() {
         run_api_pipeline("whisper-large-v3-turbo", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
-    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5 quantization
-    async fn api_whisper_large_v3_q5() {
-        run_api_pipeline("whisper-large-v3-q5", "zh.wav", "zh").await;
-    }
-
-    #[tokio::test]
-    #[ignore] // whisper.cpp segfaults on full large model (32 text layers) with Q5_K quantization
     async fn api_breeze_asr() {
-        run_api_pipeline("breeze-asr", "zh.wav", "zh").await;
+        run_api_pipeline("Breeze-ASR-25", "zh.wav", "zh").await;
     }
-}
-
-// ─── ONNX models ───────────────────────────────────────────────────────────
-
-#[cfg(feature = "onnx")]
-mod onnx {
-    use super::*;
 
     #[tokio::test]
     async fn api_sense_voice_zh() {
-        run_api_pipeline("sense-voice-int8", "zh.wav", "zh").await;
+        run_api_pipeline("SenseVoiceSmall", "zh.wav", "zh").await;
     }
 
     #[tokio::test]
     async fn api_sense_voice_en() {
-        run_api_pipeline("sense-voice-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_parakeet_v2_en() {
-        run_api_pipeline("parakeet-v2-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_parakeet_v3_en() {
-        run_api_pipeline("parakeet-v3-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_moonshine_base_en() {
-        run_api_pipeline("moonshine-base", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_gigaam_v3_en() {
-        run_api_pipeline("gigaam-v3-int8", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_canary_180m_flash_en() {
-        run_api_pipeline("canary-180m-flash", "en.wav", "en").await;
-    }
-
-    #[tokio::test]
-    async fn api_canary_1b_v2_en() {
-        run_api_pipeline("canary-1b-v2", "en.wav", "en").await;
+        run_api_pipeline("SenseVoiceSmall", "en.wav", "en").await;
     }
 }

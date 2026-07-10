@@ -5,6 +5,7 @@
 //! module.
 
 use cortex_stt::db::database::Database;
+use cortex_stt::settings::Settings;
 
 #[tokio::test]
 async fn test_database_init_creates_api_keys_table() {
@@ -51,6 +52,75 @@ async fn test_api_key_revoke() {
     // Key should no longer verify
     let result = db.verify_api_key(&raw_key).await.unwrap();
     assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn default_model_single_home_with_engine_endpoint_as_sole_writer() {
+    let db = Database::open_in_memory().await.unwrap();
+
+    // Fresh install: nothing stored, no explicit default.
+    assert!(db.load_stored_settings().await.unwrap().is_none());
+    assert_eq!(db.load_settings().await.unwrap().default_model, None);
+
+    // PUT /api/engine/default path — the only writer of the field.
+    db.set_default_model("whisper-tiny").await.unwrap();
+    assert_eq!(
+        db.load_settings().await.unwrap().default_model.as_deref(),
+        Some("whisper-tiny")
+    );
+
+    // PUT /api/settings path — a whole-blob save (e.g. a stale admin-UI
+    // form snapshot) must NOT clobber the explicitly-set default.
+    let settings = Settings {
+        default_model: Some("whisper-small".into()),
+        ..Default::default()
+    };
+    db.save_settings(&settings).await.unwrap();
+    assert_eq!(
+        db.load_settings().await.unwrap().default_model.as_deref(),
+        Some("whisper-tiny"),
+        "save_settings must preserve the stored default_model"
+    );
+}
+
+#[tokio::test]
+async fn legacy_default_model_key_is_folded_into_the_blob() {
+    let db = Database::open_in_memory().await.unwrap();
+
+    // Simulate a pre-0.4 install that set the standalone key.
+    db.connection()
+        .call(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('default_model', 'whisper-tiny')",
+                [],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap();
+
+    // First load folds the key into the blob and deletes it.
+    let settings = db.load_stored_settings().await.unwrap().unwrap();
+    assert_eq!(settings.default_model.as_deref(), Some("whisper-tiny"));
+
+    let remaining: i64 = db
+        .connection()
+        .call(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'default_model'",
+                [],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "legacy key must be deleted after migration");
+
+    // Second load reads the blob directly.
+    assert_eq!(
+        db.load_settings().await.unwrap().default_model.as_deref(),
+        Some("whisper-tiny")
+    );
 }
 
 #[tokio::test]

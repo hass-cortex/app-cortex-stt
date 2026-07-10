@@ -14,10 +14,7 @@ import { setApiKey } from "@/api/client";
 import { CortexLogo } from "@/components/ui/cortex-logo";
 import { useHealth } from "@/hooks/use-system";
 import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
-
-// HA ingress delegates auth to Home Assistant — the local Sign out button
-// would only clear an unused API key and force a confusing reload.
-const isIngress = !!(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__;
+import { isIngress } from "@/lib/ingress";
 
 interface NavItem {
 	path: string;
@@ -117,7 +114,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 
 			{/* Footer */}
 			<div className="px-2 py-2 border-t border-border space-y-1.5">
-				{!isIngress && (
+				{!isIngress() && (
 					<button
 						type="button"
 						onClick={() => {

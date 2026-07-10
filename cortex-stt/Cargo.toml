@@ -1,8 +1,8 @@
 [package]
 name = "cortex-stt"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Multi-engine speech-to-text HTTP service powered by transcribe-rs"
+description = "Multi-model speech-to-text HTTP service powered by transcribe.cpp"
 license = "MIT"
 
 [[bin]]
@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
-axum = { version = "0.8", features = ["multipart", "macros"] }
+axum = { version = "0.8", features = ["multipart", "macros", "ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tower = "0.5"
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -38,27 +38,28 @@ tokio-stream = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 async-stream = "0.3"
 url = "2"
-flate2 = "1"
-tar = "0.4"
-bzip2 = "0.6"
 toml = "1"
 tikv-jemallocator = { version = "0.7", features = ["background_threads"] }
 gethostname = "1.1"
 
 # STT engine (optional — tests use mock)
-transcribe-rs = { version = "0.3.5", optional = true }
-
+transcribe-cpp = { version = "=0.1.1", default-features = false, optional = true }
+# Self-referential holder for an active engine stream (Stream<'a> mutably
+# borrows its Session; both must live in the bridge across feed calls).
+ouroboros = { version = "0.18", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 [features]
-default = ["whisper", "onnx", "vad-silero"]
-whisper = ["transcribe-rs", "transcribe-rs/whisper-cpp"]
-onnx = ["transcribe-rs", "transcribe-rs/onnx"]
-vad-silero = ["transcribe-rs/vad-silero"]
-cuda = ["whisper", "onnx", "vad-silero", "transcribe-rs/whisper-cuda", "transcribe-rs/ort-cuda"]
+default = ["engine"]
+engine = ["dep:transcribe-cpp", "dep:ouroboros"]
+cuda = ["engine", "transcribe-cpp/cuda"]
 
 [profile.release]
 opt-level = 3
+lto = true
+strip = true

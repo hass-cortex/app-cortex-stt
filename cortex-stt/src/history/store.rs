@@ -17,12 +17,15 @@ use crate::retention::RetentionCandidate;
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionSource {
     HttpApi,
+    /// WebSocket stream session.
+    WsApi,
 }
 
 impl TranscriptionSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::HttpApi => "http_api",
+            Self::WsApi => "ws_api",
         }
     }
 }
@@ -33,9 +36,20 @@ impl FromStr for TranscriptionSource {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "http_api" => Ok(Self::HttpApi),
+            "ws_api" => Ok(Self::WsApi),
             other => Err(format!("unknown transcription source: {other}")),
         }
     }
+}
+
+/// A single timed span of a stored transcription. Serialized to the
+/// `segments_json` TEXT column on write and parsed back on read — the
+/// string encoding is a private storage detail of this module.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecordSegment {
+    pub start: f32,
+    pub end: f32,
+    pub text: String,
 }
 
 /// Input for creating a transcription record.
@@ -53,11 +67,20 @@ pub struct CreateRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
-    pub segments_json: String,
+    pub segments: Vec<RecordSegment>,
     pub has_error: bool,
     pub error_message: Option<String>,
     pub api_key_id: Option<String>,
     pub device: String,
+    /// Capture device (microphone / satellite) that recorded the audio,
+    /// as reported by the client. Distinct from `device` (compute
+    /// backend) — see CONTEXT.md.
+    pub capture_device: Option<String>,
+    /// Input-signal level stats (see `audio::stats`). None on failure
+    /// rows and for clients that predate the fields.
+    pub rms_db: Option<f64>,
+    pub peak_db: Option<f64>,
+    pub clip_ratio: Option<f64>,
 }
 
 /// A stored transcription record.
@@ -74,12 +97,24 @@ pub struct TranscriptionRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
-    pub segments_json: String,
+    pub segments: Vec<RecordSegment>,
     pub audio_path: Option<String>,
     pub has_error: bool,
     pub error_message: Option<String>,
     pub api_key_id: Option<String>,
     pub device: String,
+    pub capture_device: Option<String>,
+    pub rms_db: Option<f64>,
+    pub peak_db: Option<f64>,
+    pub clip_ratio: Option<f64>,
+}
+
+/// Distinct filterable values present in the records table, for the
+/// admin UI's filter dropdowns.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryFacets {
+    pub models: Vec<String>,
+    pub capture_devices: Vec<String>,
 }
 
 /// Optional filters for listing records.
@@ -91,6 +126,8 @@ pub struct ListRecordsFilter {
     pub from: Option<String>,
     pub to: Option<String>,
     pub has_error: Option<bool>,
+    /// Exact match on the capture device tag.
+    pub capture_device: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -100,7 +137,94 @@ pub struct ListRecordsFilter {
 /// order MUST match the positional `row.get(N)` indices in
 /// [`row_to_record`]; keeping the list in one place stops the SELECT
 /// sites and the mapper from drifting apart when a column is added.
-const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device";
+const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio";
+
+// ---------------------------------------------------------------------------
+// Schema — the `records` table is owned by this module. Adding a column
+// means touching this file only: the DDL below, `RECORD_COLUMNS`, the
+// INSERT in [`insert`], and [`row_to_record`].
+// ---------------------------------------------------------------------------
+
+/// Create/upgrade the `records` table. Runs in `History::new`, before any
+/// query. Idempotent — safe on every startup.
+pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
+    // Step 1: ensure the table exists. Indexes are created later so that
+    // ALTER TABLE column-add migrations below can populate columns the
+    // indexes reference before the index is created.
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "
+            CREATE TABLE IF NOT EXISTS records (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                source TEXT NOT NULL,
+                language TEXT,
+                model_id TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                inference_ms INTEGER NOT NULL,
+                model_load_ms INTEGER NOT NULL DEFAULT 0,
+                pool_wait_ms INTEGER NOT NULL DEFAULT 0,
+                cold_load_ms INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL,
+                segments_json TEXT NOT NULL DEFAULT '[]',
+                audio_path TEXT,
+                has_error INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                api_key_id TEXT
+            );
+            ",
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)?;
+
+    // Migration: backfill `source` on records tables predating its
+    // introduction. Without this, CREATE INDEX idx_records_source below
+    // would fail with "no such column: source" on upgraded installs.
+    db.add_column_if_missing("records", "source", "TEXT NOT NULL DEFAULT 'unknown'")
+        .await?;
+
+    // Step 2: create indexes once all referenced columns are guaranteed
+    // to exist.
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "
+            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
+            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
+            ",
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)?;
+
+    // Migration: add device column.
+    db.add_column_if_missing("records", "device", "TEXT NOT NULL DEFAULT 'cpu'")
+        .await?;
+
+    // Migration: add acquire timing breakdown columns.
+    db.add_column_if_missing("records", "pool_wait_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
+    db.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
+
+    // Migration: capture device (microphone/satellite) + input-signal
+    // level stats. Nullable — rows predating the columns stay NULL.
+    db.add_column_if_missing("records", "capture_device", "TEXT")
+        .await?;
+    db.add_column_if_missing("records", "rms_db", "REAL")
+        .await?;
+    db.add_column_if_missing("records", "peak_db", "REAL")
+        .await?;
+    db.add_column_if_missing("records", "clip_ratio", "REAL")
+        .await?;
+
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // CRUD
@@ -125,18 +249,22 @@ pub(super) async fn insert(
     let pool_wait_ms = rec.pool_wait_ms;
     let cold_load_ms = rec.cold_load_ms;
     let text = rec.text.clone();
-    let segments_json = rec.segments_json.clone();
+    let segments_json = serde_json::to_string(&rec.segments).unwrap_or_else(|_| "[]".into());
     let audio_path = audio_path.map(|s| s.to_string());
     let has_error = rec.has_error as i32;
     let error_message = rec.error_message.clone();
     let api_key_id = rec.api_key_id.clone();
     let device = rec.device.clone();
+    let capture_device = rec.capture_device.clone();
+    let rms_db = rec.rms_db;
+    let peak_db = rec.peak_db;
+    let clip_ratio = rec.clip_ratio;
 
     db.connection()
         .call(move |conn| {
             conn.execute(
-                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     id,
                     source,
@@ -154,6 +282,10 @@ pub(super) async fn insert(
                     error_message,
                     api_key_id,
                     device,
+                    capture_device,
+                    rms_db,
+                    peak_db,
+                    clip_ratio,
                 ],
             )?;
             Ok(())
@@ -230,6 +362,7 @@ pub(super) async fn list(
     let from = filter.from.clone();
     let to = filter.to.clone();
     let has_error = filter.has_error;
+    let capture_device = filter.capture_device.clone();
     let limit = filter.limit;
     let offset = filter.offset;
 
@@ -269,6 +402,11 @@ pub(super) async fn list(
                 param_values.push(Box::new(has_error as i32));
                 idx += 1;
             }
+            if let Some(capture_device) = &capture_device {
+                sql.push_str(&format!(" AND capture_device = ?{idx}"));
+                param_values.push(Box::new(capture_device.clone()));
+                idx += 1;
+            }
 
             sql.push_str(" ORDER BY timestamp DESC");
 
@@ -287,6 +425,31 @@ pub(super) async fn list(
                 param_values.iter().map(|b| b.as_ref()).collect();
             stmt.query_map(params_ref.as_slice(), row_to_record)?
                 .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .await
+        .map_err(map_db_err)
+}
+
+/// Distinct model ids and capture devices seen in history (one pass,
+/// two indexed/streamed DISTINCT scans). Backs the UI filter dropdowns.
+pub(super) async fn facets(db: &Arc<Database>) -> Result<HistoryFacets, AsrError> {
+    db.connection()
+        .call(|conn| {
+            let models = conn
+                .prepare("SELECT DISTINCT model_id FROM records ORDER BY model_id")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let capture_devices = conn
+                .prepare(
+                    "SELECT DISTINCT capture_device FROM records
+                     WHERE capture_device IS NOT NULL ORDER BY capture_device",
+                )?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(HistoryFacets {
+                models,
+                capture_devices,
+            })
         })
         .await
         .map_err(map_db_err)
@@ -429,112 +592,42 @@ pub(super) async fn list_audio_rows(
 // Analytics aggregates (consumed by api/metrics.rs via History)
 // ---------------------------------------------------------------------------
 
-pub(super) async fn count_records(
+/// Compute every history aggregate in one SQL pass over `records`.
+/// The FILTER clauses mirror the field definitions on
+/// [`MetricsSnapshot`](crate::history::analytics::MetricsSnapshot).
+pub(super) async fn metrics_snapshot(
     db: &Arc<Database>,
-    source: Option<TranscriptionSource>,
-) -> Result<usize, AsrError> {
+) -> Result<super::analytics::MetricsSnapshot, AsrError> {
     db.connection()
         .call(move |conn| {
-            let count: i64 = if let Some(src) = source {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0",
-                    params![src.as_str()],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 0",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn count_records_today(
-    db: &Arc<Database>,
-    source: Option<TranscriptionSource>,
-) -> Result<usize, AsrError> {
-    db.connection()
-        .call(move |conn| {
-            let count: i64 = if let Some(src) = source {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE source = ?1 AND has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                    params![src.as_str()],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn total_audio_duration_ms(db: &Arc<Database>) -> Result<i64, AsrError> {
-    db.connection()
-        .call(|conn| {
             conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0",
-                [],
-                |row| row.get(0),
+                "SELECT
+                    COUNT(*) FILTER (WHERE has_error = 0),
+                    COUNT(*) FILTER (WHERE has_error = 0 AND source = ?1),
+                    COUNT(*) FILTER (WHERE has_error = 0
+                        AND timestamp >= datetime('now', 'start of day')),
+                    COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0), 0),
+                    COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0
+                        AND timestamp >= datetime('now', 'start of day')), 0),
+                    COALESCE(AVG(inference_ms) FILTER (WHERE has_error = 0), 0.0),
+                    COUNT(*) FILTER (WHERE has_error = 1),
+                    COUNT(*) FILTER (WHERE has_error = 1
+                        AND timestamp >= datetime('now', 'start of day'))
+                 FROM records",
+                params![TranscriptionSource::HttpApi.as_str()],
+                |row| {
+                    Ok(super::analytics::MetricsSnapshot {
+                        total_transcriptions: row.get::<_, i64>(0)? as usize,
+                        http_transcriptions: row.get::<_, i64>(1)? as usize,
+                        today_transcriptions: row.get::<_, i64>(2)? as usize,
+                        total_audio_duration_ms: row.get(3)?,
+                        today_audio_duration_ms: row.get(4)?,
+                        avg_inference_ms: row.get(5)?,
+                        error_count: row.get::<_, i64>(6)? as usize,
+                        today_error_count: row.get::<_, i64>(7)? as usize,
+                    })
+                },
             )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn today_audio_duration_ms(db: &Arc<Database>) -> Result<i64, AsrError> {
-    db.connection()
-        .call(|conn| {
-            conn.query_row(
-                "SELECT COALESCE(SUM(audio_duration_ms), 0) FROM records WHERE has_error = 0 AND timestamp >= datetime('now', 'start of day')",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn avg_inference_ms(db: &Arc<Database>) -> Result<f64, AsrError> {
-    db.connection()
-        .call(|conn| {
-            conn.query_row(
-                "SELECT COALESCE(AVG(inference_ms), 0.0) FROM records WHERE has_error = 0",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .map_err(map_db_err)
-}
-
-pub(super) async fn count_errors(db: &Arc<Database>, today_only: bool) -> Result<usize, AsrError> {
-    db.connection()
-        .call(move |conn| {
-            let count: i64 = if today_only {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 1 AND timestamp >= datetime('now', 'start of day')",
-                    [],
-                    |row| row.get(0),
-                )
-            } else {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM records WHERE has_error = 1",
-                    [],
-                    |row| row.get(0),
-                )
-            }?;
-            Ok(count as usize)
         })
         .await
         .map_err(map_db_err)
@@ -557,12 +650,16 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         pool_wait_ms: row.get(8)?,
         cold_load_ms: row.get(9)?,
         text: row.get(10)?,
-        segments_json: row.get(11)?,
+        segments: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
         audio_path: row.get(12)?,
         has_error: row.get::<_, i32>(13)? != 0,
         error_message: row.get(14)?,
         api_key_id: row.get(15)?,
         device: row.get(16)?,
+        capture_device: row.get(17)?,
+        rms_db: row.get(18)?,
+        peak_db: row.get(19)?,
+        clip_ratio: row.get(20)?,
     })
 }
 

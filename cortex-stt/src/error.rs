@@ -28,6 +28,15 @@ pub enum AsrError {
     #[error("audio format error: {detail}")]
     AudioFormatError { detail: String },
 
+    #[error("audio exceeds the {max_audio_ms} ms limit of model {model_id}")]
+    InputTooLong { model_id: String, max_audio_ms: i64 },
+
+    #[error("model does not support streaming")]
+    StreamingUnsupported,
+
+    #[error("stream protocol error: {detail}")]
+    StreamProtocol { detail: String },
+
     #[error("protocol error: {detail}")]
     ProtocolError { detail: String },
 
@@ -70,6 +79,23 @@ pub enum AsrError {
     #[error("job failed: {detail}")]
     JobFailed { detail: String },
 
+    #[error("not running under Home Assistant Supervisor (SUPERVISOR_TOKEN not set)")]
+    NotInSupervisor,
+
+    #[error(
+        "no system-managed API key registered — set the discovery_api_key addon option and restart"
+    )]
+    NoSystemApiKey,
+
+    #[error("could not determine container hostname: {detail}")]
+    HostnameLookup { detail: String },
+
+    #[error("Supervisor rejected discovery: HTTP {status} — {body}")]
+    SupervisorRejected { status: u16, body: String },
+
+    #[error("Supervisor request failed: {detail}")]
+    SupervisorRequestFailed { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -84,7 +110,12 @@ impl AsrError {
     pub fn status(&self) -> StatusCode {
         match self {
             // 400
-            Self::AudioFormatError { .. } | Self::ProtocolError { .. } => StatusCode::BAD_REQUEST,
+            Self::AudioFormatError { .. }
+            | Self::ProtocolError { .. }
+            | Self::StreamingUnsupported
+            | Self::StreamProtocol { .. } => StatusCode::BAD_REQUEST,
+            // 413
+            Self::InputTooLong { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             // 401
             Self::AuthRequired | Self::InvalidApiKey => StatusCode::UNAUTHORIZED,
             // 403
@@ -103,8 +134,16 @@ impl AsrError {
             Self::JobCancelled { .. } => StatusCode::GONE,
             // 429
             Self::PoolAcquireTimeout { .. } => StatusCode::TOO_MANY_REQUESTS,
+            // 412
+            Self::NoSystemApiKey => StatusCode::PRECONDITION_FAILED,
             // 503
-            Self::ServiceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::ServiceUnavailable { .. } | Self::NotInSupervisor => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            // Supervisor's own status, propagated (502 if unrepresentable).
+            Self::SupervisorRejected { status, .. } => {
+                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
+            }
             // 500 — everything else.
             Self::InferenceFailed { .. }
             | Self::EnginePanic { .. }
@@ -112,6 +151,8 @@ impl AsrError {
             | Self::DatabaseError { .. }
             | Self::DownloadFailed { .. }
             | Self::JobFailed { .. }
+            | Self::HostnameLookup { .. }
+            | Self::SupervisorRequestFailed { .. }
             | Self::Io(_)
             | Self::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -131,6 +172,9 @@ impl AsrError {
             Self::ModelNotLoaded { .. } => "MODEL_NOT_LOADED",
             Self::AudioFormatError { .. } => "AUDIO_FORMAT_ERROR",
             Self::ProtocolError { .. } => "PROTOCOL_ERROR",
+            Self::InputTooLong { .. } => "INPUT_TOO_LONG",
+            Self::StreamingUnsupported => "STREAMING_UNSUPPORTED",
+            Self::StreamProtocol { .. } => "STREAM_PROTOCOL",
             Self::DatabaseError { .. } => "DATABASE_ERROR",
             Self::DownloadFailed { .. } => "DOWNLOAD_FAILED",
             Self::AuthRequired => "AUTH_REQUIRED",
@@ -144,6 +188,13 @@ impl AsrError {
             Self::JobNotComplete { .. } => "JOB_NOT_COMPLETE",
             Self::JobCancelled { .. } => "JOB_CANCELLED",
             Self::JobFailed { .. } => "JOB_FAILED",
+            // Supervisor codes predate the AsrError merge — keep the wire
+            // strings the old DiscoveryError emitted.
+            Self::NotInSupervisor => "NOT_IN_SUPERVISOR",
+            Self::NoSystemApiKey => "NO_API_KEY",
+            Self::HostnameLookup { .. } => "HOSTNAME_LOOKUP_FAILED",
+            Self::SupervisorRejected { .. } => "SUPERVISOR_REJECTED",
+            Self::SupervisorRequestFailed { .. } => "HTTP_ERROR",
             Self::Io(_) => "IO_ERROR",
             Self::Json(_) => "JSON_ERROR",
         }
@@ -161,7 +212,8 @@ impl AsrError {
             Self::InferenceFailed { model_id, .. }
             | Self::InferenceTimeout { model_id, .. }
             | Self::PoolAcquireTimeout { model_id, .. }
-            | Self::DownloadFailed { model_id, .. } => Some(model_id.clone()),
+            | Self::DownloadFailed { model_id, .. }
+            | Self::InputTooLong { model_id, .. } => Some(model_id.clone()),
             Self::ModelFileNotFound { path } => Some(path.display().to_string()),
             Self::RecordNotFound { record_id } | Self::NoAudio { record_id } => {
                 Some(record_id.clone())
