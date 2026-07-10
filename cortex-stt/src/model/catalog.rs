@@ -7,18 +7,33 @@ use std::sync::Arc;
 
 use tracing::info;
 
+use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
-use crate::model::catalog_data::{CatalogModel, QuantFile, catalog_models};
-use crate::model::download_manager::DownloadManager;
+use crate::model::catalog_data::{CatalogModel, QuantFile, catalog_models, find_model};
+use crate::model::progress::ProgressBoard;
 use crate::model::storage::dir_size;
 use crate::model::types::{DownloadPhase, ModelInfo, ModelStatus};
 
 /// Read-only view of installed and installable models. The catalog
-/// does NOT own download lifecycle — it only queries
-/// [`DownloadManager`] for in-flight status when reporting `list_models`.
+/// does NOT own download lifecycle — it only reads the shared
+/// [`ProgressBoard`] for in-flight status and [`EngineManager`] for
+/// load state when reporting `list_models`, so callers get the complete
+/// model state from one place.
 pub struct ModelCatalog {
     model_dir: PathBuf,
-    downloads: Arc<DownloadManager>,
+    progress: Arc<ProgressBoard>,
+    engines: Arc<EngineManager>,
+}
+
+/// A model id resolved to its identity class — the single notion of
+/// "valid model id". Callers branch on the class instead of memorizing
+/// which lookup accepts custom models (downloads and quant switches are
+/// catalog-only; load/default accept both).
+pub enum ResolvedModel {
+    /// Vendored catalog entry (downloadable; quant rules apply).
+    Catalog(&'static CatalogModel),
+    /// Hand-dropped GGUF on disk; no download lifecycle, no quants.
+    Custom(PathBuf),
 }
 
 /// The quant of `model` present on disk, if any (one quant per model).
@@ -29,11 +44,32 @@ pub fn downloaded_quant<'a>(model_dir: &Path, model: &'a CatalogModel) -> Option
         .find(|q| model_dir.join(&q.filename).is_file())
 }
 
+/// On-disk files of `model`'s other quants — everything that must go to
+/// uphold "one quant per model" once `keep_filename` is the installed one.
+pub fn stale_quant_files(
+    model_dir: &Path,
+    model: &CatalogModel,
+    keep_filename: &str,
+) -> Vec<PathBuf> {
+    model
+        .quants
+        .iter()
+        .filter(|q| q.filename != keep_filename)
+        .map(|q| model_dir.join(&q.filename))
+        .filter(|p| p.is_file())
+        .collect()
+}
+
 impl ModelCatalog {
-    pub fn new(model_dir: PathBuf, downloads: Arc<DownloadManager>) -> Arc<Self> {
+    pub fn new(
+        model_dir: PathBuf,
+        progress: Arc<ProgressBoard>,
+        engines: Arc<EngineManager>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
-            downloads,
+            progress,
+            engines,
         })
     }
 
@@ -51,7 +87,7 @@ impl ModelCatalog {
         for model in catalog_models() {
             let on_disk = downloaded_quant(&self.model_dir, model);
             let (status, quant, disk_bytes) =
-                if let Some(progress) = self.downloads.get_progress(&model.id).await {
+                if let Some(progress) = self.progress.get(&model.id).await {
                     match progress.status {
                         DownloadPhase::Queued => (ModelStatus::Queued, None, 0),
                         // A completed download whose file is in place is
@@ -92,6 +128,11 @@ impl ModelCatalog {
             }
         }
 
+        let loaded = self.engines.loaded_models().await;
+        for model in &mut models {
+            model.is_loaded = loaded.contains(&model.id);
+        }
+
         models
     }
 
@@ -100,15 +141,36 @@ impl ModelCatalog {
         self.list_models().await.into_iter().find(|m| m.id == id)
     }
 
+    /// Resolve `id` to its identity class. `Err(ModelNotFound)` when the
+    /// id is neither a catalog entry nor a custom GGUF on disk. A single
+    /// stat instead of the full `list_models` directory scan.
+    pub fn resolve(&self, id: &str) -> Result<ResolvedModel, AsrError> {
+        if let Some(model) = find_model(id) {
+            return Ok(ResolvedModel::Catalog(model));
+        }
+        let custom = self.model_dir.join(format!("{id}.gguf"));
+        if custom.is_file() {
+            return Ok(ResolvedModel::Custom(custom));
+        }
+        Err(AsrError::ModelNotFound {
+            model_id: id.to_string(),
+        })
+    }
+
+    /// Cheap existence check (catalog entry or custom GGUF on disk).
+    pub fn exists(&self, id: &str) -> bool {
+        self.resolve(id).is_ok()
+    }
+
     /// Resolve the on-disk GGUF path for a model id (catalog quant file
     /// or custom `<id>.gguf`).
     pub fn model_path(&self, id: &str) -> Option<PathBuf> {
-        if let Some(model) = crate::model::catalog_data::find_model(id) {
-            return downloaded_quant(&self.model_dir, model)
-                .map(|q| self.model_dir.join(&q.filename));
+        match self.resolve(id).ok()? {
+            ResolvedModel::Catalog(model) => {
+                downloaded_quant(&self.model_dir, model).map(|q| self.model_dir.join(&q.filename))
+            }
+            ResolvedModel::Custom(path) => Some(path),
         }
-        let custom = self.model_dir.join(format!("{id}.gguf"));
-        custom.is_file().then_some(custom)
     }
 
     /// Delete a model's files from disk. Refuses to delete models that
@@ -181,8 +243,9 @@ mod tests {
     use crate::model::catalog_data::find_model;
 
     fn make_catalog(model_dir: PathBuf) -> Arc<ModelCatalog> {
-        let downloads = DownloadManager::new(model_dir.clone());
-        ModelCatalog::new(model_dir, downloads)
+        let progress = ProgressBoard::new();
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        ModelCatalog::new(model_dir, progress, engines)
     }
 
     /// The default-quant filename of a known catalog model.
@@ -231,9 +294,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
 
-        let downloads = DownloadManager::new(tmp.path().to_path_buf());
-        downloads
-            .set_progress(crate::model::types::DownloadProgress {
+        let progress = ProgressBoard::new();
+        progress
+            .set(crate::model::types::DownloadProgress {
                 model_id: "whisper-tiny".to_string(),
                 status: DownloadPhase::Completed,
                 downloaded_bytes: 4,
@@ -244,11 +307,67 @@ mod tests {
             })
             .await;
 
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads);
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress, engines);
         let models = catalog.list_models().await;
         let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert!(tiny.disk_usage_bytes > 0);
+    }
+
+    /// Regression: `get_model`/`list_models` must reflect engine load state.
+    /// Before the catalog owned the join, only `GET /api/models` overlaid
+    /// `is_loaded`, so every other caller read a constant `false`.
+    #[tokio::test]
+    async fn get_model_reports_loaded_state() {
+        use crate::engine::testing::FakeEngine;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
+
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        engines
+            .register("whisper-tiny", FakeEngine::new().factory())
+            .await;
+        // Acquire-and-drop triggers the lazy load.
+        drop(engines.acquire("whisper-tiny").await.unwrap());
+
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), ProgressBoard::new(), engines);
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert!(tiny.is_loaded);
+        assert!(!catalog.get_model("whisper-small").await.unwrap().is_loaded);
+    }
+
+    #[tokio::test]
+    async fn resolve_classifies_catalog_custom_and_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("my-custom.gguf"), b"data").unwrap();
+        let catalog = make_catalog(tmp.path().to_path_buf());
+
+        // Catalog entry resolves even before download.
+        assert!(matches!(
+            catalog.resolve("whisper-tiny"),
+            Ok(ResolvedModel::Catalog(m)) if m.id == "whisper-tiny"
+        ));
+        assert!(matches!(
+            catalog.resolve("my-custom"),
+            Ok(ResolvedModel::Custom(p)) if p.ends_with("my-custom.gguf")
+        ));
+        assert!(matches!(
+            catalog.resolve("no-such-model"),
+            Err(AsrError::ModelNotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn exists_covers_catalog_and_custom_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("my-custom.gguf"), b"data").unwrap();
+        let catalog = make_catalog(tmp.path().to_path_buf());
+
+        assert!(catalog.exists("whisper-tiny")); // catalog entry, not downloaded
+        assert!(catalog.exists("my-custom")); // custom GGUF on disk
+        assert!(!catalog.exists("no-such-model"));
     }
 
     #[tokio::test]

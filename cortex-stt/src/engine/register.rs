@@ -12,6 +12,44 @@ use crate::engine::manager::EngineManager;
 use crate::engine::traits::BackendOverride;
 use crate::model::catalog::downloaded_quant;
 use crate::model::catalog_data::{catalog_models, find_by_filename};
+use crate::settings::Settings;
+
+/// Sync engine-relevant settings to the runtime.
+///
+/// Config knobs take effect on the next acquire / idle-check cycle.
+/// Backend overrides bake into factories at registration time, so a
+/// change re-registers and unloads the affected models — it takes
+/// effect on the next acquire instead of the next restart.
+pub async fn apply_engine_settings(
+    engine_manager: &EngineManager,
+    model_dir: &Path,
+    old: &Settings,
+    new: &Settings,
+) {
+    // Same projection the startup path uses (Settings::engine_idle_timeout
+    // owns the "0 or null means keep forever" rule).
+    let idle_timeout = new.engine_idle_timeout();
+    engine_manager
+        .update_config(|cfg| {
+            cfg.max_loaded_models = new.max_loaded_models;
+            cfg.pool_size = new.pool_size;
+            cfg.idle_timeout = idle_timeout;
+        })
+        .await;
+
+    if new.backend_overrides != old.backend_overrides {
+        register_downloaded_models(engine_manager, model_dir, &new.backend_overrides).await;
+        let changed: std::collections::HashSet<&String> = new
+            .backend_overrides
+            .keys()
+            .chain(old.backend_overrides.keys())
+            .filter(|k| new.backend_overrides.get(*k) != old.backend_overrides.get(*k))
+            .collect();
+        for model_id in changed {
+            engine_manager.unload(model_id).await;
+        }
+    }
+}
 
 /// Register engine factories for all downloaded models.
 ///
@@ -141,38 +179,72 @@ fn dir_contains_onnx(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::manager::EngineManagerConfig;
+    use crate::engine::testing::FakeEngine;
+    use crate::engine::traits::EngineBackend;
 
-    #[test]
-    fn cleanup_removes_legacy_keeps_gguf_and_unrelated_dirs() {
+    /// A backend_overrides change unloads exactly the changed models;
+    /// an unrelated settings change unloads nothing.
+    #[tokio::test]
+    async fn apply_engine_settings_unloads_only_changed_overrides() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("breeze-asr-q5_k.bin"), b"old").unwrap();
-        std::fs::write(tmp.path().join("whisper-tiny.bin.part"), b"old").unwrap();
-        std::fs::create_dir(tmp.path().join("sense-voice-int8")).unwrap();
-        std::fs::write(
-            tmp.path().join("sense-voice-int8").join("model.onnx"),
-            b"old",
-        )
-        .unwrap();
-        std::fs::write(tmp.path().join("whisper-tiny-Q8_0.gguf"), b"new").unwrap();
-        // An unrelated user directory (no .onnx inside) must survive.
-        std::fs::create_dir(tmp.path().join("my-backups")).unwrap();
-        std::fs::write(tmp.path().join("my-backups").join("notes.txt"), b"keep").unwrap();
+        let manager = EngineManager::new(EngineManagerConfig::default());
+        manager.register("m1", FakeEngine::new().factory()).await;
+        manager.register("m2", FakeEngine::new().factory()).await;
+        drop(manager.acquire("m1").await.unwrap());
+        drop(manager.acquire("m2").await.unwrap());
+        assert!(manager.is_loaded("m1").await && manager.is_loaded("m2").await);
 
-        cleanup_legacy_artifacts(tmp.path());
+        let old = Settings::default();
 
-        let mut remaining: Vec<String> = std::fs::read_dir(tmp.path())
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        remaining.sort();
-        assert_eq!(
-            remaining,
-            vec![
-                "my-backups".to_string(),
-                "whisper-tiny-Q8_0.gguf".to_string()
-            ]
+        // Unrelated knob change: nothing unloads.
+        let mut new = old.clone();
+        new.pool_size = 2;
+        apply_engine_settings(&manager, tmp.path(), &old, &new).await;
+        assert!(manager.is_loaded("m1").await && manager.is_loaded("m2").await);
+
+        // Override change for m1 only: m1 unloads, m2 survives.
+        let mut new = old.clone();
+        new.backend_overrides.insert(
+            "m1".into(),
+            BackendOverride {
+                backend: EngineBackend::Cpu,
+                gpu_device: 0,
+            },
         );
-        assert!(tmp.path().join("my-backups/notes.txt").exists());
+        apply_engine_settings(&manager, tmp.path(), &old, &new).await;
+        assert!(!manager.is_loaded("m1").await);
+        assert!(manager.is_loaded("m2").await);
+    }
+
+    /// idle_timeout_secs = Some(0) must mean "keep loaded forever",
+    /// matching the startup precedence matrix — the projection has a
+    /// single home in Settings::engine_idle_timeout.
+    #[tokio::test]
+    async fn apply_engine_settings_treats_zero_idle_timeout_as_forever() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = EngineManager::new(EngineManagerConfig::default());
+
+        async fn observed_idle_timeout(manager: &EngineManager) -> Option<std::time::Duration> {
+            let mut observed = None;
+            manager
+                .update_config(|cfg| observed = Some(cfg.idle_timeout))
+                .await;
+            observed.unwrap()
+        }
+
+        let old = Settings::default();
+        let mut new = old.clone();
+        new.idle_timeout_secs = Some(0);
+        apply_engine_settings(&manager, tmp.path(), &old, &new).await;
+        assert_eq!(observed_idle_timeout(&manager).await, None);
+
+        let mut new = old.clone();
+        new.idle_timeout_secs = Some(90);
+        apply_engine_settings(&manager, tmp.path(), &old, &new).await;
+        assert_eq!(
+            observed_idle_timeout(&manager).await,
+            Some(std::time::Duration::from_secs(90))
+        );
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use cortex_stt::db::database::Database;
 use cortex_stt::history::{CreateRecord, History, ListRecordsFilter, TranscriptionSource};
-use cortex_stt::retention::{RetentionPolicy, select_to_delete};
+use cortex_stt::retention::RetentionPolicy;
 
 async fn setup() -> (Arc<History>, tempfile::TempDir) {
     let db = Arc::new(Database::open_in_memory().await.unwrap());
@@ -24,7 +24,7 @@ fn sample_record() -> CreateRecord {
         pool_wait_ms: 0,
         cold_load_ms: 0,
         text: "hello world".to_string(),
-        segments_json: "[]".to_string(),
+        segments: Vec::new(),
         has_error: false,
         error_message: None,
         api_key_id: None,
@@ -213,14 +213,13 @@ async fn retention_days_sweeps_old_records_end_to_end() {
         .await
         .unwrap();
 
-    let candidates = history.list_record_candidates().await.unwrap();
-    assert_eq!(candidates.len(), 2);
-
-    let ids = select_to_delete(&candidates, &RetentionPolicy::Days(7));
-    assert_eq!(ids, vec!["old-1".to_string()]);
-
-    let deleted = history.delete_many(&ids).await.unwrap();
-    assert_eq!(deleted, 1);
+    // Drive the single composed sweep entry point. Record retention drops
+    // the 30-day-old row; audio retention is Unlimited so it's a no-op.
+    let outcome = history
+        .run_retention_sweep(&RetentionPolicy::Days(7), &RetentionPolicy::Unlimited)
+        .await;
+    assert_eq!(outcome.deleted_records, 1);
+    assert_eq!(outcome.dropped_audios, 0);
 
     let remaining = history.list(&ListRecordsFilter::default()).await.unwrap();
     assert_eq!(remaining.len(), 1);

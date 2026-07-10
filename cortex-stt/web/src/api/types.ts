@@ -1,14 +1,13 @@
 // --- System ---
 
 export interface HealthResponse {
-	status: "starting" | "ok" | "degraded";
+	status: "starting" | "ok";
 	version: string;
 	loaded_models: number;
 }
 
 export interface GpuEngines {
 	whisper: boolean;
-	onnx: boolean;
 }
 
 export interface GpuInfo {
@@ -138,7 +137,7 @@ export interface EngineStatus {
 
 // --- History ---
 
-export type TranscriptionSource = "http_api";
+export type TranscriptionSource = "http_api" | "ws_api";
 
 export interface TranscriptionRecord {
 	id: string;
@@ -152,7 +151,7 @@ export interface TranscriptionRecord {
 	pool_wait_ms: number;
 	cold_load_ms: number;
 	text: string;
-	segments_json: string | null;
+	segments: TranscriptionSegment[];
 	audio_path: string | null;
 	has_error: boolean;
 	error_message: string | null;
@@ -216,7 +215,8 @@ export interface RetentionPolicy {
 }
 
 export interface AppSettings {
-	default_model: string;
+	/** Explicit default-model choice; null = server falls back to its configured default. Written only via PUT /api/engine/default. */
+	default_model: string | null;
 	pool_size: number;
 	max_loaded_models: number;
 	idle_timeout_secs: number | null;

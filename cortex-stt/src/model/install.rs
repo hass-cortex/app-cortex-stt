@@ -21,9 +21,8 @@ use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::engine::register::register_downloaded_models;
 use crate::error::AsrError;
-use crate::ha_event::notify_models_changed;
-use crate::model::catalog::ModelCatalog;
-use crate::model::catalog_data::find_model;
+use crate::model::catalog::{ModelCatalog, ResolvedModel, stale_quant_files};
+use crate::supervisor::notify_models_changed;
 
 /// Owner of the Install / Uninstall operations. Wired into
 /// [`DownloadManager`](crate::model::download_manager::DownloadManager)
@@ -99,18 +98,11 @@ impl ModelInstaller {
     /// successful download — a failed download must never destroy a
     /// working model.
     async fn switch_quant(&self, model_id: &str, new_filename: &str) {
-        let Some(model) = find_model(model_id) else {
-            return; // Custom model: single file, nothing to switch.
+        let Ok(ResolvedModel::Catalog(model)) = self.catalog.resolve(model_id) else {
+            return; // Custom model: single file, no quants, nothing to switch.
         };
         let mut removed_old = false;
-        for other in &model.quants {
-            if other.filename == new_filename {
-                continue;
-            }
-            let old = self.model_dir.join(&other.filename);
-            if !old.is_file() {
-                continue;
-            }
+        for old in stale_quant_files(&self.model_dir, model, new_filename) {
             match tokio::fs::remove_file(&old).await {
                 Ok(()) => {
                     removed_old = true;

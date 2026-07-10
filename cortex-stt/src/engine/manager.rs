@@ -129,6 +129,15 @@ impl EngineManager {
     /// LRU model if at capacity). Returns a [`PoolGuard`] providing
     /// exclusive access to one engine instance.
     pub async fn acquire(&self, model_id: &str) -> Result<PoolGuard, AsrError> {
+        self.acquire_traced(model_id).await.map(|(guard, _)| guard)
+    }
+
+    /// [`acquire`](Self::acquire), also reporting whether this call
+    /// performed the cold load (weights + warmup) rather than hitting an
+    /// already-loaded pool. The manager knows the real load boundary, so
+    /// callers attributing acquire latency (pool wait vs cold load) don't
+    /// have to guess from wall-clock heuristics.
+    pub async fn acquire_traced(&self, model_id: &str) -> Result<(PoolGuard, bool), AsrError> {
         let acquire_timeout = self.config.read().await.acquire_timeout;
 
         // Fast path: model already loaded.
@@ -138,12 +147,13 @@ impl EngineManager {
                 loaded.last_used = Instant::now();
                 let pool = loaded.pool.clone();
                 drop(pools);
-                return pool.acquire(acquire_timeout).await;
+                return Ok((pool.acquire(acquire_timeout).await?, false));
             }
         }
 
-        // Slow path: need to load the model.
-        self.load_model(model_id).await?;
+        // Slow path: need to load the model (unless a concurrent loader
+        // beat us to it — then this was a wait, not a cold load).
+        let cold_load = self.load_model(model_id).await?;
 
         let mut pools = self.pools.write().await;
         let loaded = pools
@@ -155,15 +165,17 @@ impl EngineManager {
         let pool = loaded.pool.clone();
         drop(pools);
 
-        pool.acquire(acquire_timeout).await
+        Ok((pool.acquire(acquire_timeout).await?, cold_load))
     }
 
     /// Load a model pool, evicting the LRU model if at capacity.
+    /// Returns `true` if this call actually built the pool, `false` if a
+    /// concurrent loader already had.
     ///
     /// Serializes concurrent loads of the *same* model via a per-model
     /// async mutex — two requests racing on `model_id` will not both
     /// build a pool. Different model_ids still load in parallel.
-    async fn load_model(&self, model_id: &str) -> Result<(), AsrError> {
+    async fn load_model(&self, model_id: &str) -> Result<bool, AsrError> {
         // Serialize against concurrent loaders of this same model.
         let load_lock = self.load_lock_for(model_id).await;
         let _guard = load_lock.lock().await;
@@ -173,7 +185,7 @@ impl EngineManager {
         {
             let pools = self.pools.read().await;
             if pools.contains_key(model_id) {
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -256,7 +268,7 @@ impl EngineManager {
             },
         );
 
-        Ok(())
+        Ok(true)
     }
 
     /// Unload a specific model, freeing its pool resources and load lock.

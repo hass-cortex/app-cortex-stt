@@ -1,3 +1,4 @@
+import { ingressBasePath } from "@/lib/ingress";
 import type { ApiErrorBody } from "./types";
 
 const API_KEY_STORAGE_KEY = "cortex-stt-api-key";
@@ -35,7 +36,7 @@ export function setApiKey(key: string | null): void {
 
 /** Determine the base URL. Uses ingress path when served via HA ingress. */
 function getBaseUrl(): string {
-	return (window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__ || "";
+	return ingressBasePath();
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {

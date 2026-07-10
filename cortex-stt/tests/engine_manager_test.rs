@@ -2,49 +2,23 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::*;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::engine::traits::TranscribeOptions;
 use cortex_stt::error::AsrError;
 
-struct MockEngine;
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "mock".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "hello".into(),
-            ..Default::default()
-        })
-    }
-}
-
-fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
-    Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+fn mock_factory() -> SharedEngineFactory {
+    FakeEngine::new().named("mock").with_text("hello").factory()
 }
 
 /// Factory that counts how many engine instances have been created.
-fn counting_factory(
-    counter: Arc<AtomicUsize>,
-) -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
+fn counting_factory(counter: Arc<AtomicUsize>) -> SharedEngineFactory {
     Arc::new(move || {
         counter.fetch_add(1, Ordering::SeqCst);
         // Small sleep so concurrent loaders have a chance to overlap if
         // the load-coordination lock is broken.
         std::thread::sleep(Duration::from_millis(20));
-        Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>)
+        FakeEngine::new().named("mock").with_text("hello").factory()()
     })
 }
 

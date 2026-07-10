@@ -12,22 +12,11 @@ use serde::Deserialize;
 use tokio_stream::Stream;
 
 use crate::error::AsrError;
-use crate::model::catalog_data::find_model;
-use crate::model::download::{DownloadConfig, download_model, launch_next};
-use crate::model::download_manager::{ClaimOutcome, QueuedDownloadRequest};
 use crate::state::AppState;
 
 /// GET /api/models — list all models with status.
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut models = state.catalog.list_models().await;
-
-    // Enrich with engine load status.
-    let loaded = state.engine_manager.loaded_models().await;
-    for model in &mut models {
-        model.is_loaded = loaded.contains(&model.id);
-    }
-
-    axum::Json(models)
+    axum::Json(state.catalog.list_models().await)
 }
 
 /// DELETE /api/models/{model_id} — Uninstall: unload, delete files, notify HA.
@@ -52,69 +41,17 @@ struct DownloadQuery {
 }
 
 /// POST /api/models/{model_id}/download — start or queue a model download.
+/// Slot claiming, path resolution, and the completion tail (Install +
+/// slot release) are all owned by [`crate::model::download_manager`].
 async fn start_download(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
     Query(query): Query<DownloadQuery>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let model = find_model(&model_id).ok_or_else(|| AsrError::ModelNotFound {
-        model_id: model_id.clone(),
-    })?;
-
-    let quant_name = query.quant.as_deref().unwrap_or(&model.default_quant);
-    let quant = model
-        .quant(quant_name)
-        .ok_or_else(|| AsrError::ProtocolError {
-            detail: format!("model {model_id} has no quant {quant_name}"),
-        })?;
-
-    let dest_path = state.catalog.model_dir().join(&quant.filename);
-
-    let request = QueuedDownloadRequest::new(
-        model_id.clone(),
-        quant.url.clone(),
-        dest_path,
-        quant.sha256.clone(),
-    );
-
-    // Atomically claim a slot, queue, or reject a duplicate. The duplicate
-    // check lives inside try_claim_slot (under its lock) so two concurrent
-    // POSTs for the same model can't both start. Install (quant switch +
-    // engine registration + HA notify) is fired by the download task itself
-    // on completion, so queued promotions are covered too.
-    let request = match state.downloads.try_claim_slot(request).await {
-        ClaimOutcome::AlreadyActive => return Err(AsrError::DownloadInProgress { model_id }),
-        ClaimOutcome::Queued => {
-            return Ok((
-                StatusCode::OK,
-                axum::Json(serde_json::json!({ "status": "started", "model_id": model_id })),
-            ));
-        }
-        ClaimOutcome::Claimed(request) => request,
-    };
-
-    if let Err(e) = download_model(
-        &request.url,
-        request.dest_path,
-        &request.sha256,
-        &request.model_id,
-        Arc::clone(&request.cancel_flag),
-        state.downloads.clone(),
-        DownloadConfig::default(),
-    )
-    .await
-    {
-        // Slot was claimed but the task never started; release it
-        // (and launch anything queued) on a detached task so the
-        // cap recovers without blocking the error response.
-        let downloads = state.downloads.clone();
-        let model_id = model_id.clone();
-        tokio::spawn(async move {
-            let next = downloads.finish(&model_id).await;
-            launch_next(&downloads, next);
-        });
-        return Err(e);
-    }
+    state
+        .downloads
+        .start(&model_id, query.quant.as_deref())
+        .await?;
 
     Ok((
         StatusCode::OK,
@@ -131,7 +68,7 @@ async fn download_progress(
     Path(model_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AsrError> {
     // Verify the model exists.
-    if state.catalog.get_model(&model_id).await.is_none() {
+    if !state.catalog.exists(&model_id) {
         return Err(AsrError::ModelNotFound {
             model_id: model_id.clone(),
         });
@@ -146,11 +83,7 @@ async fn download_progress(
 
             match progress {
                 Some(p) => {
-                    let is_terminal = matches!(
-                        p.status,
-                        crate::model::types::DownloadPhase::Completed
-                        | crate::model::types::DownloadPhase::Failed
-                    );
+                    let is_terminal = p.status.is_terminal();
                     let data = serde_json::to_string(&p).unwrap_or_default();
                     yield Ok(Event::default().data(data));
                     if is_terminal {
@@ -185,9 +118,7 @@ async fn cancel_download_handler(
     State(state): State<Arc<AppState>>,
     Path(model_id): Path<String>,
 ) -> Result<impl IntoResponse, AsrError> {
-    // cancel() owns the slot release; it just hands back the next queued
-    // download (if cancelling freed a slot and one was waiting) to launch.
-    launch_next(&state.downloads, state.downloads.cancel(&model_id).await?);
+    state.downloads.cancel_download(&model_id).await?;
 
     Ok(axum::Json(serde_json::json!({
         "status": "cancelled",

@@ -79,6 +79,23 @@ pub enum AsrError {
     #[error("job failed: {detail}")]
     JobFailed { detail: String },
 
+    #[error("not running under Home Assistant Supervisor (SUPERVISOR_TOKEN not set)")]
+    NotInSupervisor,
+
+    #[error(
+        "no system-managed API key registered — set the discovery_api_key addon option and restart"
+    )]
+    NoSystemApiKey,
+
+    #[error("could not determine container hostname: {detail}")]
+    HostnameLookup { detail: String },
+
+    #[error("Supervisor rejected discovery: HTTP {status} — {body}")]
+    SupervisorRejected { status: u16, body: String },
+
+    #[error("Supervisor request failed: {detail}")]
+    SupervisorRequestFailed { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -117,8 +134,16 @@ impl AsrError {
             Self::JobCancelled { .. } => StatusCode::GONE,
             // 429
             Self::PoolAcquireTimeout { .. } => StatusCode::TOO_MANY_REQUESTS,
+            // 412
+            Self::NoSystemApiKey => StatusCode::PRECONDITION_FAILED,
             // 503
-            Self::ServiceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::ServiceUnavailable { .. } | Self::NotInSupervisor => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            // Supervisor's own status, propagated (502 if unrepresentable).
+            Self::SupervisorRejected { status, .. } => {
+                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
+            }
             // 500 — everything else.
             Self::InferenceFailed { .. }
             | Self::EnginePanic { .. }
@@ -126,6 +151,8 @@ impl AsrError {
             | Self::DatabaseError { .. }
             | Self::DownloadFailed { .. }
             | Self::JobFailed { .. }
+            | Self::HostnameLookup { .. }
+            | Self::SupervisorRequestFailed { .. }
             | Self::Io(_)
             | Self::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -161,6 +188,13 @@ impl AsrError {
             Self::JobNotComplete { .. } => "JOB_NOT_COMPLETE",
             Self::JobCancelled { .. } => "JOB_CANCELLED",
             Self::JobFailed { .. } => "JOB_FAILED",
+            // Supervisor codes predate the AsrError merge — keep the wire
+            // strings the old DiscoveryError emitted.
+            Self::NotInSupervisor => "NOT_IN_SUPERVISOR",
+            Self::NoSystemApiKey => "NO_API_KEY",
+            Self::HostnameLookup { .. } => "HOSTNAME_LOOKUP_FAILED",
+            Self::SupervisorRejected { .. } => "SUPERVISOR_REJECTED",
+            Self::SupervisorRequestFailed { .. } => "HTTP_ERROR",
             Self::Io(_) => "IO_ERROR",
             Self::Json(_) => "JSON_ERROR",
         }

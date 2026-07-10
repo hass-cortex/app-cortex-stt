@@ -9,182 +9,51 @@ use std::time::Duration;
 
 use cortex_stt::api::settings::Settings;
 use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::{
-    EngineCapabilities, SpeechEngine, StreamSnapshot, TranscribeOptions, TranscriptionResult,
-    TranscriptionSegment,
-};
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::engine::traits::TranscribeOptions;
 use cortex_stt::error::AsrError;
 use cortex_stt::history::{History, ListRecordsFilter, TranscriptionSource};
 use cortex_stt::transcriber::{StreamMeta, TranscribeRequest, Transcriber};
 
-type Factory = Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync>;
+type Factory = SharedEngineFactory;
 
 // ---------------------------------------------------------------------------
-// Mocks
+// Engine fakes (shared FakeEngine, configured per scenario)
 // ---------------------------------------------------------------------------
 
-/// Buffered engine (no streaming) that returns "hello world" for any input.
-struct EchoEngine;
-
-impl SpeechEngine for EchoEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "echo".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        let duration = samples.len() as f32 / 16_000.0;
-        Ok(TranscriptionResult {
-            text: "hello world".into(),
-            segments: vec![TranscriptionSegment {
-                start: 0.0,
-                end: duration,
-                text: "hello world".into(),
-            }],
-            ..Default::default()
-        })
-    }
-}
-
+/// Buffered engine (no streaming) returning "hello world" + one segment.
 fn echo_factory() -> Factory {
-    Arc::new(|| Ok(Box::new(EchoEngine) as Box<dyn SpeechEngine>))
+    FakeEngine::new()
+        .named("echo")
+        .with_text("hello world")
+        .with_segment()
+        .factory()
 }
 
-/// Always panics inside `transcribe`. Used to verify panic propagation
-/// surfaces as [`AsrError::EnginePanic`] without taking down the pool.
-struct PanickingEngine;
-
-impl SpeechEngine for PanickingEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "panic".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        panic!("mock engine panicked on purpose");
-    }
-}
-
+/// Engine that panics mid-inference (worker recovery path).
 fn panicking_factory() -> Factory {
-    Arc::new(|| Ok(Box::new(PanickingEngine) as Box<dyn SpeechEngine>))
+    FakeEngine::new().named("panic").panicking().factory()
 }
 
 /// Buffered engine with a hard 1 s input ceiling — drives the
 /// `INPUT_TOO_LONG` policy.
-struct LimitedEngine;
-
-impl SpeechEngine for LimitedEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "limited".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 1000,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "ok".into(),
-            ..Default::default()
-        })
-    }
-}
-
 fn limited_factory() -> Factory {
-    Arc::new(|| Ok(Box::new(LimitedEngine) as Box<dyn SpeechEngine>))
+    FakeEngine::new()
+        .named("limited")
+        .with_text("ok")
+        .with_limit_ms(1000)
+        .factory()
 }
 
-/// Engine that supports real streaming: each feed commits one more "word"
-/// and bumps the revision; finalize returns the accumulated text.
-struct StreamingEngine {
-    revision: i32,
-    words: usize,
-}
-
-impl SpeechEngine for StreamingEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "streaming".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: true,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "batch".into(),
-            ..Default::default()
-        })
-    }
-
-    fn stream_begin(&mut self, _options: &TranscribeOptions) -> Result<(), AsrError> {
-        self.revision = 0;
-        self.words = 0;
-        Ok(())
-    }
-
-    fn stream_feed(&mut self, _samples: &[f32]) -> Result<StreamSnapshot, AsrError> {
-        self.revision += 1;
-        self.words += 1;
-        let committed = accumulated(self.words);
-        Ok(StreamSnapshot {
-            display: committed.clone(),
-            committed,
-            tentative: String::new(),
-            revision: self.revision,
-        })
-    }
-
-    fn stream_finalize(&mut self) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: accumulated(self.words),
-            ..Default::default()
-        })
-    }
-}
-
-fn accumulated(words: usize) -> String {
-    vec!["word"; words].join(" ")
-}
-
+/// Engine with real streaming: each feed commits one more "word";
+/// finalize returns the accumulated text.
 fn streaming_factory() -> Factory {
-    Arc::new(|| {
-        Ok(Box::new(StreamingEngine {
-            revision: 0,
-            words: 0,
-        }) as Box<dyn SpeechEngine>)
-    })
+    FakeEngine::new()
+        .named("streaming")
+        .with_text("batch")
+        .streaming()
+        .factory()
 }
 
 // ---------------------------------------------------------------------------

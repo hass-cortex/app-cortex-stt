@@ -15,12 +15,17 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 
+use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
+use cortex_stt::history::{History, TranscriptionSource};
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{catalog_models, find_model};
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
-use cortex_stt::model::download_manager::DownloadManager;
+use cortex_stt::model::download_manager::{DownloadManager, QueuedDownloadRequest};
+use cortex_stt::model::progress::ProgressBoard;
 use cortex_stt::model::types::ModelStatus;
+use cortex_stt::settings::Settings;
+use cortex_stt::transcriber::{StreamMeta, TranscribeRequest, Transcriber};
 
 #[derive(Parser)]
 #[command(name = "asr-cli", about = "Test tool for cortex-stt models")]
@@ -103,8 +108,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.model_dir)?;
 
-    let downloads = DownloadManager::new(cli.model_dir.clone());
-    let catalog = ModelCatalog::new(cli.model_dir.clone(), downloads.clone());
+    // No installer: the CLI drives downloads directly and has no engine
+    // registration or HA notify to run on completion.
+    let progress = ProgressBoard::new();
+    let downloads = DownloadManager::new(cli.model_dir.clone(), progress.clone(), None);
+    // The CLI never keeps models loaded across commands; a default manager
+    // satisfies the catalog's load-state source (is_loaded stays false).
+    let engines = EngineManager::new(EngineManagerConfig::default());
+    let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines);
 
     match cli.command {
         Command::List => cmd_list(&catalog).await,
@@ -227,18 +238,14 @@ async fn cmd_download(
         quant_file.url
     );
 
-    // One-shot CLI: never cancels, so a fresh flag that stays false.
-    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let handle = download_model(
-        &quant_file.url,
+    // One-shot CLI: the request's fresh cancel flag stays false.
+    let request = QueuedDownloadRequest::new(
+        model_id.to_string(),
+        quant_file.url.clone(),
         dest_path.clone(),
-        &quant_file.sha256,
-        model_id,
-        cancel_flag,
-        downloads.clone(),
-        DownloadConfig::default(),
-    )
-    .await?;
+        quant_file.sha256.clone(),
+    );
+    let handle = download_model(request, downloads.clone(), DownloadConfig::default()).await?;
     let mut rx = handle.progress_rx;
 
     // Poll progress
@@ -322,6 +329,42 @@ async fn setup_engine(
     Ok(engine_manager)
 }
 
+/// One-shot [`Transcriber`] over an in-memory DB — the CLI drives the
+/// SAME transcription pipeline as the server (acquire → infer → history);
+/// history rows are discarded with the process. Audio persistence is off.
+async fn setup_transcriber(
+    model_id: &str,
+    catalog: &ModelCatalog,
+) -> Result<Arc<Transcriber>, Box<dyn std::error::Error>> {
+    let engine_manager = setup_engine(model_id, catalog).await?;
+    let db = Arc::new(Database::open_in_memory().await?);
+    let settings = Settings {
+        save_audio: false,
+        ..Default::default()
+    };
+    db.save_settings(&settings).await?;
+    let history = History::new(db.clone(), std::env::temp_dir().join("asr-cli-audio")).await?;
+    Ok(Transcriber::new(engine_manager, history, db))
+}
+
+/// Assemble a pipeline request from decoded samples.
+fn cli_request(model_id: &str, samples: Vec<f32>, language: Option<&str>) -> TranscribeRequest {
+    let duration_ms =
+        samples.len() as u64 * 1000 / cortex_stt::audio::canonical::SAMPLE_RATE as u64;
+    TranscribeRequest {
+        model: model_id.to_string(),
+        samples: samples.into(),
+        duration_ms,
+        options: cortex_stt::engine::traits::TranscribeOptions {
+            language: language.map(String::from),
+            ..Default::default()
+        },
+        language: language.map(String::from),
+        source: TranscriptionSource::HttpApi,
+        api_key_id: None,
+    }
+}
+
 async fn cmd_transcribe(
     model_id: &str,
     wav_file: &Path,
@@ -337,32 +380,22 @@ async fn cmd_transcribe(
     );
 
     println!("Loading model '{model_id}'...");
-    let load_start = Instant::now();
-    let engine_manager = setup_engine(model_id, catalog).await?;
-
-    let options = cortex_stt::engine::traits::TranscribeOptions {
-        language: language.map(String::from),
-        ..Default::default()
-    };
-
-    let mut guard = engine_manager.acquire(model_id).await?;
-    let load_ms = load_start.elapsed().as_millis();
-
-    let infer_start = Instant::now();
-    let result = guard.transcribe(&samples, &options)?;
-    let infer_ms = infer_start.elapsed().as_millis();
-    drop(guard);
+    let transcriber = setup_transcriber(model_id, catalog).await?;
+    let result = transcriber
+        .transcribe(cli_request(model_id, samples, language))
+        .await?;
 
     // Output results
     println!("\n┌─────────────────────────────────────────────");
     println!("│ Model:      {model_id}");
     println!("│ Language:   {}", language.unwrap_or("auto"));
     println!("│ Audio:      {:.2}s", duration_secs);
-    println!("│ Load time:  {load_ms}ms");
-    println!("│ Inference:  {infer_ms}ms");
+    println!("│ Load time:  {}ms", result.model_load_ms);
+    println!("│ Inference:  {}ms", result.inference_ms);
+    println!("│ Device:     {}", result.device);
     println!(
         "│ RTF:        {:.2}x",
-        infer_ms as f32 / (duration_secs * 1000.0)
+        result.inference_ms as f32 / (duration_secs * 1000.0)
     );
     println!("├─────────────────────────────────────────────");
     println!("│ Text: {}", result.text);
@@ -393,41 +426,44 @@ async fn cmd_stream(
     let chunk_samples =
         (cortex_stt::audio::canonical::SAMPLE_RATE as usize) * chunk_ms.max(10) / 1000;
 
-    let engine_manager = setup_engine(model_id, catalog).await?;
-    let mut guard = engine_manager.acquire(model_id).await?;
-
-    let caps = guard.capabilities()?;
-    if !caps.supports_streaming {
-        return Err(format!(
-            "Model {model_id} does not support streaming (use `asr-cli transcribe`)"
-        )
-        .into());
-    }
-
+    let transcriber = setup_transcriber(model_id, catalog).await?;
     let options = cortex_stt::engine::traits::TranscribeOptions {
         language: language.map(String::from),
         ..Default::default()
     };
+    let meta = StreamMeta {
+        model: model_id.to_string(),
+        language: language.map(String::from),
+        source: TranscriptionSource::WsApi,
+        api_key_id: None,
+    };
+
+    // Same uniform contract as the WS endpoint (ADR 0001): models
+    // without streaming buffer server-side and emit only the final.
+    let mut session = transcriber.open_stream(meta, options).await?;
+    if !session.is_streaming() {
+        println!("(model has no streaming support — buffered fallback, final only)");
+    }
 
     println!("Streaming {duration_secs:.2}s of audio in {chunk_ms}ms chunks…\n");
     let start = Instant::now();
-    guard.stream_begin(&options)?;
 
     let mut last_revision = -1;
     for chunk in samples.chunks(chunk_samples) {
-        let snapshot = guard.stream_feed(chunk)?;
-        if snapshot.revision != last_revision {
-            last_revision = snapshot.revision;
-            println!(
-                "[{:>6.2}s r{:>3}] {}",
-                start.elapsed().as_secs_f32(),
-                snapshot.revision,
-                snapshot.display
-            );
+        if let Some(snapshot) = session.feed(chunk.to_vec()).await? {
+            if snapshot.revision != last_revision {
+                last_revision = snapshot.revision;
+                println!(
+                    "[{:>6.2}s r{:>3}] {}",
+                    start.elapsed().as_secs_f32(),
+                    snapshot.revision,
+                    snapshot.display
+                );
+            }
         }
     }
 
-    let result = guard.stream_finalize()?;
+    let result = session.finalize().await?;
     println!("\n┌─────────────────────────────────────────────");
     println!(
         "│ Final ({:.2}s wall): {}",
@@ -604,9 +640,10 @@ async fn cmd_verify(
             continue;
         }
 
-        // Stage 3 + 4: Engine loads and transcribes silence
-        let engine_manager = match setup_engine(&info.id, catalog).await {
-            Ok(m) => m,
+        // Stage 3 + 4: Engine loads and transcribes silence — through the
+        // same pipeline the server uses.
+        let transcriber = match setup_transcriber(&info.id, catalog).await {
+            Ok(t) => t,
             Err(e) => {
                 println!("✗ register failed: {e}");
                 continue;
@@ -614,16 +651,15 @@ async fn cmd_verify(
         };
 
         let silence = vec![0.0f32; cortex_stt::audio::canonical::SAMPLE_RATE as usize];
-        let opts = cortex_stt::engine::traits::TranscribeOptions::default();
-        match engine_manager.acquire(&info.id).await {
-            Ok(mut g) => match g.transcribe(&silence, &opts) {
-                Ok(r) => {
-                    println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
-                    pass_count += 1;
-                }
-                Err(e) => println!("✗ transcribe failed: {e}"),
-            },
-            Err(e) => println!("✗ load failed: {e}"),
+        match transcriber
+            .transcribe(cli_request(&info.id, silence, None))
+            .await
+        {
+            Ok(r) => {
+                println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
+                pass_count += 1;
+            }
+            Err(e) => println!("✗ verify failed: {e}"),
         }
     }
 

@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// A rule for selecting which candidates to drop.
 ///
-/// Serialized as a tagged enum: `{"type": "days", "value": 7}` etc.
-/// This is the wire-stable shape consumed by the settings API.
+/// Serialized as a tagged enum with PascalCase variant names:
+/// `{"type": "Days", "value": 7}` etc. This is the wire-stable shape
+/// consumed by the settings API and mirrored in `web/src/api/types.ts`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "value")]
 pub enum RetentionPolicy {

@@ -1,3 +1,5 @@
+mod test_helpers;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,157 +14,50 @@ use tower::ServiceExt;
 
 use cortex_stt::api::stream::stream_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::*;
-use cortex_stt::error::AsrError;
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::model::install::ModelInstaller;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::state::AppState;
+use test_helpers::test_state_with;
 
-type Factory = Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync>;
+type Factory = SharedEngineFactory;
 
 // ---------------------------------------------------------------------------
-// Mock engines
+// Engine fakes (shared FakeEngine, configured per scenario)
 // ---------------------------------------------------------------------------
 
-/// Buffered engine (no streaming) returning "hello world" for any input.
-struct MockEngine;
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "mock".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        let duration = samples.len() as f32 / 16_000.0;
-        Ok(TranscriptionResult {
-            text: "hello world".into(),
-            segments: vec![TranscriptionSegment {
-                start: 0.0,
-                end: duration,
-                text: "hello world".into(),
-            }],
-            ..Default::default()
-        })
-    }
-}
-
+/// Buffered engine (no streaming) returning "hello world" + one segment.
 fn mock_factory() -> Factory {
-    Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+    FakeEngine::new()
+        .named("mock")
+        .with_text("hello world")
+        .with_segment()
+        .factory()
 }
 
-/// Engine that supports streaming: each feed commits one more "word".
-struct StreamingEngine {
-    revision: i32,
-    words: usize,
-}
-
-impl SpeechEngine for StreamingEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "streaming".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: true,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "batch".into(),
-            ..Default::default()
-        })
-    }
-
-    fn stream_begin(&mut self, _options: &TranscribeOptions) -> Result<(), AsrError> {
-        self.revision = 0;
-        self.words = 0;
-        Ok(())
-    }
-
-    fn stream_feed(&mut self, _samples: &[f32]) -> Result<StreamSnapshot, AsrError> {
-        self.revision += 1;
-        self.words += 1;
-        let committed = vec!["word"; self.words].join(" ");
-        Ok(StreamSnapshot {
-            display: committed.clone(),
-            committed,
-            tentative: String::new(),
-            revision: self.revision,
-        })
-    }
-
-    fn stream_finalize(&mut self) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: vec!["word"; self.words].join(" "),
-            ..Default::default()
-        })
-    }
-}
-
+/// Engine with real streaming: each feed commits one more "word";
+/// finalize returns the accumulated text.
 fn streaming_factory() -> Factory {
-    Arc::new(|| {
-        Ok(Box::new(StreamingEngine {
-            revision: 0,
-            words: 0,
-        }) as Box<dyn SpeechEngine>)
-    })
+    FakeEngine::new()
+        .named("streaming")
+        .with_text("batch")
+        .streaming()
+        .factory()
 }
 
 /// Buffered engine with a hard 1 s input ceiling.
-struct LimitedEngine;
-
-impl SpeechEngine for LimitedEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "limited".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 1000,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "ok".into(),
-            ..Default::default()
-        })
-    }
-}
-
 fn limited_factory() -> Factory {
-    Arc::new(|| Ok(Box::new(LimitedEngine) as Box<dyn SpeechEngine>))
+    FakeEngine::new()
+        .named("limited")
+        .with_text("ok")
+        .with_limit_ms(1000)
+        .factory()
 }
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
-async fn create_test_state() -> Arc<AppState> {
+async fn create_test_state() -> (Arc<AppState>, tempfile::TempDir) {
     let config = EngineManagerConfig {
         max_loaded_models: 4,
         pool_size: 1,
@@ -182,36 +77,8 @@ async fn create_test_state() -> Arc<AppState> {
         .await;
 
     let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-    let installer = ModelInstaller::new(
-        downloads.model_dir().to_path_buf(),
-        engine_manager.clone(),
-        catalog.clone(),
-        db.clone(),
-    );
-    downloads.set_installer(installer.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-        installer,
-    })
+    let state = test_state_with(engine_manager, tmp.path()).await;
+    (state, tmp)
 }
 
 fn test_app(state: Arc<AppState>) -> Router {
@@ -278,7 +145,7 @@ fn build_wav(sample_rate: u32, channels: u16, num_samples: usize) -> Vec<u8> {
 
 #[tokio::test]
 async fn test_sync_transcribe_wav() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 16_000); // 1 second of 16 kHz mono silence
@@ -313,7 +180,7 @@ async fn test_sync_transcribe_wav() {
 
 #[tokio::test]
 async fn test_sync_transcribe_resamples_48khz() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     // 48 kHz mono, 48000 samples = 1 second — should be resampled to 16 kHz.
@@ -346,7 +213,7 @@ async fn test_sync_transcribe_resamples_48khz() {
 
 #[tokio::test]
 async fn test_sync_transcribe_model_not_found() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 1_600); // 100ms
@@ -372,7 +239,7 @@ async fn test_sync_transcribe_model_not_found() {
 
 #[tokio::test]
 async fn test_sync_transcribe_raw_pcm() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     // 16 kHz mono, 16-bit PCM: 16000 samples * 2 bytes = 32000 bytes for 1 second.
@@ -402,7 +269,7 @@ async fn test_sync_transcribe_raw_pcm() {
 
 #[tokio::test]
 async fn test_sync_transcribe_input_too_long() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     // 2 s of 16 kHz mono PCM against the limited model's 1 s ceiling.
@@ -427,7 +294,7 @@ async fn test_sync_transcribe_input_too_long() {
 
 #[tokio::test]
 async fn test_response_has_pool_wait_and_cold_load_fields() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let app = test_app(state);
 
     let wav = build_wav(16_000, 1, 16_000);
@@ -514,7 +381,7 @@ async fn run_ws_protocol(
 
 #[tokio::test]
 async fn test_ws_stream_buffered_fallback_final() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let addr = spawn_ws_server(state).await;
 
     // whisper-small mock does not stream → buffered fallback, no partials.
@@ -539,7 +406,7 @@ async fn test_ws_stream_buffered_fallback_final() {
 
 #[tokio::test]
 async fn test_ws_stream_emits_partials_then_final() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let addr = spawn_ws_server(state).await;
 
     let frames = vec![pcm_frame(8_000), pcm_frame(8_000)];
@@ -574,7 +441,7 @@ async fn test_ws_stream_emits_partials_then_final() {
 
 #[tokio::test]
 async fn test_ws_stream_input_too_long_error() {
-    let state = create_test_state().await;
+    let (state, _tmp) = create_test_state().await;
     let addr = spawn_ws_server(state).await;
 
     // limited-model caps at 1 s; a single 2 s frame must trip the guard on

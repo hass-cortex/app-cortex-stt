@@ -5,7 +5,7 @@
 [![GitHub License](https://img.shields.io/github/license/hass-cortex/app-cortex-stt)](https://github.com/hass-cortex/app-cortex-stt/blob/main/LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hass-cortex/app-cortex-stt)
 
-Home Assistant app providing multi-engine speech-to-text with Whisper, Parakeet, SenseVoice, and more. See [MODELS.md](MODELS.md) for the full list of built-in models.
+Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, SenseVoice, Qwen3-ASR, and more on a single [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (GGUF) runtime. See [MODELS.md](MODELS.md) for the full list of built-in models.
 
 ## Screenshots
 
@@ -22,8 +22,8 @@ Home Assistant app providing multi-engine speech-to-text with Whisper, Parakeet,
 See [cortex-stt/DOCS.md](cortex-stt/DOCS.md) for full install, configuration, discovery, and troubleshooting instructions.
 
 > **Heads-up for Proxmox VE / KVM users.** The pre-built binary's
-> bundled ONNX Runtime requires **AVX + AVX2 + FMA + F16C + BMI2 +
-> SSE 4.2** (Intel Haswell 2013+ / `x86-64-v3`). PVE's default
+> bundled ggml inference kernels require **AVX + AVX2 + FMA + F16C +
+> BMI2 + SSE 4.2** (Intel Haswell 2013+ / `x86-64-v3`). PVE's default
 > `qemu64` / `kvm64` / `x86-64-v2-AES` CPU types mask AVX/AVX2/FMA
 > from the guest — change the HAOS VM's CPU **Type** to `host` (or
 > `x86-64-v3`) and **cold-boot** the VM (reboot is not enough). The
@@ -33,8 +33,8 @@ See [cortex-stt/DOCS.md](cortex-stt/DOCS.md) for full install, configuration, di
 
 ## Acknowledgements
 
-- [transcribe-rs](https://github.com/cjpais/transcribe-rs) — the unified Rust library providing the multi-engine inference layer.
-- [handy](https://github.com/cjpais/handy) — the desktop dictation app whose engine bridges + model catalog this project is built on.
+- [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) — the single GGUF/ggml runtime powering every model family.
+- [handy](https://github.com/cjpais/handy) — the desktop dictation app whose runtime + model catalog this project is built on.
 
 ## License
 

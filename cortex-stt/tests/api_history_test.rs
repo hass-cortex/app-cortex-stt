@@ -1,3 +1,5 @@
+mod test_helpers;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -6,49 +8,9 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use cortex_stt::api::history::history_routes;
-use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::history::{CreateRecord, History, TranscriptionSource};
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::model::install::ModelInstaller;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
-
-async fn create_test_state() -> Arc<AppState> {
-    let engine_manager = EngineManager::new(EngineManagerConfig::default());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let tmp = tempfile::tempdir().unwrap();
-    let downloads = DownloadManager::new(tmp.path().to_path_buf());
-    let catalog = ModelCatalog::new(tmp.path().to_path_buf(), downloads.clone());
-    let history = History::new(db.clone(), tmp.path().join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-    let installer = ModelInstaller::new(
-        downloads.model_dir().to_path_buf(),
-        engine_manager.clone(),
-        catalog.clone(),
-        db.clone(),
-    );
-    downloads.set_installer(installer.clone());
-
-    Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir: tmp.path().to_path_buf(),
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-        installer,
-    })
-}
+use cortex_stt::state::AppState;
+use test_helpers::test_state;
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new().merge(history_routes()).with_state(state)
@@ -69,7 +31,7 @@ async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
                     pool_wait_ms: 0,
                     cold_load_ms: 0,
                     text: format!("test transcription {i}"),
-                    segments_json: "[]".into(),
+                    segments: Vec::new(),
                     has_error: false,
                     error_message: None,
                     api_key_id: None,
@@ -86,7 +48,7 @@ async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
 
 #[tokio::test]
 async fn test_list_history() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     insert_test_records(&state.history, 5).await;
     let app = test_app(state);
 
@@ -112,7 +74,7 @@ async fn test_list_history() {
 
 #[tokio::test]
 async fn test_list_history_default_limit() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     insert_test_records(&state.history, 3).await;
     let app = test_app(state);
 
@@ -138,7 +100,7 @@ async fn test_list_history_default_limit() {
 
 #[tokio::test]
 async fn test_get_single_history_record() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state);
 
@@ -167,7 +129,7 @@ async fn test_get_single_history_record() {
 
 #[tokio::test]
 async fn test_delete_history_record() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let ids = insert_test_records(&state.history, 1).await;
     let app = test_app(state.clone());
 
@@ -191,7 +153,7 @@ async fn test_delete_history_record() {
 
 #[tokio::test]
 async fn test_get_nonexistent_record_returns_404() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
     let app = test_app(state);
 
     let resp = app
@@ -209,7 +171,7 @@ async fn test_get_nonexistent_record_returns_404() {
 
 #[tokio::test]
 async fn test_list_history_with_source_filter() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Insert HTTP API records.
     insert_test_records(&state.history, 3).await;
@@ -239,7 +201,7 @@ async fn test_list_history_with_source_filter() {
 
 #[tokio::test]
 async fn test_list_history_with_has_error_filter() {
-    let state = create_test_state().await;
+    let (state, _tmp) = test_state().await;
 
     // Two successful records.
     insert_test_records(&state.history, 2).await;
@@ -257,7 +219,7 @@ async fn test_list_history_with_has_error_filter() {
                 pool_wait_ms: 0,
                 cold_load_ms: 0,
                 text: String::new(),
-                segments_json: "[]".into(),
+                segments: Vec::new(),
                 has_error: true,
                 error_message: Some("boom".into()),
                 api_key_id: None,

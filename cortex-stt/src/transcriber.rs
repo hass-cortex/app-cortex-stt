@@ -31,11 +31,6 @@ use crate::engine::traits::{StreamSnapshot, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::{CreateRecord, History, TranscriptionSource};
 
-/// Pool acquire shorter than this is treated as queue wait; longer is
-/// treated as a cold load (weights into RAM + warmup). A hot acquire on
-/// an already-loaded pool returns within microseconds.
-const COLD_LOAD_THRESHOLD_MS: u64 = 100;
-
 /// Buffering ceiling for stream sessions against models with no input
 /// limit — a WebSocket left open must not grow the buffer unboundedly.
 const MAX_STREAM_BUFFER_MS: i64 = 30 * 60 * 1000;
@@ -76,6 +71,35 @@ pub struct TranscribeResponse {
     pub cold_load_ms: u64,
     /// Compute backend the engine ran on (e.g. "cpu", "cuda").
     pub device: String,
+}
+
+impl TranscribeResponse {
+    /// The single assembly point for the wire response — sync inference
+    /// and stream finalize both map an engine result through here, so a
+    /// response-shape change touches exactly one place.
+    fn from_result(
+        result: crate::engine::traits::TranscriptionResult,
+        model: String,
+        duration_ms: u64,
+        inference_ms: u64,
+        metrics: AcquireMetrics,
+        device: String,
+    ) -> Self {
+        Self {
+            text: result.text,
+            language: result.language,
+            segments: to_segment_responses(result.segments),
+            words: to_segment_responses(result.words),
+            truncated: result.truncated,
+            model,
+            duration_ms,
+            inference_ms,
+            model_load_ms: metrics.pool_wait_ms + metrics.cold_load_ms,
+            pool_wait_ms: metrics.pool_wait_ms,
+            cold_load_ms: metrics.cold_load_ms,
+            device,
+        }
+    }
 }
 
 /// Inputs for one transcription request. Audio is already decoded to
@@ -132,7 +156,7 @@ impl Transcriber {
             let (guard, metrics) = deadline
                 .enforce(self.acquire_engine(&req.model), &req.model)
                 .await?;
-            enforce_input_limit(&guard, &req.model, req.duration_ms)?;
+            InputLimit::of(&guard)?.check_batch(&req.model, req.duration_ms)?;
             deadline
                 .enforce(
                     run_inference(
@@ -151,8 +175,9 @@ impl Transcriber {
 
         match result {
             Ok(response) => {
-                self.save_to_history(&req, &response, settings.save_audio)
-                    .await;
+                let meta = RecordMeta::from_request(&req);
+                let samples = settings.save_audio.then_some(req.samples.as_ref());
+                self.save_to_history(&meta, samples, &response).await;
                 tracing::info!(
                     model = %req.model,
                     inference_ms = response.inference_ms,
@@ -167,7 +192,7 @@ impl Transcriber {
                 Ok(response)
             }
             Err(e) => {
-                self.on_failure(&req, &e).await;
+                self.on_failure(&RecordMeta::from_request(&req), &e).await;
                 Err(e)
             }
         }
@@ -195,7 +220,8 @@ impl Transcriber {
         {
             Ok(v) => v,
             Err(e) => {
-                self.on_failure(&meta.failure_request(), &e).await;
+                self.on_failure(&RecordMeta::from_stream(&meta, 0), &e)
+                    .await;
                 return Err(e);
             }
         };
@@ -203,7 +229,8 @@ impl Transcriber {
         let caps = match guard.capabilities() {
             Ok(caps) => caps,
             Err(e) => {
-                self.on_failure(&meta.failure_request(), &e).await;
+                self.on_failure(&RecordMeta::from_stream(&meta, 0), &e)
+                    .await;
                 return Err(e);
             }
         };
@@ -213,16 +240,17 @@ impl Transcriber {
             transcriber: Arc::clone(self),
             meta,
             options,
-            guard: Some(guard),
+            state: SessionState::Open(guard),
             engine_streaming: false,
             buffer: Vec::new(),
             save_audio: settings.save_audio,
             timeout_secs: settings.timeout_secs,
-            max_audio_ms: caps.max_audio_ms,
+            limit: InputLimit {
+                max_audio_ms: caps.max_audio_ms,
+            },
             device,
             metrics,
             started: Instant::now(),
-            finished: false,
         };
 
         if caps.supports_streaming {
@@ -244,21 +272,22 @@ impl Transcriber {
     // Internal — shared by both public surfaces.
     // -----------------------------------------------------------------
 
-    /// Acquire a pool slot for `model` and decompose the elapsed time
-    /// into `pool_wait_ms` + `cold_load_ms` via a coarse heuristic.
+    /// Acquire a pool slot for `model` and attribute the elapsed time to
+    /// `pool_wait_ms` or `cold_load_ms` based on whether the manager
+    /// reports that this acquire performed the load.
     async fn acquire_engine(&self, model: &str) -> Result<(PoolGuard, AcquireMetrics), AsrError> {
         let started = Instant::now();
-        let guard = self.engine.acquire(model).await?;
+        let (guard, cold_load) = self.engine.acquire_traced(model).await?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let metrics = if elapsed_ms < COLD_LOAD_THRESHOLD_MS {
-            AcquireMetrics {
-                pool_wait_ms: elapsed_ms,
-                cold_load_ms: 0,
-            }
-        } else {
+        let metrics = if cold_load {
             AcquireMetrics {
                 pool_wait_ms: 0,
                 cold_load_ms: elapsed_ms,
+            }
+        } else {
+            AcquireMetrics {
+                pool_wait_ms: elapsed_ms,
+                cold_load_ms: 0,
             }
         };
         Ok((guard, metrics))
@@ -268,13 +297,22 @@ impl Transcriber {
     /// Best-effort — errors are logged but never propagate; the
     /// response has already been computed and the caller cares more
     /// about returning that than about a logging-layer failure.
+    /// `samples` is `None` when audio persistence is disabled.
     async fn save_to_history(
         &self,
-        req: &TranscribeRequest,
+        meta: &RecordMeta,
+        samples: Option<&[f32]>,
         response: &TranscribeResponse,
-        save_audio: bool,
     ) {
-        let segments_json = serde_json::to_string(&response.segments).unwrap_or_default();
+        let segments = response
+            .segments
+            .iter()
+            .map(|s| crate::history::RecordSegment {
+                start: s.start,
+                end: s.end,
+                text: s.text.clone(),
+            })
+            .collect();
         let record = CreateRecord {
             audio_duration_ms: response.duration_ms as i64,
             inference_ms: response.inference_ms as i64,
@@ -282,12 +320,11 @@ impl Transcriber {
             pool_wait_ms: response.pool_wait_ms as i64,
             cold_load_ms: response.cold_load_ms as i64,
             text: response.text.clone(),
-            segments_json,
+            segments,
             device: response.device.clone(),
-            ..base_record(req)
+            ..base_record(meta)
         };
-        let samples_opt = save_audio.then_some(req.samples.as_ref());
-        if let Err(e) = self.history.create(record, samples_opt).await {
+        if let Err(e) = self.history.create(record, samples).await {
             warn!(error = %e, "Failed to save transcription history");
         }
     }
@@ -297,18 +334,18 @@ impl Transcriber {
     /// timed-out / aborted requests would leave no durable record and the
     /// `/api/metrics` error_count would stay dead (it only ever counted
     /// success rows with has_error=false).
-    async fn on_failure(&self, req: &TranscribeRequest, error: &AsrError) {
+    async fn on_failure(&self, meta: &RecordMeta, error: &AsrError) {
         warn!(
-            model = %req.model,
+            model = %meta.model,
             code = error.code(),
-            duration_ms = req.duration_ms,
+            duration_ms = meta.duration_ms,
             error = %error,
             "transcription failed",
         );
         let record = CreateRecord {
             has_error: true,
             error_message: Some(error.to_string()),
-            ..base_record(req)
+            ..base_record(meta)
         };
         // Never persist audio for a failed request.
         if let Err(e) = self.history.create(record, None).await {
@@ -332,19 +369,52 @@ pub struct StreamMeta {
     pub api_key_id: Option<String>,
 }
 
-impl StreamMeta {
-    /// A zero-audio `TranscribeRequest` used only for failure rows.
-    fn failure_request(&self) -> TranscribeRequest {
-        TranscribeRequest {
-            model: self.model.clone(),
-            samples: Arc::from([] as [f32; 0]),
-            duration_ms: 0,
-            options: TranscribeOptions::default(),
-            language: self.language.clone(),
-            source: self.source,
-            api_key_id: self.api_key_id.clone(),
+/// The identity of one transcription as written to history — the subset
+/// of request data the history writers consume. Failure paths construct
+/// it directly instead of fabricating a full [`TranscribeRequest`] with
+/// dummy samples.
+#[derive(Debug, Clone)]
+struct RecordMeta {
+    model: String,
+    language: Option<String>,
+    source: TranscriptionSource,
+    api_key_id: Option<String>,
+    duration_ms: u64,
+}
+
+impl RecordMeta {
+    fn from_request(req: &TranscribeRequest) -> Self {
+        Self {
+            model: req.model.clone(),
+            language: req.language.clone(),
+            source: req.source,
+            api_key_id: req.api_key_id.clone(),
+            duration_ms: req.duration_ms,
         }
     }
+
+    fn from_stream(meta: &StreamMeta, duration_ms: u64) -> Self {
+        Self {
+            model: meta.model.clone(),
+            language: meta.language.clone(),
+            source: meta.source,
+            api_key_id: meta.api_key_id.clone(),
+            duration_ms,
+        }
+    }
+}
+
+/// Lifecycle of a [`StreamSession`]. One field, two states — replaces
+/// the old `guard: Option<PoolGuard>` + `finished: bool` pair, whose
+/// `None` meant three different things.
+enum SessionState {
+    /// Holding a pool slot; engine calls allowed. (During a blocking
+    /// engine call `run_on_engine` briefly takes the guard out and puts
+    /// it back — `&mut self` guarantees no observer in between.)
+    Open(PoolGuard),
+    /// Terminal: finalized or failed; the slot is released and further
+    /// feed/finalize calls are protocol errors.
+    Closed,
 }
 
 /// One live stream transcription (a **Stream session** in CONTEXT.md
@@ -358,18 +428,17 @@ pub struct StreamSession {
     transcriber: Arc<Transcriber>,
     meta: StreamMeta,
     options: TranscribeOptions,
-    /// `None` only transiently while an engine call runs on the
-    /// blocking pool, or after finish.
-    guard: Option<PoolGuard>,
+    state: SessionState,
     engine_streaming: bool,
     buffer: Vec<f32>,
     save_audio: bool,
     timeout_secs: Option<u64>,
-    max_audio_ms: i64,
+    limit: InputLimit,
+    /// Cached at open: the guard is gone by the time the final response
+    /// is assembled (slot released right after inference).
     device: String,
     metrics: AcquireMetrics,
     started: Instant,
-    finished: bool,
 }
 
 impl StreamSession {
@@ -382,29 +451,26 @@ impl StreamSession {
         (self.buffer.len() as i64) * 1000 / SAMPLE_RATE as i64
     }
 
-    fn effective_limit_ms(&self) -> i64 {
-        if self.max_audio_ms > 0 {
-            self.max_audio_ms
-        } else {
-            MAX_STREAM_BUFFER_MS
+    /// Guard against use after finalize/fail.
+    fn ensure_open(&self) -> Result<(), AsrError> {
+        match self.state {
+            SessionState::Open(_) => Ok(()),
+            SessionState::Closed => Err(AsrError::StreamProtocol {
+                detail: "stream already finished".to_string(),
+            }),
         }
     }
 
     /// Feed a chunk of 16 kHz mono f32 samples. Returns a partial
     /// snapshot when the engine streams, `None` in buffered mode.
     pub async fn feed(&mut self, samples: Vec<f32>) -> Result<Option<StreamSnapshot>, AsrError> {
-        if self.finished {
-            return Err(AsrError::StreamProtocol {
-                detail: "stream already finished".to_string(),
-            });
-        }
+        self.ensure_open()?;
 
         let incoming_ms = (samples.len() as i64) * 1000 / SAMPLE_RATE as i64;
-        if self.buffered_ms() + incoming_ms > self.effective_limit_ms() {
-            let e = AsrError::InputTooLong {
-                model_id: self.meta.model.clone(),
-                max_audio_ms: self.effective_limit_ms(),
-            };
+        if let Err(e) = self
+            .limit
+            .check_stream(&self.meta.model, self.buffered_ms() + incoming_ms)
+        {
             self.fail(&e).await;
             return Err(e);
         }
@@ -430,11 +496,7 @@ impl StreamSession {
     /// Flush and produce the final transcript; writes history and
     /// releases the pool slot.
     pub async fn finalize(mut self) -> Result<TranscribeResponse, AsrError> {
-        if self.finished {
-            return Err(AsrError::StreamProtocol {
-                detail: "stream already finished".to_string(),
-            });
-        }
+        self.ensure_open()?;
         let duration_ms = self.buffered_ms() as u64;
         let deadline = RequestDeadline::from_now(self.timeout_secs);
         let model = self.meta.model.clone();
@@ -455,29 +517,24 @@ impl StreamSession {
         };
         let inference_ms = inference_start.elapsed().as_millis() as u64;
 
-        self.finished = true;
-        let req = self.history_request(duration_ms);
-        // Slot goes back to the pool as soon as inference is done.
-        self.guard = None;
+        let meta = RecordMeta::from_stream(&self.meta, duration_ms);
+        // Close: the slot goes back to the pool as soon as inference is
+        // done (dropping the guard releases it).
+        self.state = SessionState::Closed;
 
         match result {
             Ok(r) => {
-                let response = TranscribeResponse {
-                    text: r.text,
-                    language: r.language,
-                    segments: to_segment_responses(r.segments),
-                    words: to_segment_responses(r.words),
-                    truncated: r.truncated,
-                    model: self.meta.model.clone(),
+                let response = TranscribeResponse::from_result(
+                    r,
+                    self.meta.model.clone(),
                     duration_ms,
                     inference_ms,
-                    model_load_ms: self.metrics.pool_wait_ms + self.metrics.cold_load_ms,
-                    pool_wait_ms: self.metrics.pool_wait_ms,
-                    cold_load_ms: self.metrics.cold_load_ms,
-                    device: self.device.clone(),
-                };
+                    self.metrics,
+                    self.device.clone(),
+                );
+                let samples = std::mem::take(&mut self.buffer);
                 self.transcriber
-                    .save_to_history(&req, &response, self.save_audio)
+                    .save_to_history(&meta, self.save_audio.then_some(&samples), &response)
                     .await;
                 tracing::info!(
                     model = %self.meta.model,
@@ -491,7 +548,7 @@ impl StreamSession {
                 Ok(response)
             }
             Err(e) => {
-                self.transcriber.on_failure(&req, &e).await;
+                self.transcriber.on_failure(&meta, &e).await;
                 Err(e)
             }
         }
@@ -499,36 +556,31 @@ impl StreamSession {
 
     /// Mark failed: persist the failure row and release the slot.
     async fn fail(&mut self, error: &AsrError) {
-        self.finished = true;
-        let req = self.history_request(self.buffered_ms() as u64);
-        self.transcriber.on_failure(&req, error).await;
-        if let Some(mut guard) = self.guard.take() {
+        // Transition BEFORE the first await: if this future is dropped
+        // mid-await, Drop must see Closed, not persist a second row.
+        let prior = std::mem::replace(&mut self.state, SessionState::Closed);
+        let meta = RecordMeta::from_stream(&self.meta, self.buffered_ms() as u64);
+        self.transcriber.on_failure(&meta, error).await;
+        if let SessionState::Open(mut guard) = prior {
             // Leave the engine reusable for the next pool user.
             let _ = tokio::task::spawn_blocking(move || guard.stream_reset()).await;
         }
     }
 
-    fn history_request(&mut self, duration_ms: u64) -> TranscribeRequest {
-        TranscribeRequest {
-            model: self.meta.model.clone(),
-            samples: std::mem::take(&mut self.buffer).into(),
-            duration_ms,
-            options: self.options.clone(),
-            language: self.meta.language.clone(),
-            source: self.meta.source,
-            api_key_id: self.meta.api_key_id.clone(),
-        }
-    }
-
     /// Run a blocking engine call, moving the pool guard through the
-    /// blocking thread pool and back.
+    /// blocking thread pool and back. The state reads Closed for the
+    /// duration of the call; `&mut self` means no one can observe that.
     async fn run_on_engine<R: Send + 'static>(
         &mut self,
         f: impl FnOnce(&mut PoolGuard, &TranscribeOptions) -> Result<R, AsrError> + Send + 'static,
     ) -> Result<R, AsrError> {
-        let mut guard = self.guard.take().ok_or_else(|| AsrError::StreamProtocol {
-            detail: "stream already finished".to_string(),
-        })?;
+        let SessionState::Open(mut guard) =
+            std::mem::replace(&mut self.state, SessionState::Closed)
+        else {
+            return Err(AsrError::StreamProtocol {
+                detail: "stream already finished".to_string(),
+            });
+        };
         let options = self.options.clone();
         let model_id = self.meta.model.clone();
         let (guard, result) = tokio::task::spawn_blocking(move || {
@@ -537,14 +589,14 @@ impl StreamSession {
         })
         .await
         .map_err(|_| AsrError::EnginePanic { model_id })?;
-        self.guard = Some(guard);
+        self.state = SessionState::Open(guard);
         result
     }
 }
 
 impl Drop for StreamSession {
     fn drop(&mut self) {
-        if self.finished {
+        if matches!(self.state, SessionState::Closed) {
             return;
         }
         // Dropped mid-session (e.g. WebSocket client disconnect). Persist
@@ -553,7 +605,10 @@ impl Drop for StreamSession {
         let record = CreateRecord {
             has_error: true,
             error_message: Some("client disconnected before completion".to_string()),
-            ..base_record(&self.history_request(self.buffered_ms() as u64))
+            ..base_record(&RecordMeta::from_stream(
+                &self.meta,
+                self.buffered_ms() as u64,
+            ))
         };
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             warn!("No runtime available to persist aborted stream row");
@@ -580,19 +635,58 @@ struct AcquireMetrics {
     cold_load_ms: u64,
 }
 
-/// Reject audio longer than the engine's advertised input limit
-/// (`max_audio_ms == 0` means no practical limit). Makes the
-/// soft-window families (e.g. SenseVoice ~30 s) strict instead of
-/// silently degrading; hard-cap families would reject anyway.
-fn enforce_input_limit(guard: &PoolGuard, model: &str, duration_ms: u64) -> Result<(), AsrError> {
-    let caps = guard.capabilities()?;
-    if caps.max_audio_ms > 0 && duration_ms as i64 > caps.max_audio_ms {
-        return Err(AsrError::InputTooLong {
-            model_id: model.to_string(),
-            max_audio_ms: caps.max_audio_ms,
-        });
+/// The ADR 0002 input-length policy (`INPUT_TOO_LONG`), for both batch
+/// and stream enforcement. `max_audio_ms == 0` advertises "no practical
+/// limit": batch requests then pass unchecked, while stream sessions
+/// still cap buffering at [`MAX_STREAM_BUFFER_MS`] so an open WebSocket
+/// cannot grow the buffer unboundedly. That divergence is deliberate and
+/// lives only here.
+#[derive(Debug, Clone, Copy)]
+struct InputLimit {
+    max_audio_ms: i64,
+}
+
+impl InputLimit {
+    fn of(guard: &PoolGuard) -> Result<Self, AsrError> {
+        Ok(Self {
+            max_audio_ms: guard.capabilities()?.max_audio_ms,
+        })
     }
-    Ok(())
+
+    /// Batch check: rejects audio longer than the engine's advertised
+    /// limit. Makes the soft-window families (e.g. SenseVoice ~30 s)
+    /// strict instead of silently degrading; hard-cap families would
+    /// reject anyway.
+    fn check_batch(self, model: &str, duration_ms: u64) -> Result<(), AsrError> {
+        if self.max_audio_ms > 0 && duration_ms as i64 > self.max_audio_ms {
+            return Err(AsrError::InputTooLong {
+                model_id: model.to_string(),
+                max_audio_ms: self.max_audio_ms,
+            });
+        }
+        Ok(())
+    }
+
+    /// The effective buffering ceiling for a stream session.
+    fn stream_cap_ms(self) -> i64 {
+        if self.max_audio_ms > 0 {
+            self.max_audio_ms
+        } else {
+            MAX_STREAM_BUFFER_MS
+        }
+    }
+
+    /// Stream check: rejects once the total buffered audio would exceed
+    /// the stream cap.
+    fn check_stream(self, model: &str, total_ms: i64) -> Result<(), AsrError> {
+        if total_ms > self.stream_cap_ms() {
+            return Err(AsrError::InputTooLong {
+                model_id: model.to_string(),
+                max_audio_ms: self.stream_cap_ms(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Common history fields shared by the success and failure paths, with
@@ -600,21 +694,21 @@ fn enforce_input_limit(guard: &PoolGuard, model: &str, duration_ms: u64) -> Resu
 /// Callers fill in only the fields that differ via struct-update syntax,
 /// so a new `CreateRecord` field is defaulted in one place rather than
 /// risking divergence between the two write sites.
-fn base_record(req: &TranscribeRequest) -> CreateRecord {
+fn base_record(meta: &RecordMeta) -> CreateRecord {
     CreateRecord {
-        source: req.source,
-        language: req.language.clone(),
-        model_id: req.model.clone(),
-        audio_duration_ms: req.duration_ms as i64,
+        source: meta.source,
+        language: meta.language.clone(),
+        model_id: meta.model.clone(),
+        audio_duration_ms: meta.duration_ms as i64,
         inference_ms: 0,
         model_load_ms: 0,
         pool_wait_ms: 0,
         cold_load_ms: 0,
         text: String::new(),
-        segments_json: "[]".to_string(),
+        segments: Vec::new(),
         has_error: false,
         error_message: None,
-        api_key_id: req.api_key_id.clone(),
+        api_key_id: meta.api_key_id.clone(),
         device: String::new(),
     }
 }
@@ -650,20 +744,14 @@ async fn run_inference(
         })??;
     let inference_ms = inference_start.elapsed().as_millis() as u64;
 
-    Ok(TranscribeResponse {
-        text: result.text,
-        language: result.language,
-        segments: to_segment_responses(result.segments),
-        words: to_segment_responses(result.words),
-        truncated: result.truncated,
-        model: model_owned,
+    Ok(TranscribeResponse::from_result(
+        result,
+        model_owned,
         duration_ms,
         inference_ms,
-        model_load_ms: metrics.pool_wait_ms + metrics.cold_load_ms,
-        pool_wait_ms: metrics.pool_wait_ms,
-        cold_load_ms: metrics.cold_load_ms,
+        metrics,
         device,
-    })
+    ))
 }
 
 // ---------------------------------------------------------------------------

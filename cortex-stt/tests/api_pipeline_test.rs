@@ -21,15 +21,9 @@ use cortex_stt::api::engine::engine_routes;
 use cortex_stt::api::history::history_routes;
 use cortex_stt::api::models::model_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
-use cortex_stt::db::database::Database;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
 use cortex_stt::engine::register::register_downloaded_models;
-use cortex_stt::history::History;
-use cortex_stt::model::catalog::ModelCatalog;
-use cortex_stt::model::download_manager::DownloadManager;
-use cortex_stt::model::install::ModelInstaller;
-use cortex_stt::state::{AppState, JobStore};
-use cortex_stt::transcriber::Transcriber;
+use cortex_stt::state::AppState;
 use test_helpers::{audio_dir, model_dir};
 
 /// Build a test app with real engines registered from downloaded models.
@@ -56,36 +50,7 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
     eprintln!("Registered {registered} models from {}", mdir.display());
 
-    let downloads = DownloadManager::new(mdir.clone());
-    let catalog = ModelCatalog::new(mdir, downloads.clone());
-    let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let history = History::new(db.clone(), data_dir.join("audio"))
-        .await
-        .unwrap();
-    let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
-    let installer = ModelInstaller::new(
-        downloads.model_dir().to_path_buf(),
-        engine_manager.clone(),
-        catalog.clone(),
-        db.clone(),
-    );
-    downloads.set_installer(installer.clone());
-
-    let state = Arc::new(AppState {
-        engine_manager,
-        catalog,
-        downloads,
-        db,
-        job_store: Arc::new(JobStore::with_defaults()),
-        data_dir,
-        default_model: "whisper-small".to_string(),
-        version: "0.0.0-test".to_string(),
-        http_port: 0,
-        started_at: std::time::Instant::now(),
-        history,
-        transcriber,
-        installer,
-    });
+    let state = test_helpers::test_state_full(engine_manager, &mdir, &data_dir).await;
 
     let app = Router::new()
         .merge(model_routes())

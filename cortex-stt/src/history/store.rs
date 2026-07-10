@@ -42,6 +42,16 @@ impl FromStr for TranscriptionSource {
     }
 }
 
+/// A single timed span of a stored transcription. Serialized to the
+/// `segments_json` TEXT column on write and parsed back on read — the
+/// string encoding is a private storage detail of this module.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecordSegment {
+    pub start: f32,
+    pub end: f32,
+    pub text: String,
+}
+
 /// Input for creating a transcription record.
 ///
 /// `audio_path` is intentionally absent — `History::create` derives it
@@ -57,7 +67,7 @@ pub struct CreateRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
-    pub segments_json: String,
+    pub segments: Vec<RecordSegment>,
     pub has_error: bool,
     pub error_message: Option<String>,
     pub api_key_id: Option<String>,
@@ -78,7 +88,7 @@ pub struct TranscriptionRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
-    pub segments_json: String,
+    pub segments: Vec<RecordSegment>,
     pub audio_path: Option<String>,
     pub has_error: bool,
     pub error_message: Option<String>,
@@ -107,6 +117,82 @@ pub struct ListRecordsFilter {
 const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device";
 
 // ---------------------------------------------------------------------------
+// Schema — the `records` table is owned by this module. Adding a column
+// means touching this file only: the DDL below, `RECORD_COLUMNS`, the
+// INSERT in [`insert`], and [`row_to_record`].
+// ---------------------------------------------------------------------------
+
+/// Create/upgrade the `records` table. Runs in `History::new`, before any
+/// query. Idempotent — safe on every startup.
+pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
+    // Step 1: ensure the table exists. Indexes are created later so that
+    // ALTER TABLE column-add migrations below can populate columns the
+    // indexes reference before the index is created.
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "
+            CREATE TABLE IF NOT EXISTS records (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                source TEXT NOT NULL,
+                language TEXT,
+                model_id TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                inference_ms INTEGER NOT NULL,
+                model_load_ms INTEGER NOT NULL DEFAULT 0,
+                pool_wait_ms INTEGER NOT NULL DEFAULT 0,
+                cold_load_ms INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL,
+                segments_json TEXT NOT NULL DEFAULT '[]',
+                audio_path TEXT,
+                has_error INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                api_key_id TEXT
+            );
+            ",
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)?;
+
+    // Migration: backfill `source` on records tables predating its
+    // introduction. Without this, CREATE INDEX idx_records_source below
+    // would fail with "no such column: source" on upgraded installs.
+    db.add_column_if_missing("records", "source", "TEXT NOT NULL DEFAULT 'unknown'")
+        .await?;
+
+    // Step 2: create indexes once all referenced columns are guaranteed
+    // to exist.
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "
+            CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
+            CREATE INDEX IF NOT EXISTS idx_records_model_id ON records(model_id);
+            ",
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)?;
+
+    // Migration: add device column.
+    db.add_column_if_missing("records", "device", "TEXT NOT NULL DEFAULT 'cpu'")
+        .await?;
+
+    // Migration: add acquire timing breakdown columns.
+    db.add_column_if_missing("records", "pool_wait_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
+    db.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
 
@@ -129,7 +215,7 @@ pub(super) async fn insert(
     let pool_wait_ms = rec.pool_wait_ms;
     let cold_load_ms = rec.cold_load_ms;
     let text = rec.text.clone();
-    let segments_json = rec.segments_json.clone();
+    let segments_json = serde_json::to_string(&rec.segments).unwrap_or_else(|_| "[]".into());
     let audio_path = audio_path.map(|s| s.to_string());
     let has_error = rec.has_error as i32;
     let error_message = rec.error_message.clone();
@@ -561,7 +647,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         pool_wait_ms: row.get(8)?,
         cold_load_ms: row.get(9)?,
         text: row.get(10)?,
-        segments_json: row.get(11)?,
+        segments: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
         audio_path: row.get(12)?,
         has_error: row.get::<_, i32>(13)? != 0,
         error_message: row.get(14)?,

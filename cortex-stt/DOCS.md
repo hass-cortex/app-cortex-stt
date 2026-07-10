@@ -61,7 +61,9 @@ Click the Home Assistant My button below to open the app on your Home Assistant 
 ### 1. Download a model
 
 Open the **Cortex STT** panel from the sidebar → **Models** tab → pick a
-model → **Download**. `SenseVoiceSmall` is a good first choice. See
+model (and optionally a quantization level — smaller = faster/less RAM,
+larger = more accurate) → **Download**. `SenseVoiceSmall` is a good
+first choice. See
 [MODELS.md](../MODELS.md) for the full catalog with sizes, supported
 languages, and use-case notes.
 
@@ -110,9 +112,9 @@ or per use case.
 | `log_filter`        | _(empty)_ | Advanced. Raw `RUST_LOG` filter that overrides `log_level` when set — e.g. `info,cortex_stt::engine=debug` to capture engine logs, or `info,cortex_stt=debug,hyper=debug` for HTTP. Leave empty to use `log_level`. |
 | `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                                   |
 
-The app exposes its HTTP API on port `8769`. Most runtime settings (GPU
-mode, idle timeout, pre-load) live in the **admin UI → Settings**, not in
-addon options.
+The app exposes its HTTP API on port `8769`. Most runtime settings
+(default model, pre-load, idle timeout, history retention, timezone)
+live in the **admin UI → Settings**, not in addon options.
 
 ## Discovery
 
@@ -188,12 +190,10 @@ and pinyin similarity-matching pipeline.
 
 ## Known Limitations
 
-- Audio format is fixed at 16 kHz / 16-bit / mono PCM WAV. Home Assistant
-  voice pipelines already produce this — only matters if you call the
-  HTTP API directly.
-- The model list seen by the integration is captured at setup time. New
-  models downloaded server-side after pairing don't appear until the
-  integration is reloaded.
+- WebSocket streaming input is fixed at 16 kHz / 16-bit / mono PCM
+  frames. The sync/async HTTP API accepts WAV at any sample rate, bit
+  depth (PCM 16/24/32, float), or channel count and resamples
+  server-side.
 
 ## Support & Source
 

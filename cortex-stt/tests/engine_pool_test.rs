@@ -4,39 +4,14 @@ use std::time::Duration;
 
 use cortex_stt::engine::manager::SharedEngineFactory;
 use cortex_stt::engine::pool::ModelPool;
-use cortex_stt::engine::traits::*;
-use cortex_stt::error::AsrError;
-
-struct MockEngine {
-    name: String,
-}
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: self.name.clone(),
-            languages: vec!["en".to_string()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: format!("mock-{}", self.name),
-            ..Default::default()
-        })
-    }
-}
+use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::engine::traits::TranscribeOptions;
 
 fn mock_factory(name: &str) -> SharedEngineFactory {
-    let name = name.to_string();
-    Arc::new(move || Ok(Box::new(MockEngine { name: name.clone() }) as Box<dyn SpeechEngine>))
+    FakeEngine::new()
+        .named(name)
+        .with_text(format!("mock-{name}"))
+        .factory()
 }
 
 #[tokio::test]

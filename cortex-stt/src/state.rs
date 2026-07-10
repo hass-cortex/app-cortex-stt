@@ -42,6 +42,17 @@ impl AsyncJobStatus {
     }
 }
 
+/// Result of a [`JobStore::cancel`] request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// The job was Processing and is now Cancelled.
+    MarkedCancelled,
+    /// The job was already terminal and has been removed.
+    AlreadyTerminal,
+    /// No job with that id exists.
+    NotFound,
+}
+
 /// An asynchronous transcription job.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AsyncJob {
@@ -111,17 +122,59 @@ impl JobStore {
         self.jobs.read().await.get(id).cloned()
     }
 
-    /// Update a job's status.
-    pub async fn update_status(&self, id: &str, status: AsyncJobStatus) {
+    /// Whether the job exists and has been Cancelled. Used by the worker
+    /// task as a cheap pre-flight check before starting inference.
+    pub async fn is_cancelled(&self, id: &str) -> bool {
+        matches!(
+            self.jobs.read().await.get(id).map(|j| &j.status),
+            Some(AsyncJobStatus::Cancelled)
+        )
+    }
+
+    /// Record a successful result — but only if the job is still
+    /// Processing. See [`finish`](Self::finish) for the terminal guard.
+    pub async fn complete(&self, id: &str, result: crate::transcriber::TranscribeResponse) {
+        self.finish(id, AsyncJobStatus::Completed { result }).await;
+    }
+
+    /// Record a failure — but only if the job is still Processing.
+    pub async fn fail(&self, id: &str, error: String) {
+        self.finish(id, AsyncJobStatus::Failed { error }).await;
+    }
+
+    /// Apply a worker-produced terminal status, honoring the invariant
+    /// **once terminal, always terminal**. Only a still-`Processing` job
+    /// may transition here; a job already terminal (most importantly
+    /// `Cancelled`, set by a concurrent `cancel`) keeps its status and the
+    /// worker's result is discarded. This is what makes cancel-after-start
+    /// stick: the completing task can no longer clobber the cancellation.
+    async fn finish(&self, id: &str, terminal: AsyncJobStatus) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(id) {
-            let completed_at = if status.is_terminal() {
-                Some(Utc::now())
-            } else {
-                None
-            };
-            job.status = status;
-            job.completed_at = completed_at;
+            if matches!(job.status, AsyncJobStatus::Processing) {
+                job.status = terminal;
+                job.completed_at = Some(Utc::now());
+            }
+        }
+    }
+
+    /// Cancel a job. A still-`Processing` job is marked `Cancelled` (and
+    /// wins over any later worker completion, per [`finish`](Self::finish));
+    /// an already-terminal job is removed outright. Reports which happened
+    /// so the caller can shape its HTTP response.
+    pub async fn cancel(&self, id: &str) -> CancelOutcome {
+        let mut jobs = self.jobs.write().await;
+        match jobs.get_mut(id) {
+            None => CancelOutcome::NotFound,
+            Some(job) if matches!(job.status, AsyncJobStatus::Processing) => {
+                job.status = AsyncJobStatus::Cancelled;
+                job.completed_at = Some(Utc::now());
+                CancelOutcome::MarkedCancelled
+            }
+            Some(_) => {
+                jobs.remove(id);
+                CancelOutcome::AlreadyTerminal
+            }
         }
     }
 
@@ -169,7 +222,7 @@ impl JobStore {
 
         // TTL pass: drop terminal jobs whose completed_at is past the cutoff.
         // Terminal jobs without a completed_at timestamp are kept and will
-        // age out on a subsequent sweep once `update_status` stamps them.
+        // age out on a subsequent sweep once a transition stamps them.
         jobs.retain(|_, job| {
             !job.status.is_terminal() || job.completed_at.is_none_or(|ts| ts > cutoff)
         });

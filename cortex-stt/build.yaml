@@ -7,6 +7,6 @@ args:
 
 labels:
   org.opencontainers.image.title: Cortex STT Server
-  org.opencontainers.image.description: Multi-engine speech-to-text service
+  org.opencontainers.image.description: Multi-model speech-to-text service
   org.opencontainers.image.source: https://github.com/hass-cortex/app-cortex-stt
   org.opencontainers.image.licenses: MIT

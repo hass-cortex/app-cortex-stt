@@ -23,8 +23,7 @@ export function ModelStatusCard() {
 	if (!data) return null;
 
 	const loadedModels: string[] = data.loaded_models ?? [];
-	const statusVariant =
-		health?.status === "ok" ? "success" : health?.status === "degraded" ? "warning" : "info";
+	const statusVariant = health?.status === "ok" ? "success" : "info";
 
 	return (
 		<Card>

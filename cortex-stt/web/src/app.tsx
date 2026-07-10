@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router";
+import { ingressBasePath } from "@/lib/ingress";
 import { AuthGate } from "./components/auth-gate";
 import { AppLayout } from "./components/layout/app-layout";
 import { ToastProvider } from "./components/ui/toast";
@@ -27,9 +28,7 @@ export function App() {
 			<ThemeProvider>
 				<ToastProvider>
 					<AuthGate>
-						<BrowserRouter
-							basename={(window as unknown as { __INGRESS_PATH__?: string }).__INGRESS_PATH__ || ""}
-						>
+						<BrowserRouter basename={ingressBasePath()}>
 							<Routes>
 								<Route element={<AppLayout />}>
 									<Route index element={<DashboardPage />} />

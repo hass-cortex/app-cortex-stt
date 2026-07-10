@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use cortex_stt::db::database::Database;
-use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::traits::*;
+use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
+use cortex_stt::engine::testing::FakeEngine;
 use cortex_stt::error::AsrError;
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{CatalogModel, catalog_models};
@@ -15,33 +15,8 @@ use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::model::install::ModelInstaller;
 use cortex_stt::model::types::{DownloadPhase, DownloadProgress};
 
-struct MockEngine;
-
-impl SpeechEngine for MockEngine {
-    fn capabilities(&self) -> EngineCapabilities {
-        EngineCapabilities {
-            name: "mock".into(),
-            languages: vec!["en".into()],
-            supports_translation: false,
-            supports_streaming: false,
-            max_audio_ms: 0,
-        }
-    }
-
-    fn transcribe(
-        &mut self,
-        _samples: &[f32],
-        _options: &TranscribeOptions,
-    ) -> Result<TranscriptionResult, AsrError> {
-        Ok(TranscriptionResult {
-            text: "hello".into(),
-            ..Default::default()
-        })
-    }
-}
-
-fn mock_factory() -> Arc<dyn Fn() -> Result<Box<dyn SpeechEngine>, AsrError> + Send + Sync> {
-    Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+fn mock_factory() -> SharedEngineFactory {
+    FakeEngine::new().named("mock").with_text("hello").factory()
 }
 
 /// A catalog model with at least two quants (needed for quant-switch tests).
@@ -65,10 +40,10 @@ async fn fixture() -> Fixture {
     let model_dir = tmp.path().to_path_buf();
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
-    let downloads = DownloadManager::new(model_dir.clone());
-    let catalog = ModelCatalog::new(model_dir.clone(), downloads.clone());
+    let progress = cortex_stt::model::progress::ProgressBoard::new();
+    let catalog = ModelCatalog::new(model_dir.clone(), progress.clone(), engine_manager.clone());
     let installer = ModelInstaller::new(model_dir.clone(), engine_manager.clone(), catalog, db);
-    downloads.set_installer(installer.clone());
+    let downloads = DownloadManager::new(model_dir.clone(), progress, Some(installer.clone()));
     Fixture {
         _tmp: tmp,
         model_dir,
@@ -182,12 +157,6 @@ async fn uninstall_refuses_a_downloading_model() {
     assert!(matches!(err, AsrError::DownloadInProgress { .. }));
 }
 
-#[tokio::test]
-async fn download_manager_install_hook_is_wired_once() {
-    let f = fixture().await;
-    assert!(f.downloads.installer().is_some(), "fixture wires the hook");
-
-    // Unwired manager: Installs are skipped, not a panic.
-    let bare = DownloadManager::new(f.model_dir.clone());
-    assert!(bare.installer().is_none());
-}
+// NOTE: the old `download_manager_install_hook_is_wired_once` test is gone —
+// the installer is now injected at construction, so "wired or not" is a
+// compile-time property rather than a runtime OnceLock state.

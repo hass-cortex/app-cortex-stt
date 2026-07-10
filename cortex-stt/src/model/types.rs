@@ -140,6 +140,16 @@ pub enum DownloadPhase {
     Failed,
 }
 
+impl DownloadPhase {
+    /// Whether this is an end-of-life phase: the download reached
+    /// `Completed` or `Failed` and no further progress will follow. The
+    /// single predicate for "stop watching / clear the progress entry",
+    /// shared by the completion tail and the progress SSE stream.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, DownloadPhase::Completed | DownloadPhase::Failed)
+    }
+}
+
 /// Progress information for an active download.
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {

@@ -244,37 +244,10 @@ mod tests {
     //! exposing test-only accessors on the public API.
 
     use super::*;
-    use crate::engine::traits::{
-        EngineCapabilities, SpeechEngine, TranscribeOptions, TranscriptionResult,
-    };
-
-    struct MockEngine;
-
-    impl SpeechEngine for MockEngine {
-        fn capabilities(&self) -> EngineCapabilities {
-            EngineCapabilities {
-                name: "mock".into(),
-                languages: vec!["en".into()],
-                supports_translation: false,
-                supports_streaming: false,
-                max_audio_ms: 0,
-            }
-        }
-
-        fn transcribe(
-            &mut self,
-            _samples: &[f32],
-            _options: &TranscribeOptions,
-        ) -> Result<TranscriptionResult, AsrError> {
-            Ok(TranscriptionResult {
-                text: "ok".into(),
-                ..Default::default()
-            })
-        }
-    }
+    use crate::engine::testing::FakeEngine;
 
     fn mock_factory() -> SharedEngineFactory {
-        Arc::new(|| Ok(Box::new(MockEngine) as Box<dyn SpeechEngine>))
+        FakeEngine::new().named("mock").with_text("ok").factory()
     }
 
     /// Regression: two concurrent guards on a pool_size=2 pool must occupy

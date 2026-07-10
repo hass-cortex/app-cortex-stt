@@ -53,10 +53,10 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 Examples:
 
 ```
-feat: add Qwen3 ASR engine support
+feat: add Qwen3 ASR model support
 fix: handle timeout in transcription handler gracefully
 docs: add API key management guide
-chore: update transcribe-rs to 0.4.0
+chore: update transcribe-cpp to 0.4.0
 refactor: extract audio resampling to separate module
 test: add pool eviction edge case tests
 ```
@@ -78,7 +78,7 @@ test: add pool eviction edge case tests
 
 ## Testing
 
-All engine tests use mock `SpeechModel` implementations. No real model files are needed in CI or local development.
+All engine tests use mock `SpeechEngine` implementations. No real model files are needed in CI or local development.
 
 ```bash
 # Run all tests
@@ -101,22 +101,25 @@ Top-level modules:
 
 - `src/engine/` — `SpeechEngine` trait + pool + LRU eviction
 - `src/transcriber.rs` — transcription pipeline (acquire → infer → save)
-- `src/history/` — transcription history records (DB row + paired WAV)
+- `src/history/` — transcription history records (DB row + paired Opus audio)
 - `src/retention.rs` — pure retention policy (`Days` / `Count` / `DiskLimitMb`)
 - `src/model/` — model catalog (`catalog.rs`) + download coordinator (`download_manager.rs`)
 - `src/api/` — Axum routes; handlers are thin shells over the modules above
 - `src/db/` — SQLite storage for settings + API keys
 - `web/` — React Admin UI
 
-## Adding a New Engine
+## Adding New Models
 
-When transcribe-rs adds a new engine:
+Models are never added by hand — the catalog is a vendored snapshot of
+Handy's `catalog.json` (see `docs/adr/0003`). When upstream adds new
+models or quants:
 
-1. Add feature flag to `Cargo.toml`
-2. Add model entries to `src/engine/registry.rs`
-3. Update `build.yaml` `CARGO_FEATURES` if it should be included by default
-4. Update the supported models table in `README.md`
-5. No architectural changes needed - engines are abstracted behind the `SpeechModel` trait
+1. Run `uv run scripts/sync-catalog.py` (rewrites `src/model/catalog.json` and regenerates `MODELS.md`)
+2. Review the diff and run `cargo test --no-default-features` (catalog consistency tests)
+3. Commit both files together
+
+New model families need no code changes — every catalog model runs on
+the single transcribe.cpp runtime behind the `SpeechEngine` trait.
 
 ## Questions?
 

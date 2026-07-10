@@ -24,7 +24,7 @@ use crate::audio::resample::{raw_pcm_to_f32, resample_to_16khz_mono};
 use crate::engine::traits::{Timestamps, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::TranscriptionSource;
-use crate::state::{AppState, AsyncJob, AsyncJobStatus};
+use crate::state::{AppState, AsyncJob, AsyncJobStatus, CancelOutcome};
 use crate::transcriber::{TranscribeRequest, TranscribeResponse};
 
 /// Query parameters for the transcribe endpoints.
@@ -205,18 +205,17 @@ async fn transcribe_async(
     let job_id_bg = job_id.clone();
 
     tokio::spawn(async move {
-        // Check if the job was cancelled before starting.
-        if let Some(job) = job_store.get(&job_id_bg).await {
-            if matches!(job.status, AsyncJobStatus::Cancelled) {
-                return;
-            }
+        // Skip work if the job was cancelled before we started. A cancel
+        // that arrives *during* inference is handled by the JobStore
+        // transition guard: `complete`/`fail` no-op once the job is
+        // Cancelled, so the result below can't clobber the cancellation.
+        if job_store.is_cancelled(&job_id_bg).await {
+            return;
         }
 
         match transcriber.transcribe(req).await {
             Ok(response) => {
-                job_store
-                    .update_status(&job_id_bg, AsyncJobStatus::Completed { result: response })
-                    .await;
+                job_store.complete(&job_id_bg, response).await;
             }
             Err(e) => {
                 // Transcriber::transcribe already logged the failure at warn
@@ -229,14 +228,7 @@ async fn transcribe_async(
                     error = %e,
                     "async transcription job failed",
                 );
-                job_store
-                    .update_status(
-                        &job_id_bg,
-                        AsyncJobStatus::Failed {
-                            error: e.to_string(),
-                        },
-                    )
-                    .await;
+                job_store.fail(&job_id_bg, e.to_string()).await;
             }
         }
     });
@@ -286,25 +278,19 @@ async fn get_job_result(
 }
 
 /// DELETE /api/transcribe/jobs/{job_id} — cancel a job.
+///
+/// A still-running job is marked Cancelled (and the JobStore guarantees a
+/// later worker completion won't overwrite it); an already-terminal job is
+/// removed. An unknown id is a 404.
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<String>,
 ) -> Result<StatusCode, AsrError> {
-    let job = fetch_job(&state, &job_id).await?;
-
-    match job.status {
-        AsyncJobStatus::Processing => {
-            state
-                .job_store
-                .update_status(&job_id, AsyncJobStatus::Cancelled)
-                .await;
+    match state.job_store.cancel(&job_id).await {
+        CancelOutcome::MarkedCancelled | CancelOutcome::AlreadyTerminal => {
             Ok(StatusCode::NO_CONTENT)
         }
-        // Already terminal — just remove it.
-        _ => {
-            state.job_store.remove(&job_id).await;
-            Ok(StatusCode::NO_CONTENT)
-        }
+        CancelOutcome::NotFound => Err(AsrError::JobNotFound { job_id }),
     }
 }
 

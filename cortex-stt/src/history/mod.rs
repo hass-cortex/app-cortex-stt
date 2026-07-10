@@ -14,6 +14,7 @@
 //!    NULL'd; no row may claim to have an audio file that has been
 //!    deleted from disk.
 
+mod analytics;
 mod store;
 
 use std::path::{Path, PathBuf};
@@ -25,9 +26,11 @@ use tracing::warn;
 use crate::audio::opus_writer::write_opus;
 use crate::db::database::Database;
 use crate::error::AsrError;
-use crate::retention::RetentionCandidate;
+use crate::retention::{RetentionCandidate, RetentionPolicy, select_to_delete};
 
-pub use store::{CreateRecord, ListRecordsFilter, TranscriptionRecord, TranscriptionSource};
+pub use store::{
+    CreateRecord, ListRecordsFilter, RecordSegment, TranscriptionRecord, TranscriptionSource,
+};
 
 /// Outcome of a bulk "delete everything" call. Surfaced verbatim in the
 /// `DELETE /api/history` response.
@@ -35,6 +38,15 @@ pub use store::{CreateRecord, ListRecordsFilter, TranscriptionRecord, Transcript
 pub struct DeleteAllOutcome {
     pub records_deleted: usize,
     pub audio_files_deleted: usize,
+}
+
+/// Outcome of one retention sweep: how many records were removed
+/// (Delete record) and how many rows had their audio detached (Drop
+/// audio). Surfaced verbatim in the `POST /api/history/cleanup` response.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SweepOutcome {
+    pub deleted_records: usize,
+    pub dropped_audios: usize,
 }
 
 /// Transcription history store: DB rows + their paired WAV files +
@@ -47,9 +59,11 @@ pub struct History {
 
 impl History {
     /// Build a new `History` rooted at `audio_dir`. The directory is
-    /// created if missing — the module owns audio storage layout.
+    /// created if missing and the `records` schema migrated — the module
+    /// owns both the audio storage layout and its table.
     pub async fn new(db: Arc<Database>, audio_dir: PathBuf) -> Result<Arc<Self>, AsrError> {
         tokio::fs::create_dir_all(&audio_dir).await?;
+        store::migrate(&db).await?;
         let (tx, _) = broadcast::channel(100);
         Ok(Arc::new(Self { db, audio_dir, tx }))
     }
@@ -246,6 +260,72 @@ impl History {
     }
 
     // -----------------------------------------------------------------
+    // Retention sweep (the single composer of gather → select → apply)
+    // -----------------------------------------------------------------
+
+    /// Apply both retention policies now and report what was removed.
+    ///
+    /// The single home for the gather → `select_to_delete` → apply flow:
+    /// the hourly sweep (`cleanup.rs`) and `POST /api/history/cleanup`
+    /// both call this instead of re-wiring the ingredients. The two
+    /// policies are independent (see CONTEXT.md) and both branches run
+    /// even if one fails — a record-retention error never suppresses
+    /// audio retention. Best-effort: a failed branch logs a warning and
+    /// contributes 0 to the outcome.
+    pub async fn run_retention_sweep(
+        &self,
+        record_policy: &RetentionPolicy,
+        audio_policy: &RetentionPolicy,
+    ) -> SweepOutcome {
+        let deleted_records = self.sweep_records(record_policy).await;
+        let dropped_audios = self.sweep_audios(audio_policy).await;
+        SweepOutcome {
+            deleted_records,
+            dropped_audios,
+        }
+    }
+
+    /// Record-retention branch: enumerate candidates, select by policy,
+    /// Delete record. Errors log and yield 0 so the audio branch still runs.
+    async fn sweep_records(&self, policy: &RetentionPolicy) -> usize {
+        let candidates = match self.list_record_candidates().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "failed to enumerate record retention candidates");
+                return 0;
+            }
+        };
+        let ids = select_to_delete(&candidates, policy);
+        match self.delete_many(&ids).await {
+            Ok(deleted) => deleted,
+            Err(e) => {
+                warn!(error = %e, "failed to delete history records during sweep");
+                0
+            }
+        }
+    }
+
+    /// Audio-retention branch: enumerate candidates, select by policy,
+    /// Drop audio. Errors log and yield 0.
+    async fn sweep_audios(&self, policy: &RetentionPolicy) -> usize {
+        let candidates = match self.list_audio_candidates().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "failed to enumerate audio retention candidates");
+                return 0;
+            }
+        };
+        let ids = select_to_delete(&candidates, policy);
+        match self.drop_audios(&ids).await {
+            Ok(dropped) => dropped,
+            Err(e) => {
+                warn!(error = %e, "failed to drop audio during sweep");
+                0
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Live updates
     // -----------------------------------------------------------------
 
@@ -254,37 +334,6 @@ impl History {
     /// `create`; bulk operations don't broadcast.
     pub fn subscribe_live(&self) -> broadcast::Receiver<()> {
         self.tx.subscribe()
-    }
-
-    // -----------------------------------------------------------------
-    // Analytics aggregates (used by api/metrics.rs)
-    // -----------------------------------------------------------------
-
-    pub async fn count(&self, source: Option<TranscriptionSource>) -> Result<usize, AsrError> {
-        store::count_records(&self.db, source).await
-    }
-
-    pub async fn count_today(
-        &self,
-        source: Option<TranscriptionSource>,
-    ) -> Result<usize, AsrError> {
-        store::count_records_today(&self.db, source).await
-    }
-
-    pub async fn total_audio_duration_ms(&self) -> Result<i64, AsrError> {
-        store::total_audio_duration_ms(&self.db).await
-    }
-
-    pub async fn today_audio_duration_ms(&self) -> Result<i64, AsrError> {
-        store::today_audio_duration_ms(&self.db).await
-    }
-
-    pub async fn avg_inference_ms(&self) -> Result<f64, AsrError> {
-        store::avg_inference_ms(&self.db).await
-    }
-
-    pub async fn count_errors(&self, today_only: bool) -> Result<usize, AsrError> {
-        store::count_errors(&self.db, today_only).await
     }
 
     // -----------------------------------------------------------------
