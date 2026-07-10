@@ -27,7 +27,7 @@ tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tower = "0.5"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tokio-rusqlite = "0.7"
-rubato = "2"
+rubato = "3"
 opus = "0.3"
 ogg = "0.9"
 sha2 = "0.11"
