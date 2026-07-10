@@ -6,14 +6,15 @@ use tracing::{info, warn};
 
 use crate::db::database::Database;
 use crate::history::History;
-use crate::retention::select_to_delete;
 
 /// Spawn a background task that periodically applies retention policies
 /// to the transcription history. First cycle runs after 1 hour, then
 /// repeats hourly.
 ///
 /// `record_retention` drives Delete record; `audio_retention` drives
-/// Drop audio. The two policies are independent — see CONTEXT.md.
+/// Drop audio. The two policies are independent — see CONTEXT.md. The
+/// gather → select → apply flow lives on `History::run_retention_sweep`;
+/// this task only owns the schedule and settings load.
 pub fn spawn_retention_cleanup(db: Arc<Database>, history: Arc<History>) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -27,46 +28,16 @@ pub fn spawn_retention_cleanup(db: Arc<Database>, history: Arc<History>) -> Join
                 }
             };
 
-            run_record_retention(&history, &settings.record_retention).await;
-            run_audio_retention(&history, &settings.audio_retention).await;
+            let outcome = history
+                .run_retention_sweep(&settings.record_retention, &settings.audio_retention)
+                .await;
+            if outcome.deleted_records > 0 || outcome.dropped_audios > 0 {
+                info!(
+                    deleted_records = outcome.deleted_records,
+                    dropped_audios = outcome.dropped_audios,
+                    "retention sweep completed"
+                );
+            }
         }
     })
-}
-
-async fn run_record_retention(history: &Arc<History>, policy: &crate::retention::RetentionPolicy) {
-    let candidates = match history.list_record_candidates().await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "failed to enumerate record retention candidates");
-            return;
-        }
-    };
-    let ids = select_to_delete(&candidates, policy);
-    if ids.is_empty() {
-        return;
-    }
-    match history.delete_many(&ids).await {
-        Ok(deleted) if deleted > 0 => info!(count = deleted, "deleted history records"),
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "failed to delete history records"),
-    }
-}
-
-async fn run_audio_retention(history: &Arc<History>, policy: &crate::retention::RetentionPolicy) {
-    let candidates = match history.list_audio_candidates().await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "failed to enumerate audio retention candidates");
-            return;
-        }
-    };
-    let ids = select_to_delete(&candidates, policy);
-    if ids.is_empty() {
-        return;
-    }
-    match history.drop_audios(&ids).await {
-        Ok(dropped) if dropped > 0 => info!(count = dropped, "dropped audio for history records"),
-        Ok(_) => {}
-        Err(e) => warn!(error = %e, "failed to drop audio for history records"),
-    }
 }

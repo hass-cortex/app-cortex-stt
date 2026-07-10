@@ -72,6 +72,15 @@ pub struct CreateRecord {
     pub error_message: Option<String>,
     pub api_key_id: Option<String>,
     pub device: String,
+    /// Capture device (microphone / satellite) that recorded the audio,
+    /// as reported by the client. Distinct from `device` (compute
+    /// backend) — see CONTEXT.md.
+    pub capture_device: Option<String>,
+    /// Input-signal level stats (see `audio::stats`). None on failure
+    /// rows and for clients that predate the fields.
+    pub rms_db: Option<f64>,
+    pub peak_db: Option<f64>,
+    pub clip_ratio: Option<f64>,
 }
 
 /// A stored transcription record.
@@ -94,6 +103,18 @@ pub struct TranscriptionRecord {
     pub error_message: Option<String>,
     pub api_key_id: Option<String>,
     pub device: String,
+    pub capture_device: Option<String>,
+    pub rms_db: Option<f64>,
+    pub peak_db: Option<f64>,
+    pub clip_ratio: Option<f64>,
+}
+
+/// Distinct filterable values present in the records table, for the
+/// admin UI's filter dropdowns.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryFacets {
+    pub models: Vec<String>,
+    pub capture_devices: Vec<String>,
 }
 
 /// Optional filters for listing records.
@@ -105,6 +126,8 @@ pub struct ListRecordsFilter {
     pub from: Option<String>,
     pub to: Option<String>,
     pub has_error: Option<bool>,
+    /// Exact match on the capture device tag.
+    pub capture_device: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -114,7 +137,7 @@ pub struct ListRecordsFilter {
 /// order MUST match the positional `row.get(N)` indices in
 /// [`row_to_record`]; keeping the list in one place stops the SELECT
 /// sites and the mapper from drifting apart when a column is added.
-const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device";
+const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio";
 
 // ---------------------------------------------------------------------------
 // Schema — the `records` table is owned by this module. Adding a column
@@ -189,6 +212,17 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
     db.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
         .await?;
 
+    // Migration: capture device (microphone/satellite) + input-signal
+    // level stats. Nullable — rows predating the columns stay NULL.
+    db.add_column_if_missing("records", "capture_device", "TEXT")
+        .await?;
+    db.add_column_if_missing("records", "rms_db", "REAL")
+        .await?;
+    db.add_column_if_missing("records", "peak_db", "REAL")
+        .await?;
+    db.add_column_if_missing("records", "clip_ratio", "REAL")
+        .await?;
+
     Ok(())
 }
 
@@ -221,12 +255,16 @@ pub(super) async fn insert(
     let error_message = rec.error_message.clone();
     let api_key_id = rec.api_key_id.clone();
     let device = rec.device.clone();
+    let capture_device = rec.capture_device.clone();
+    let rms_db = rec.rms_db;
+    let peak_db = rec.peak_db;
+    let clip_ratio = rec.clip_ratio;
 
     db.connection()
         .call(move |conn| {
             conn.execute(
-                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     id,
                     source,
@@ -244,6 +282,10 @@ pub(super) async fn insert(
                     error_message,
                     api_key_id,
                     device,
+                    capture_device,
+                    rms_db,
+                    peak_db,
+                    clip_ratio,
                 ],
             )?;
             Ok(())
@@ -320,6 +362,7 @@ pub(super) async fn list(
     let from = filter.from.clone();
     let to = filter.to.clone();
     let has_error = filter.has_error;
+    let capture_device = filter.capture_device.clone();
     let limit = filter.limit;
     let offset = filter.offset;
 
@@ -359,6 +402,11 @@ pub(super) async fn list(
                 param_values.push(Box::new(has_error as i32));
                 idx += 1;
             }
+            if let Some(capture_device) = &capture_device {
+                sql.push_str(&format!(" AND capture_device = ?{idx}"));
+                param_values.push(Box::new(capture_device.clone()));
+                idx += 1;
+            }
 
             sql.push_str(" ORDER BY timestamp DESC");
 
@@ -377,6 +425,31 @@ pub(super) async fn list(
                 param_values.iter().map(|b| b.as_ref()).collect();
             stmt.query_map(params_ref.as_slice(), row_to_record)?
                 .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .await
+        .map_err(map_db_err)
+}
+
+/// Distinct model ids and capture devices seen in history (one pass,
+/// two indexed/streamed DISTINCT scans). Backs the UI filter dropdowns.
+pub(super) async fn facets(db: &Arc<Database>) -> Result<HistoryFacets, AsrError> {
+    db.connection()
+        .call(|conn| {
+            let models = conn
+                .prepare("SELECT DISTINCT model_id FROM records ORDER BY model_id")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let capture_devices = conn
+                .prepare(
+                    "SELECT DISTINCT capture_device FROM records
+                     WHERE capture_device IS NOT NULL ORDER BY capture_device",
+                )?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(HistoryFacets {
+                models,
+                capture_devices,
+            })
         })
         .await
         .map_err(map_db_err)
@@ -583,6 +656,10 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         error_message: row.get(14)?,
         api_key_id: row.get(15)?,
         device: row.get(16)?,
+        capture_device: row.get(17)?,
+        rms_db: row.get(18)?,
+        peak_db: row.get(19)?,
+        clip_ratio: row.get(20)?,
     })
 }
 

@@ -36,6 +36,10 @@ async fn insert_test_records(history: &History, count: usize) -> Vec<String> {
                     error_message: None,
                     api_key_id: None,
                     device: "cpu".to_string(),
+                    capture_device: None,
+                    rms_db: None,
+                    peak_db: None,
+                    clip_ratio: None,
                 },
                 None,
             )
@@ -199,6 +203,78 @@ async fn test_list_history_with_source_filter() {
     assert_eq!(records[0]["source"], "http_api");
 }
 
+/// An invalid `source` filter value must be a 400, not a silently
+/// unfiltered 200 (regression: the filter used to be dropped).
+#[tokio::test]
+async fn test_list_history_rejects_invalid_source_filter() {
+    let (state, _tmp) = test_state().await;
+    insert_test_records(&state.history, 1).await;
+
+    let resp = test_app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?source=bogus")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_list_history_with_capture_device_filter() {
+    let (state, _tmp) = test_state().await;
+    insert_test_records(&state.history, 2).await; // capture_device = None
+    state
+        .history
+        .create(
+            CreateRecord {
+                source: TranscriptionSource::HttpApi,
+                language: Some("en".into()),
+                model_id: "whisper-small".into(),
+                audio_duration_ms: 1000,
+                inference_ms: 50,
+                model_load_ms: 0,
+                pool_wait_ms: 0,
+                cold_load_ms: 0,
+                text: "from the kitchen".into(),
+                segments: Vec::new(),
+                has_error: false,
+                error_message: None,
+                api_key_id: None,
+                device: "cpu".to_string(),
+                capture_device: Some("Kitchen Satellite".into()),
+                rms_db: Some(-28.5),
+                peak_db: Some(-6.0),
+                clip_ratio: Some(0.0),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let resp = test_app(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/history?capture_device=Kitchen%20Satellite")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let records = json.as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["capture_device"], "Kitchen Satellite");
+    assert_eq!(records[0]["rms_db"], -28.5);
+}
+
 #[tokio::test]
 async fn test_list_history_with_has_error_filter() {
     let (state, _tmp) = test_state().await;
@@ -224,6 +300,10 @@ async fn test_list_history_with_has_error_filter() {
                 error_message: Some("boom".into()),
                 api_key_id: None,
                 device: "cpu".to_string(),
+                capture_device: None,
+                rms_db: None,
+                peak_db: None,
+                clip_ratio: None,
             },
             None,
         )

@@ -5,6 +5,7 @@ import {
 	deleteAllHistory,
 	deleteHistoryRecord,
 	getHistoryDetail,
+	getHistoryFacets,
 	listHistory,
 } from "@/api/history";
 import type { HistoryFilters } from "@/api/types";
@@ -43,6 +44,13 @@ export function useHistoryList(filters?: HistoryFilters) {
 	return useQuery({
 		queryKey: queryKeys.history.list(filters as Record<string, string> | undefined),
 		queryFn: () => listHistory(filters),
+	});
+}
+
+export function useHistoryFacets() {
+	return useQuery({
+		queryKey: queryKeys.history.facets(),
+		queryFn: getHistoryFacets,
 	});
 }
 

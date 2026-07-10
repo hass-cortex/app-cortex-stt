@@ -109,6 +109,7 @@ fn request_for(model: &str) -> TranscribeRequest {
         language: None,
         source: TranscriptionSource::HttpApi,
         api_key_id: None,
+        capture_device: None,
     }
 }
 
@@ -118,6 +119,7 @@ fn stream_meta(model: &str) -> StreamMeta {
         language: None,
         source: TranscriptionSource::WsApi,
         api_key_id: None,
+        capture_device: None,
     }
 }
 
@@ -146,6 +148,28 @@ async fn transcribe_returns_response_and_writes_history() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].text, "hello world");
     assert_eq!(records[0].model_id, "whisper-small");
+    // Input-signal stats are computed for every successful transcription
+    // (silence input → floor RMS, no clipping).
+    assert_eq!(records[0].rms_db, Some(-120.0));
+    assert_eq!(records[0].clip_ratio, Some(0.0));
+}
+
+/// The client-supplied capture device rides the pipeline into history.
+#[tokio::test]
+async fn transcribe_persists_capture_device() {
+    let f = fixture("whisper-small").await;
+
+    let req = TranscribeRequest {
+        capture_device: Some("Kitchen Satellite".to_string()),
+        ..request_for("whisper-small")
+    };
+    f.transcriber.transcribe(req).await.unwrap();
+
+    let records = f.history.list(&ListRecordsFilter::default()).await.unwrap();
+    assert_eq!(
+        records[0].capture_device.as_deref(),
+        Some("Kitchen Satellite")
+    );
 }
 
 #[tokio::test]
@@ -193,6 +217,7 @@ async fn transcribe_rejects_input_over_max_audio_ms() {
         options: TranscribeOptions::default(),
         language: None,
         source: TranscriptionSource::HttpApi,
+        capture_device: None,
         api_key_id: None,
     };
 

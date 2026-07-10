@@ -49,6 +49,10 @@ pub struct TranscribeQuery {
     pub sample_rate: Option<u32>,
     /// Number of audio channels in raw PCM input (required for `application/octet-stream`).
     pub channels: Option<u16>,
+    /// Capture device (microphone / satellite) that recorded the audio.
+    /// Free text supplied by the client; persisted on the history record
+    /// for per-device quality analysis.
+    pub capture_device: Option<String>,
 }
 
 impl TranscribeQuery {
@@ -124,7 +128,17 @@ fn prepare(
         language: query.language,
         source: TranscriptionSource::HttpApi,
         api_key_id,
+        capture_device: clamp_capture_device(query.capture_device),
     })
+}
+
+/// Bound the client-supplied capture-device tag (free text headed for
+/// the DB and admin UI). Empty strings collapse to `None`.
+pub fn clamp_capture_device(value: Option<String>) -> Option<String> {
+    const MAX_LEN: usize = 128;
+    value
+        .map(|v| v.chars().take(MAX_LEN).collect::<String>())
+        .filter(|v| !v.is_empty())
 }
 
 /// Decode the request body into f32 PCM samples at 16 kHz mono.

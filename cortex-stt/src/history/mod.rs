@@ -30,7 +30,8 @@ use crate::retention::{RetentionCandidate, RetentionPolicy, select_to_delete};
 
 pub use analytics::MetricsSnapshot;
 pub use store::{
-    CreateRecord, ListRecordsFilter, RecordSegment, TranscriptionRecord, TranscriptionSource,
+    CreateRecord, HistoryFacets, ListRecordsFilter, RecordSegment, TranscriptionRecord,
+    TranscriptionSource,
 };
 
 /// Outcome of a bulk "delete everything" call. Surfaced verbatim in the
@@ -131,6 +132,11 @@ impl History {
         filter: &ListRecordsFilter,
     ) -> Result<Vec<TranscriptionRecord>, AsrError> {
         store::list(&self.db, filter).await
+    }
+
+    /// Distinct filterable values (models, capture devices) for the UI.
+    pub async fn facets(&self) -> Result<store::HistoryFacets, AsrError> {
+        store::facets(&self.db).await
     }
 
     /// Read the audio bytes for the given record plus the matching

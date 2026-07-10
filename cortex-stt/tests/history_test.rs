@@ -29,6 +29,10 @@ fn sample_record() -> CreateRecord {
         error_message: None,
         api_key_id: None,
         device: "cpu".to_string(),
+        capture_device: None,
+        rms_db: None,
+        peak_db: None,
+        clip_ratio: None,
     }
 }
 

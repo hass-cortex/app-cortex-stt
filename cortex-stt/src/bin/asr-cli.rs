@@ -362,6 +362,7 @@ fn cli_request(model_id: &str, samples: Vec<f32>, language: Option<&str>) -> Tra
         language: language.map(String::from),
         source: TranscriptionSource::HttpApi,
         api_key_id: None,
+        capture_device: None,
     }
 }
 
@@ -436,6 +437,7 @@ async fn cmd_stream(
         language: language.map(String::from),
         source: TranscriptionSource::WsApi,
         api_key_id: None,
+        capture_device: None,
     };
 
     // Same uniform contract as the WS endpoint (ADR 0001): models

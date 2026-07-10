@@ -109,7 +109,8 @@ src/
 ├── audio/              preprocessing
 │   ├── canonical.rs    shared 16 kHz / 16-bit / mono constants
 │   ├── opus_writer.rs  Ogg Opus encoder (history persistence)
-│   └── resample.rs     WAV decode (PCM 16/24/32, IEEE float) + rubato resample
+│   ├── resample.rs     WAV decode (PCM 16/24/32, IEEE float) + rubato resample
+│   └── stats.rs        AudioStats: rms_db/peak_db/clip_ratio (per-record capture-quality metrics)
 ├── db/               SQLite (rusqlite, bundled) — settings + api keys storage
 │   ├── database.rs   connection pool + migrations
 │   ├── settings.rs   key-value settings

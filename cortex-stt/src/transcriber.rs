@@ -24,6 +24,7 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::audio::canonical::SAMPLE_RATE;
+use crate::audio::stats::AudioStats;
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::engine::pool::PoolGuard;
@@ -116,6 +117,9 @@ pub struct TranscribeRequest {
     pub language: Option<String>,
     pub source: TranscriptionSource,
     pub api_key_id: Option<String>,
+    /// Capture device (microphone / satellite) that recorded the audio,
+    /// as reported by the client. Persisted for quality analysis.
+    pub capture_device: Option<String>,
 }
 
 /// Transcription pipeline. Owns the dependencies needed to drive a
@@ -176,8 +180,9 @@ impl Transcriber {
         match result {
             Ok(response) => {
                 let meta = RecordMeta::from_request(&req);
+                let stats = AudioStats::of(&req.samples);
                 let samples = settings.save_audio.then_some(req.samples.as_ref());
-                self.save_to_history(&meta, samples, &response).await;
+                self.save_to_history(&meta, samples, stats, &response).await;
                 tracing::info!(
                     model = %req.model,
                     inference_ms = response.inference_ms,
@@ -302,6 +307,7 @@ impl Transcriber {
         &self,
         meta: &RecordMeta,
         samples: Option<&[f32]>,
+        stats: Option<AudioStats>,
         response: &TranscribeResponse,
     ) {
         let segments = response
@@ -322,6 +328,9 @@ impl Transcriber {
             text: response.text.clone(),
             segments,
             device: response.device.clone(),
+            rms_db: stats.map(|s| s.rms_db),
+            peak_db: stats.map(|s| s.peak_db),
+            clip_ratio: stats.map(|s| s.clip_ratio),
             ..base_record(meta)
         };
         if let Err(e) = self.history.create(record, samples).await {
@@ -367,6 +376,8 @@ pub struct StreamMeta {
     pub language: Option<String>,
     pub source: TranscriptionSource,
     pub api_key_id: Option<String>,
+    /// Capture device (microphone / satellite), as reported by the client.
+    pub capture_device: Option<String>,
 }
 
 /// The identity of one transcription as written to history — the subset
@@ -379,6 +390,7 @@ struct RecordMeta {
     language: Option<String>,
     source: TranscriptionSource,
     api_key_id: Option<String>,
+    capture_device: Option<String>,
     duration_ms: u64,
 }
 
@@ -389,6 +401,7 @@ impl RecordMeta {
             language: req.language.clone(),
             source: req.source,
             api_key_id: req.api_key_id.clone(),
+            capture_device: req.capture_device.clone(),
             duration_ms: req.duration_ms,
         }
     }
@@ -399,6 +412,7 @@ impl RecordMeta {
             language: meta.language.clone(),
             source: meta.source,
             api_key_id: meta.api_key_id.clone(),
+            capture_device: meta.capture_device.clone(),
             duration_ms,
         }
     }
@@ -533,8 +547,9 @@ impl StreamSession {
                     self.device.clone(),
                 );
                 let samples = std::mem::take(&mut self.buffer);
+                let stats = AudioStats::of(&samples);
                 self.transcriber
-                    .save_to_history(&meta, self.save_audio.then_some(&samples), &response)
+                    .save_to_history(&meta, self.save_audio.then_some(&samples), stats, &response)
                     .await;
                 tracing::info!(
                     model = %self.meta.model,
@@ -710,6 +725,10 @@ fn base_record(meta: &RecordMeta) -> CreateRecord {
         error_message: None,
         api_key_id: meta.api_key_id.clone(),
         device: String::new(),
+        capture_device: meta.capture_device.clone(),
+        rms_db: None,
+        peak_db: None,
+        clip_ratio: None,
     }
 }
 

@@ -30,6 +30,7 @@ export const queryKeys = {
 		list: (filters?: Record<string, string>) =>
 			[...queryKeys.history.all, "list", filters ?? {}] as const,
 		detail: (id: string) => [...queryKeys.history.all, "detail", id] as const,
+		facets: () => [...queryKeys.history.all, "facets"] as const,
 	},
 	keys: {
 		all: ["keys"] as const,

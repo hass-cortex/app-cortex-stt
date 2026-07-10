@@ -77,6 +77,8 @@ struct StartMessage {
     format: Option<String>,
     sample_rate: Option<u32>,
     channels: Option<u16>,
+    /// Capture device (microphone / satellite) that recorded the audio.
+    capture_device: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,6 +175,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
         language: start.language.clone(),
         source: TranscriptionSource::WsApi,
         api_key_id,
+        capture_device: crate::api::transcribe::clamp_capture_device(start.capture_device.clone()),
     };
 
     // ── 2. Acquire the engine slot / open the stream. ────────────────

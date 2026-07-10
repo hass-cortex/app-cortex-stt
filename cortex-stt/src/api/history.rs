@@ -14,7 +14,6 @@ use tokio_stream::Stream;
 
 use crate::error::AsrError;
 use crate::history::{ListRecordsFilter, TranscriptionRecord, TranscriptionSource};
-use crate::retention::select_to_delete;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +24,7 @@ pub struct HistoryQuery {
     pub from: Option<String>,
     pub to: Option<String>,
     pub has_error: Option<bool>,
+    pub capture_device: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -33,10 +33,15 @@ async fn list_history(
     State(state): State<Arc<AppState>>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<TranscriptionRecord>>, AsrError> {
+    // An invalid source value is a caller error — reject it instead of
+    // silently dropping the filter and returning the unfiltered set.
     let source = query
         .source
         .as_deref()
-        .and_then(|s| TranscriptionSource::from_str(s).ok());
+        .map(|s| {
+            TranscriptionSource::from_str(s).map_err(|e| AsrError::ProtocolError { detail: e })
+        })
+        .transpose()?;
 
     let filter = ListRecordsFilter {
         source,
@@ -45,12 +50,21 @@ async fn list_history(
         from: query.from,
         to: query.to,
         has_error: query.has_error,
+        capture_device: query.capture_device,
         limit: Some(query.limit.unwrap_or(50)),
         offset: query.offset,
     };
 
     let records = state.history.list(&filter).await?;
     Ok(Json(records))
+}
+
+/// GET /api/history/facets — distinct models + capture devices for the
+/// UI filter dropdowns.
+async fn get_history_facets(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<crate::history::HistoryFacets>, AsrError> {
+    Ok(Json(state.history.facets().await?))
 }
 
 async fn get_history_record(
@@ -89,18 +103,13 @@ async fn cleanup_history(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AsrError> {
     let settings = state.db.load_settings().await?;
-
-    let record_candidates = state.history.list_record_candidates().await?;
-    let record_ids = select_to_delete(&record_candidates, &settings.record_retention);
-    let deleted_records = state.history.delete_many(&record_ids).await?;
-
-    let audio_candidates = state.history.list_audio_candidates().await?;
-    let audio_ids = select_to_delete(&audio_candidates, &settings.audio_retention);
-    let dropped_audios = state.history.drop_audios(&audio_ids).await?;
-
+    let outcome = state
+        .history
+        .run_retention_sweep(&settings.record_retention, &settings.audio_retention)
+        .await;
     Ok(Json(serde_json::json!({
-        "deleted_records": deleted_records,
-        "dropped_audios": dropped_audios,
+        "deleted_records": outcome.deleted_records,
+        "dropped_audios": outcome.dropped_audios,
     })))
 }
 
@@ -140,6 +149,7 @@ async fn history_live(
 pub fn history_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/history", get(list_history).delete(delete_all_history))
+        .route("/api/history/facets", get(get_history_facets))
         .route("/api/history/live", get(history_live))
         .route("/api/history/cleanup", post(cleanup_history))
         .route("/api/history/{record_id}", get(get_history_record))

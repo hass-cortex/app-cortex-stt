@@ -9,7 +9,7 @@ patterns (RAII guards, semaphores, broadcast channels) are not listed.
 ### Transcription
 
 **Transcription pipeline**:
-The shared flow `decode audio → acquire engine → run inference → save to history`. Lives in `api/transcribe.rs` today as a set of private helpers; the handlers (sync / async / stream session) compose it.
+The shared flow `decode audio → acquire engine → run inference → save to history`. Audio decoding happens at the HTTP boundary; the rest lives in `transcriber.rs` (`Transcriber`), which the handlers (sync / async / stream session) and `asr-cli` drive.
 _Avoid_: "request handler", "transcription service"
 
 **Speech engine**:
@@ -60,6 +60,10 @@ _Avoid_: "delete model" when the whole operation is meant
 A persisted artifact of one transcription: a DB row, plus an _optional_ WAV file on disk. The two parts are paired and obey lifecycle invariants.
 _Avoid_: "history entry", "log entry", "record" (alone)
 
+**Capture device**:
+The microphone / Assist satellite that recorded a transcription's audio, as reported by the client (`capture_device` on the request; free text, e.g. a HA device name). Persisted on the Transcription history record for per-microphone quality analysis, alongside the input-signal level stats (`rms_db`, `peak_db`, `clip_ratio`) the server computes itself.
+_Avoid_: "device" (alone — that is the **compute backend** the engine ran on, e.g. "CPU"/"CUDA"), "source device" ("source" means http_api/ws_api)
+
 **Delete record**:
 The operation "drop a history record entirely" — removes the WAV (if present) **and** the DB row.
 
@@ -100,3 +104,4 @@ Two independent retention policies applied separately. `record_retention` drives
 - "cleanup" in code means _retention sweep_, not garbage collection in the language sense.
 - "multi-engine" is a pre-transcribe.cpp phrase — there is one engine runtime now, many **Catalog models**. Say "multi-model".
 - "streaming" is overloaded: a **Stream session** (WS transcription) is unrelated to `/api/history/live` (SSE tail of new records) and to download-progress SSE.
+- "device" is overloaded: the `device` column/field is the **compute backend** ("CPU"/"CUDA"); the **Capture device** (`capture_device`) is the microphone that recorded the audio. Never mix the two.

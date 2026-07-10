@@ -157,12 +157,23 @@ export interface TranscriptionRecord {
 	error_message: string | null;
 	api_key_id: string | null;
 	device: string;
+	/** Capture device (microphone/satellite) that recorded the audio. */
+	capture_device: string | null;
+	/** Input-signal RMS level in dBFS (null on failure/legacy rows). */
+	rms_db: number | null;
+	peak_db: number | null;
+	clip_ratio: number | null;
 }
 
 export interface TranscriptionSegment {
 	start: number;
 	end: number;
 	text: string;
+}
+
+export interface HistoryFacets {
+	models: string[];
+	capture_devices: string[];
 }
 
 export interface HistoryFilters {
@@ -172,6 +183,7 @@ export interface HistoryFilters {
 	from?: string;
 	to?: string;
 	has_error?: boolean;
+	capture_device?: string;
 	limit?: number;
 	offset?: number;
 }
