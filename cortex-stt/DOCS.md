@@ -63,9 +63,9 @@ Click the Home Assistant My button below to open the app on your Home Assistant 
 Open the **Cortex STT** panel from the sidebar → **Models** tab → pick a
 model (and optionally a quantization level — smaller = faster/less RAM,
 larger = more accurate) → **Download**. `SenseVoiceSmall` is a good
-first choice. See
-[MODELS.md](../MODELS.md) for the full catalog with sizes, supported
-languages, and use-case notes.
+first choice. See the
+[transcribe.cpp model docs](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models)
+for per-model cards with sizes, supported languages, and use-case notes.
 
 ### 2. Configure default model and lifecycle (Optional)
 

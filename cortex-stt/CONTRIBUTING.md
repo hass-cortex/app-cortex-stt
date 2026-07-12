@@ -114,9 +114,9 @@ Models are never added by hand — the catalog is a vendored snapshot of
 Handy's `catalog.json` (see `docs/adr/0003`). When upstream adds new
 models or quants:
 
-1. Run `uv run scripts/sync-catalog.py` (rewrites `src/model/catalog.json` and regenerates `MODELS.md`)
+1. Run `uv run scripts/sync-catalog.py` (rewrites `src/model/catalog.json`)
 2. Review the diff and run `cargo test --no-default-features` (catalog consistency tests)
-3. Commit both files together
+3. Commit
 
 New model families need no code changes — every catalog model runs on
 the single transcribe.cpp runtime behind the `SpeechEngine` trait.

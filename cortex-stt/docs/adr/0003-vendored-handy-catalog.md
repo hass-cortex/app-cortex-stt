@@ -4,7 +4,9 @@ The set of downloadable models (the **Catalog**) is no longer a hand-curated
 list in `registry.rs`. It is a full sync of Handy's `catalog.json`
 (handy-computer GGUF releases), vendored into this repo as a converted snapshot
 and refreshed by a maintainer-run `sync-catalog` script that also fetches
-per-file sha256 from Hugging Face LFS metadata and regenerates `MODELS.md`.
+per-file sha256 from Hugging Face LFS metadata. (Model documentation lives
+upstream — [transcribe.cpp `docs/models/`](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models);
+the generated `MODELS.md` was removed in favor of linking there.)
 
 ## Why full sync, vendored
 

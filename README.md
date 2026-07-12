@@ -5,7 +5,7 @@
 [![GitHub License](https://img.shields.io/github/license/hass-cortex/app-cortex-stt)](https://github.com/hass-cortex/app-cortex-stt/blob/main/LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hass-cortex/app-cortex-stt)
 
-Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, SenseVoice, Qwen3-ASR, and more on a single [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (GGUF) runtime. See [MODELS.md](MODELS.md) for the full list of built-in models.
+Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, SenseVoice, Qwen3-ASR, and more on a single [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (GGUF) runtime. See the [transcribe.cpp supported-models table](https://github.com/handy-computer/transcribe.cpp#supported-models) and its per-model cards under [`docs/models/`](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models) for the full list of built-in models.
 
 ## Screenshots
 
