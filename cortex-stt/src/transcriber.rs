@@ -111,9 +111,9 @@ pub struct TranscribeRequest {
     pub samples: Arc<[f32]>,
     pub duration_ms: u64,
     pub options: TranscribeOptions,
-    /// Original BCP-47 language tag (e.g. "zh-TW"). Stored on the
-    /// history record alongside the engine-normalized form in
-    /// `options.language`.
+    /// BCP-47 language tag as the client sent it (e.g. "zh-TW"), for the
+    /// history record. `options.language` carries the same value; the
+    /// engine bridge is what maps it onto a code the model declares.
     pub language: Option<String>,
     pub source: TranscriptionSource,
     pub api_key_id: Option<String>,

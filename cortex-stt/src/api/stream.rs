@@ -27,7 +27,6 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::api::auth::AuthKeyId;
-use crate::api::transcribe::normalize_language;
 use crate::audio::canonical::SAMPLE_RATE;
 use crate::audio::resample::raw_pcm_to_f32;
 use crate::engine::traits::{Timestamps, TranscribeOptions};
@@ -164,7 +163,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
     }
 
     let options = TranscribeOptions {
-        language: normalize_language(start.language.clone()),
+        language: start.language.clone(),
         translate: start.translate,
         initial_prompt: start.initial_prompt.clone(),
         itn: start.itn,

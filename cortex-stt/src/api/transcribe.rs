@@ -56,10 +56,11 @@ pub struct TranscribeQuery {
 }
 
 impl TranscribeQuery {
-    /// Engine-shaped options (language normalized to a base code).
+    /// Engine-shaped options. The language hint travels verbatim; only the
+    /// engine knows which codes the loaded model declares.
     pub fn to_options(&self) -> TranscribeOptions {
         TranscribeOptions {
-            language: normalize_language(self.language.clone()),
+            language: self.language.clone(),
             translate: self.translate,
             initial_prompt: self.initial_prompt.clone(),
             itn: self.itn,
@@ -156,12 +157,6 @@ fn decode_audio(
         // Default: treat as WAV.
         resample_to_16khz_mono(body)
     }
-}
-
-/// Normalize a BCP-47 locale (e.g. "zh-TW") to a base language code ("zh").
-/// Engines like SenseVoice only accept base codes.
-pub fn normalize_language(lang: Option<String>) -> Option<String> {
-    lang.map(|l| l.split(['-', '_']).next().unwrap_or(&l).to_string())
 }
 
 // ---------------------------------------------------------------------------

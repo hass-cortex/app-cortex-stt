@@ -91,6 +91,23 @@ impl TranscribeBridge {
     }
 
     fn build_run_options(&self, options: &TranscribeOptions) -> RunOptions {
+        let language = resolve_language(options.language.as_deref(), &self.caps.languages);
+        if let Some(want) = options.language.as_deref()
+            && language.is_none()
+        {
+            tracing::warn!(
+                model_id = %self.model_id,
+                language = %want,
+                "language hint not in the model's declared set; falling back to the model's own choice",
+            );
+        }
+        // Whisper's run extension is the only prompt delivery path today.
+        if options.initial_prompt.is_some() && !self.is_whisper {
+            tracing::warn!(
+                model_id = %self.model_id,
+                "initial_prompt ignored: only the whisper family accepts a prompt extension",
+            );
+        }
         RunOptions {
             task: if options.translate {
                 Task::Translate
@@ -108,7 +125,7 @@ impl TranscribeBridge {
                 Some(true) => Itn::On,
                 Some(false) => Itn::Off,
             },
-            language: options.language.clone(),
+            language,
             family: match (&options.initial_prompt, self.is_whisper) {
                 (Some(prompt), true) => Some(RunExtension::Whisper(WhisperRunOptions {
                     initial_prompt: Some(prompt.clone()),
@@ -142,6 +159,36 @@ impl TranscribeBridge {
             self.session = Some(active.into_heads().session);
         }
     }
+}
+
+/// Strip a BCP-47 code down to its base language subtag ("zh-TW" -> "zh").
+fn base_code(code: &str) -> String {
+    code.split(['-', '_'])
+        .next()
+        .unwrap_or(code)
+        .to_ascii_lowercase()
+}
+
+/// Map a caller's language hint onto a code the loaded model declares.
+///
+/// The engine matches `run_params.language` against the model's own declared
+/// list literally, and GGUFs declare that list in different shapes: base codes
+/// ("zh", "en") for SenseVoice, region-tagged BCP-47 ("zh-CN", "en-US") for
+/// Nemotron. A hint that survives as the wrong shape is a hard
+/// `UNSUPPORTED_LANGUAGE` failure, so match on the base subtag and hand back
+/// the declared spelling. `None` means "no usable hint" — the model picks.
+fn resolve_language(requested: Option<&str>, declared: &[String]) -> Option<String> {
+    let want = requested?;
+    // Language-agnostic model: nothing to match against. Base code is what
+    // these backends have always been given.
+    if declared.is_empty() {
+        return Some(base_code(want));
+    }
+    declared
+        .iter()
+        .find(|d| d.eq_ignore_ascii_case(want))
+        .or_else(|| declared.iter().find(|d| base_code(d) == base_code(want)))
+        .cloned()
 }
 
 fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -> AsrError {
@@ -298,4 +345,70 @@ pub fn transcribe_factory(
         let bridge = TranscribeBridge::load(&model_id, &model_path, backend, gpu_device)?;
         Ok(Box::new(bridge) as Box<dyn SpeechEngine>)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn declared(codes: &[&str]) -> Vec<String> {
+        codes.iter().map(|c| c.to_string()).collect()
+    }
+
+    /// Region-tagged declaration (Nemotron): a base-code hint must be widened
+    /// to the declared spelling, not passed through as-is.
+    #[test]
+    fn widens_base_hint_to_a_region_tagged_declaration() {
+        let d = declared(&["en-US", "en-GB", "zh-CN", "ja-JP"]);
+        assert_eq!(resolve_language(Some("en"), &d), Some("en-US".into()));
+        assert_eq!(resolve_language(Some("zh"), &d), Some("zh-CN".into()));
+    }
+
+    /// The failing case from the field: HA sends zh-TW, the model declares
+    /// only zh-CN. Same base subtag, so it resolves instead of hard-failing.
+    #[test]
+    fn maps_a_sibling_region_onto_the_declared_one() {
+        let d = declared(&["en-US", "zh-CN"]);
+        assert_eq!(resolve_language(Some("zh-TW"), &d), Some("zh-CN".into()));
+    }
+
+    /// Base-code declaration (SenseVoice): a region-tagged hint narrows.
+    #[test]
+    fn narrows_a_region_hint_to_a_base_declaration() {
+        let d = declared(&["zh", "en", "ja"]);
+        assert_eq!(resolve_language(Some("zh-TW"), &d), Some("zh".into()));
+        assert_eq!(resolve_language(Some("en"), &d), Some("en".into()));
+    }
+
+    #[test]
+    fn prefers_an_exact_match_over_a_base_match() {
+        let d = declared(&["en-GB", "en-US"]);
+        assert_eq!(resolve_language(Some("en-US"), &d), Some("en-US".into()));
+    }
+
+    #[test]
+    fn matches_case_insensitively() {
+        let d = declared(&["zh-CN"]);
+        assert_eq!(resolve_language(Some("ZH-cn"), &d), Some("zh-CN".into()));
+    }
+
+    /// No match must drop the hint — the model autodetects rather than the
+    /// whole transcription failing with UNSUPPORTED_LANGUAGE.
+    #[test]
+    fn drops_a_hint_the_model_does_not_declare() {
+        let d = declared(&["en-US", "zh-CN"]);
+        assert_eq!(resolve_language(Some("ko"), &d), None);
+    }
+
+    /// Empty declaration = language-agnostic model; keep the historical
+    /// base-code behaviour rather than inventing a passthrough.
+    #[test]
+    fn falls_back_to_the_base_code_when_nothing_is_declared() {
+        assert_eq!(resolve_language(Some("zh-TW"), &[]), Some("zh".into()));
+    }
+
+    #[test]
+    fn no_hint_stays_no_hint() {
+        assert_eq!(resolve_language(None, &declared(&["en-US"])), None);
+    }
 }
