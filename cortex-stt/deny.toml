@@ -5,12 +5,12 @@
 version = 2
 yanked = "warn"
 ignore = [
-    # RUSTSEC-2026-0150: audiopus_sys (transitive via `opus 0.3`) is unmaintained.
-    # This is an "unmaintained" advisory, not a security vulnerability, and no safe
-    # upgrade exists upstream (last commit 5 years ago; maintainer unresponsive).
-    # The bundled C build still compiles on our CI and runtime. Revisit if CMake 4.0
-    # actually breaks the build, or once a maintained Opus binding becomes available.
-    { id = "RUSTSEC-2026-0150", reason = "audiopus_sys unmaintained; no upstream fix, build still works" },
+    # RUSTSEC-2025-0141: bincode 2.0.1, transitive via `ferrous-opencc`, whose team
+    # stopped development by choice. An "unmaintained" advisory, not a
+    # vulnerability, and it is not ours to upgrade — dropping it means dropping
+    # the script conversion the language subtags render with. Revisit if
+    # ferrous-opencc moves off bincode or an advisory with teeth lands on it.
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained by choice; transitive via ferrous-opencc" },
 ]
 
 [licenses]
