@@ -16,9 +16,34 @@ env:
   GGML_NATIVE: 'OFF'
 
 jobs:
+  catalog-freshness:
+    name: Catalog freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # A stale pin ships a model nobody can install, so a tag fails here
+      # rather than at the user's download. Deliberately not in ci.yml:
+      # this depends on upstream and would fail pull requests for reasons
+      # unrelated to their changes.
+      - name: Re-sync and compare
+        working-directory: cortex-stt
+        run: |
+          uv run scripts/sync-catalog.py
+          if ! git diff --quiet src/model/catalog.json; then
+            echo "::error::Vendored catalog is stale. Run 'uv run scripts/sync-catalog.py', review the diff, run 'cargo test', commit, and re-tag."
+            git --no-pager diff --stat src/model/catalog.json
+            exit 1
+          fi
+          echo "Catalog matches upstream."
+
   build-binary:
     name: Build binary (x86_64)
     runs-on: ubuntu-latest
+    needs: [catalog-freshness]
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -41,6 +66,7 @@ jobs:
   build-web:
     name: Build Web UI
     runs-on: ubuntu-latest
+    needs: [catalog-freshness]
     steps:
       - uses: actions/checkout@v6.0.2
 

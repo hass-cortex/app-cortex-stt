@@ -1,0 +1,75 @@
+---
+name: Catalog drift
+
+# Surfaces upstream catalog drift as a reviewable PR. Never auto-merges:
+# the vendored SHA-256 pins stay authoritative, and the review is what
+# keeps them so.
+
+# yamllint disable-line rule:truthy
+on:
+  schedule:
+    # Mondays, 06:00 UTC — a fresh diff waiting at the start of the week.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    name: Re-sync and open a PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Re-sync catalog
+        working-directory: cortex-stt
+        run: uv run scripts/sync-catalog.py
+
+      # A PR opened with GITHUB_TOKEN does not trigger workflows, so this
+      # one arrives with no checks — hence the body asking for cargo test.
+      - name: Open or update the drift PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet cortex-stt/src/model/catalog.json; then
+            echo "Catalog matches upstream. Nothing to do."
+            exit 0
+          fi
+
+          echo "Drift detected:"
+          git --no-pager diff --stat cortex-stt/src/model/catalog.json
+
+          # One long-lived branch, force-pushed: a second week of drift
+          # updates the open PR instead of stacking a duplicate.
+          BRANCH=chore/catalog-sync
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add cortex-stt/src/model/catalog.json
+          git commit -m "chore(catalog): re-sync vendored snapshot
+
+          Upstream re-uploaded one or more model files, so the pinned
+          SHA-256 digests no longer match. Left unmerged, those models
+          fail their download verification and cannot be installed.
+
+          Review the diff, then merge. Opened automatically."
+          git push --force origin "$BRANCH"
+
+          if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            echo "Existing PR updated."
+          else
+            gh pr create \
+              --base main --head "$BRANCH" \
+              --title "chore(catalog): re-sync vendored snapshot" \
+              --body "Upstream changed one or more model files. The vendored catalog pins a SHA-256 per file, so until this merges those models fail verification and cannot be installed.
+
+          Before merging: check the diff for models **removed** upstream (they disappear from the app's catalog) and run \`cargo test --no-default-features\` for the catalog consistency tests.
+
+          Opened by the weekly \`Catalog drift\` workflow."
+          fi

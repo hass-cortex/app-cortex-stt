@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 use tokio_stream::StreamExt;
 use tracing::{error, info, warn};
@@ -95,12 +95,21 @@ fn is_cancelled(cancel_flag: &AtomicBool, model_id: &str) -> bool {
 /// Compute the SHA-256 hash of a file, reading in 64 KB chunks.
 ///
 /// Returns the lowercase hex-encoded digest.
+///
+/// Streams the file: a model is as large as the largest model we offer
+/// (currently 3.3 GB), and reading one into a buffer to hash it costs
+/// more memory than loading it for inference does.
 pub async fn compute_sha256(path: &Path) -> Result<String, AsrError> {
-    let data = fs::read(path).await?;
+    let mut file = fs::File::open(path).await?;
     let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
 
-    for chunk in data.chunks(64 * 1024) {
-        hasher.update(chunk);
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
     }
 
     Ok(hex::encode(hasher.finalize()))

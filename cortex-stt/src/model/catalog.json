@@ -1,6 +1,6 @@
 {
-  "catalog_version": 1,
-  "generated_at": "2026-07-08T09:57:32Z",
+  "catalog_version": 2,
+  "generated_at": "2026-08-21T18:46:06Z",
   "source": "cjpais/Handy catalog.json",
   "models": [
     {
@@ -1208,6 +1208,74 @@
       "accuracy_score": 90
     },
     {
+      "id": "cohere-transcribe-arabic-07-2026",
+      "name": "Cohere Transcribe",
+      "description": "2-language speech-to-text.",
+      "family": "cohere",
+      "parameters": "2.0B",
+      "base_model": "CohereLabs/cohere-transcribe-arabic-07-2026",
+      "license": "apache-2.0",
+      "languages": [
+        "ar",
+        "en"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "cohere-transcribe-arabic-07-2026-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-Q4_K_M.gguf",
+          "sha256": "4671080cd10ffc6166e1e1b36216f9b51e1455f170d55c59cff7b81332ad4621",
+          "size_bytes": 1558162848
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "cohere-transcribe-arabic-07-2026-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-Q5_K_M.gguf",
+          "sha256": "55e61c9b047e36f0e084d367f6b0bfecc71a6a0527da6eea4f0c687f3584775f",
+          "size_bytes": 1770270112
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "cohere-transcribe-arabic-07-2026-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-Q6_K.gguf",
+          "sha256": "f0fc615d27da3236166cd68cf9968c3be7d257b953bbba3b2e10e5d9f3fd1ff4",
+          "size_bytes": 1972524448
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "cohere-transcribe-arabic-07-2026-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-Q8_0.gguf",
+          "sha256": "910de5c9c57f9fd8a280e1701f9cd96f63768878c1ca9e4ecf23638a5e0fef16",
+          "size_bytes": 2410655136
+        },
+        {
+          "quant": "BF16",
+          "filename": "cohere-transcribe-arabic-07-2026-BF16.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-BF16.gguf",
+          "sha256": "4eade55ddc6ef7d9d1caeee0fa412d161212910c30ee2aa82d95725e0dfdf0a2",
+          "size_bytes": 4105263008
+        },
+        {
+          "quant": "F16",
+          "filename": "cohere-transcribe-arabic-07-2026-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/main/cohere-transcribe-arabic-07-2026-F16.gguf",
+          "sha256": "c8a37345c10d1cb3b85d7d1779905e63051f39694bd6fdd5002d9434c09226fc",
+          "size_bytes": 4106644896
+        }
+      ],
+      "default_quant": "Q5_K_M",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 63,
+      "accuracy_score": 48
+    },
+    {
       "id": "Fun-ASR-Nano-2512",
       "name": "Fun-ASR Nano",
       "description": "3-language speech-to-text.",
@@ -1898,52 +1966,6 @@
       "accuracy_score": 30
     },
     {
-      "id": "moonshine-tiny",
-      "name": "Moonshine Tiny",
-      "description": "English speech-to-text.",
-      "family": "moonshine",
-      "parameters": "27M",
-      "base_model": "UsefulSensors/moonshine-tiny",
-      "license": "mit",
-      "languages": [
-        "en"
-      ],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "quants": [
-        {
-          "quant": "Q8_0",
-          "filename": "moonshine-tiny-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-Q8_0.gguf",
-          "sha256": "2fd348d7b38f97d309cc3ec6848f3f57f537b80244950f07d2637e463f95a3a1",
-          "size_bytes": 35466912
-        },
-        {
-          "quant": "F16",
-          "filename": "moonshine-tiny-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-F16.gguf",
-          "sha256": "d115694627d146c347ac5209db69db48b3125b07971026a6119b1888db7563d3",
-          "size_bytes": 59244192
-        },
-        {
-          "quant": "F32",
-          "filename": "moonshine-tiny-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-F32.gguf",
-          "sha256": "67e50023e13f295d6efb8500b69a538019ff7c2dd4b577e425260048e8035418",
-          "size_bytes": 109969056
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 100,
-      "accuracy_score": 74
-    },
-    {
       "id": "moonshine-streaming-tiny",
       "name": "Moonshine Streaming Tiny",
       "description": "English speech-to-text with streaming.",
@@ -1990,15 +2012,15 @@
       "accuracy_score": 74
     },
     {
-      "id": "moonshine-tiny-vi",
-      "name": "Moonshine Tiny (Vietnamese)",
+      "id": "moonshine-tiny",
+      "name": "Moonshine Tiny",
       "description": "English speech-to-text.",
       "family": "moonshine",
       "parameters": "27M",
-      "base_model": "UsefulSensors/moonshine-tiny-vi",
+      "base_model": "UsefulSensors/moonshine-tiny",
       "license": "mit",
       "languages": [
-        "vi"
+        "en"
       ],
       "capabilities": {
         "streaming": false,
@@ -2009,174 +2031,36 @@
       "quants": [
         {
           "quant": "Q8_0",
-          "filename": "moonshine-tiny-vi-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-Q8_0.gguf",
-          "sha256": "a42a80ef2e3636104aa2aff87cdde3e251e319e7d0d1acb3fb594cc601d8b95f",
-          "size_bytes": 35466944
+          "filename": "moonshine-tiny-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-Q8_0.gguf",
+          "sha256": "2fd348d7b38f97d309cc3ec6848f3f57f537b80244950f07d2637e463f95a3a1",
+          "size_bytes": 35466912
         },
         {
           "quant": "F16",
-          "filename": "moonshine-tiny-vi-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-F16.gguf",
-          "sha256": "94464f474fc4a574951e335a731fabaf97a2e517a96bf4fcfd82791a67fa40ce",
-          "size_bytes": 59244224
+          "filename": "moonshine-tiny-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-F16.gguf",
+          "sha256": "d115694627d146c347ac5209db69db48b3125b07971026a6119b1888db7563d3",
+          "size_bytes": 59244192
         },
         {
           "quant": "F32",
-          "filename": "moonshine-tiny-vi-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-F32.gguf",
-          "sha256": "7423501769416a83eb4763ea85be58e4c20ca629d9181f522a2a2da398b9c194",
-          "size_bytes": 109969088
+          "filename": "moonshine-tiny-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-gguf/resolve/main/moonshine-tiny-F32.gguf",
+          "sha256": "67e50023e13f295d6efb8500b69a538019ff7c2dd4b577e425260048e8035418",
+          "size_bytes": 109969056
         }
       ],
       "default_quant": "Q8_0",
       "recommended": false,
       "recommended_rank": null,
       "speed_score": 100,
-      "accuracy_score": 42
-    },
-    {
-      "id": "moonshine-tiny-uk",
-      "name": "Moonshine Tiny (Ukrainian)",
-      "description": "English speech-to-text.",
-      "family": "moonshine",
-      "parameters": "27M",
-      "base_model": "UsefulSensors/moonshine-tiny-uk",
-      "license": "mit",
-      "languages": [
-        "uk"
-      ],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "quants": [
-        {
-          "quant": "Q8_0",
-          "filename": "moonshine-tiny-uk-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-Q8_0.gguf",
-          "sha256": "61c372f6d99cce6c7b7c45626a51a6c935217368e715d9c4e036ce85f4496338",
-          "size_bytes": 35466944
-        },
-        {
-          "quant": "F16",
-          "filename": "moonshine-tiny-uk-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-F16.gguf",
-          "sha256": "08521642651a398a6c7afac28395ce5cc6938d30f9563bde4c13fe898438ff69",
-          "size_bytes": 59244224
-        },
-        {
-          "quant": "F32",
-          "filename": "moonshine-tiny-uk-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-F32.gguf",
-          "sha256": "7c2bf9f4562f9c094f12fe73d490d03dc2971bc7f31bf0b2e5b3b10b92330610",
-          "size_bytes": 109969088
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 100,
-      "accuracy_score": 28
-    },
-    {
-      "id": "moonshine-tiny-ko",
-      "name": "Moonshine Tiny (Korean)",
-      "description": "English speech-to-text.",
-      "family": "moonshine",
-      "parameters": "27M",
-      "base_model": "UsefulSensors/moonshine-tiny-ko",
-      "license": "mit",
-      "languages": [
-        "ko"
-      ],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "quants": [
-        {
-          "quant": "Q8_0",
-          "filename": "moonshine-tiny-ko-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-Q8_0.gguf",
-          "sha256": "3ffe3340ceed10843789e2f7bf580097213c97a3537cae7031dbfe2a409b36b7",
-          "size_bytes": 35466944
-        },
-        {
-          "quant": "F16",
-          "filename": "moonshine-tiny-ko-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-F16.gguf",
-          "sha256": "4228c8e92d6308166f96708de35af09318d624c3c1495e80eb8f6180790edd5d",
-          "size_bytes": 59244224
-        },
-        {
-          "quant": "F32",
-          "filename": "moonshine-tiny-ko-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-F32.gguf",
-          "sha256": "1a13e4a0b7a97c9974ca1f88b275f8e43bf6453225cf549712efe4ec7aa1ad40",
-          "size_bytes": 109969088
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 100,
-      "accuracy_score": 55
-    },
-    {
-      "id": "moonshine-tiny-zh",
-      "name": "Moonshine Tiny (Chinese)",
-      "description": "English speech-to-text.",
-      "family": "moonshine",
-      "parameters": "27M",
-      "base_model": "UsefulSensors/moonshine-tiny-zh",
-      "license": "mit",
-      "languages": [
-        "zh"
-      ],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "quants": [
-        {
-          "quant": "Q8_0",
-          "filename": "moonshine-tiny-zh-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-Q8_0.gguf",
-          "sha256": "95387abe90625410f8e2bcec43faaaadc0d92ef1e721117eb8a69cd31a7ef692",
-          "size_bytes": 35466944
-        },
-        {
-          "quant": "F16",
-          "filename": "moonshine-tiny-zh-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-F16.gguf",
-          "sha256": "33c59e565336f1b8d6da86cb6d6321e8797bb65e9bf11947258e7340d3dcd968",
-          "size_bytes": 59244224
-        },
-        {
-          "quant": "F32",
-          "filename": "moonshine-tiny-zh-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-F32.gguf",
-          "sha256": "43cb182cedd45d7117846bb540bb2b33ee200ec35095b9f7a697ea3ad3c9602f",
-          "size_bytes": 109969088
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 100,
-      "accuracy_score": 40
+      "accuracy_score": 74
     },
     {
       "id": "moonshine-tiny-ar",
       "name": "Moonshine Tiny (Arabic)",
-      "description": "English speech-to-text.",
+      "description": "Arabic speech-to-text.",
       "family": "moonshine",
       "parameters": "27M",
       "base_model": "UsefulSensors/moonshine-tiny-ar",
@@ -2222,7 +2106,7 @@
     {
       "id": "moonshine-tiny-ja",
       "name": "Moonshine Tiny (Japanese)",
-      "description": "English speech-to-text.",
+      "description": "Japanese speech-to-text.",
       "family": "moonshine",
       "parameters": "27M",
       "base_model": "UsefulSensors/moonshine-tiny-ja",
@@ -2264,6 +2148,190 @@
       "recommended_rank": null,
       "speed_score": 100,
       "accuracy_score": 41
+    },
+    {
+      "id": "moonshine-tiny-ko",
+      "name": "Moonshine Tiny (Korean)",
+      "description": "Korean speech-to-text.",
+      "family": "moonshine",
+      "parameters": "27M",
+      "base_model": "UsefulSensors/moonshine-tiny-ko",
+      "license": "mit",
+      "languages": [
+        "ko"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q8_0",
+          "filename": "moonshine-tiny-ko-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-Q8_0.gguf",
+          "sha256": "3ffe3340ceed10843789e2f7bf580097213c97a3537cae7031dbfe2a409b36b7",
+          "size_bytes": 35466944
+        },
+        {
+          "quant": "F16",
+          "filename": "moonshine-tiny-ko-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-F16.gguf",
+          "sha256": "4228c8e92d6308166f96708de35af09318d624c3c1495e80eb8f6180790edd5d",
+          "size_bytes": 59244224
+        },
+        {
+          "quant": "F32",
+          "filename": "moonshine-tiny-ko-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-ko-gguf/resolve/main/moonshine-tiny-ko-F32.gguf",
+          "sha256": "1a13e4a0b7a97c9974ca1f88b275f8e43bf6453225cf549712efe4ec7aa1ad40",
+          "size_bytes": 109969088
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 100,
+      "accuracy_score": 55
+    },
+    {
+      "id": "moonshine-tiny-uk",
+      "name": "Moonshine Tiny (Ukrainian)",
+      "description": "Ukrainian speech-to-text.",
+      "family": "moonshine",
+      "parameters": "27M",
+      "base_model": "UsefulSensors/moonshine-tiny-uk",
+      "license": "mit",
+      "languages": [
+        "uk"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q8_0",
+          "filename": "moonshine-tiny-uk-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-Q8_0.gguf",
+          "sha256": "61c372f6d99cce6c7b7c45626a51a6c935217368e715d9c4e036ce85f4496338",
+          "size_bytes": 35466944
+        },
+        {
+          "quant": "F16",
+          "filename": "moonshine-tiny-uk-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-F16.gguf",
+          "sha256": "08521642651a398a6c7afac28395ce5cc6938d30f9563bde4c13fe898438ff69",
+          "size_bytes": 59244224
+        },
+        {
+          "quant": "F32",
+          "filename": "moonshine-tiny-uk-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-uk-gguf/resolve/main/moonshine-tiny-uk-F32.gguf",
+          "sha256": "7c2bf9f4562f9c094f12fe73d490d03dc2971bc7f31bf0b2e5b3b10b92330610",
+          "size_bytes": 109969088
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 100,
+      "accuracy_score": 28
+    },
+    {
+      "id": "moonshine-tiny-vi",
+      "name": "Moonshine Tiny (Vietnamese)",
+      "description": "Vietnamese speech-to-text.",
+      "family": "moonshine",
+      "parameters": "27M",
+      "base_model": "UsefulSensors/moonshine-tiny-vi",
+      "license": "mit",
+      "languages": [
+        "vi"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q8_0",
+          "filename": "moonshine-tiny-vi-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-Q8_0.gguf",
+          "sha256": "a42a80ef2e3636104aa2aff87cdde3e251e319e7d0d1acb3fb594cc601d8b95f",
+          "size_bytes": 35466944
+        },
+        {
+          "quant": "F16",
+          "filename": "moonshine-tiny-vi-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-F16.gguf",
+          "sha256": "94464f474fc4a574951e335a731fabaf97a2e517a96bf4fcfd82791a67fa40ce",
+          "size_bytes": 59244224
+        },
+        {
+          "quant": "F32",
+          "filename": "moonshine-tiny-vi-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-vi-gguf/resolve/main/moonshine-tiny-vi-F32.gguf",
+          "sha256": "7423501769416a83eb4763ea85be58e4c20ca629d9181f522a2a2da398b9c194",
+          "size_bytes": 109969088
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 100,
+      "accuracy_score": 42
+    },
+    {
+      "id": "moonshine-tiny-zh",
+      "name": "Moonshine Tiny (Chinese)",
+      "description": "Chinese speech-to-text.",
+      "family": "moonshine",
+      "parameters": "27M",
+      "base_model": "UsefulSensors/moonshine-tiny-zh",
+      "license": "mit",
+      "languages": [
+        "zh"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q8_0",
+          "filename": "moonshine-tiny-zh-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-Q8_0.gguf",
+          "sha256": "95387abe90625410f8e2bcec43faaaadc0d92ef1e721117eb8a69cd31a7ef692",
+          "size_bytes": 35466944
+        },
+        {
+          "quant": "F16",
+          "filename": "moonshine-tiny-zh-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-F16.gguf",
+          "sha256": "33c59e565336f1b8d6da86cb6d6321e8797bb65e9bf11947258e7340d3dcd968",
+          "size_bytes": 59244224
+        },
+        {
+          "quant": "F32",
+          "filename": "moonshine-tiny-zh-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-tiny-zh-gguf/resolve/main/moonshine-tiny-zh-F32.gguf",
+          "sha256": "43cb182cedd45d7117846bb540bb2b33ee200ec35095b9f7a697ea3ad3c9602f",
+          "size_bytes": 109969088
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 100,
+      "accuracy_score": 40
     },
     {
       "id": "moonshine-base",
@@ -2314,7 +2382,7 @@
     {
       "id": "moonshine-base-ar",
       "name": "Moonshine Base (Arabic)",
-      "description": "English speech-to-text.",
+      "description": "Arabic speech-to-text.",
       "family": "moonshine",
       "parameters": "62M",
       "base_model": "UsefulSensors/moonshine-base-ar",
@@ -2358,9 +2426,55 @@
       "accuracy_score": 20
     },
     {
+      "id": "moonshine-base-ja",
+      "name": "Moonshine Base (Japanese)",
+      "description": "Japanese speech-to-text.",
+      "family": "moonshine",
+      "parameters": "62M",
+      "base_model": "UsefulSensors/moonshine-base-ja",
+      "license": "mit",
+      "languages": [
+        "ja"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "none"
+      },
+      "quants": [
+        {
+          "quant": "Q8_0",
+          "filename": "moonshine-base-ja-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-Q8_0.gguf",
+          "sha256": "8ee6e9d7c9df69a3ea654af77659f1c0c08bf90998c2e2a269826096ffafc4f0",
+          "size_bytes": 77476480
+        },
+        {
+          "quant": "F16",
+          "filename": "moonshine-base-ja-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-F16.gguf",
+          "sha256": "a3fb02bb2f6d6b5082818fb60cbc816a20e3865502adca2e1fd94068b29e5d2b",
+          "size_bytes": 131789440
+        },
+        {
+          "quant": "F32",
+          "filename": "moonshine-base-ja-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-F32.gguf",
+          "sha256": "649f65dbc795d9fd4cf23f2123a09cdcdffba7e071891caa39e60d6a84c19082",
+          "size_bytes": 247657088
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 99,
+      "accuracy_score": 50
+    },
+    {
       "id": "moonshine-base-ko",
       "name": "Moonshine Base (Korean)",
-      "description": "English speech-to-text.",
+      "description": "Korean speech-to-text.",
       "family": "moonshine",
       "parameters": "62M",
       "base_model": "UsefulSensors/moonshine-base-ko",
@@ -2406,7 +2520,7 @@
     {
       "id": "moonshine-base-uk",
       "name": "Moonshine Base (Ukrainian)",
-      "description": "English speech-to-text.",
+      "description": "Ukrainian speech-to-text.",
       "family": "moonshine",
       "parameters": "62M",
       "base_model": "UsefulSensors/moonshine-base-uk",
@@ -2450,55 +2564,9 @@
       "accuracy_score": 38
     },
     {
-      "id": "moonshine-base-ja",
-      "name": "Moonshine Base (Japanese)",
-      "description": "English speech-to-text.",
-      "family": "moonshine",
-      "parameters": "62M",
-      "base_model": "UsefulSensors/moonshine-base-ja",
-      "license": "mit",
-      "languages": [
-        "ja"
-      ],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "none"
-      },
-      "quants": [
-        {
-          "quant": "Q8_0",
-          "filename": "moonshine-base-ja-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-Q8_0.gguf",
-          "sha256": "8ee6e9d7c9df69a3ea654af77659f1c0c08bf90998c2e2a269826096ffafc4f0",
-          "size_bytes": 77476480
-        },
-        {
-          "quant": "F16",
-          "filename": "moonshine-base-ja-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-F16.gguf",
-          "sha256": "a3fb02bb2f6d6b5082818fb60cbc816a20e3865502adca2e1fd94068b29e5d2b",
-          "size_bytes": 131789440
-        },
-        {
-          "quant": "F32",
-          "filename": "moonshine-base-ja-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/moonshine-base-ja-gguf/resolve/main/moonshine-base-ja-F32.gguf",
-          "sha256": "649f65dbc795d9fd4cf23f2123a09cdcdffba7e071891caa39e60d6a84c19082",
-          "size_bytes": 247657088
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 99,
-      "accuracy_score": 50
-    },
-    {
       "id": "moonshine-base-vi",
       "name": "Moonshine Base (Vietnamese)",
-      "description": "English speech-to-text.",
+      "description": "Vietnamese speech-to-text.",
       "family": "moonshine",
       "parameters": "62M",
       "base_model": "UsefulSensors/moonshine-base-vi",
@@ -2544,7 +2612,7 @@
     {
       "id": "moonshine-base-zh",
       "name": "Moonshine Base (Chinese)",
-      "description": "English speech-to-text.",
+      "description": "Chinese speech-to-text.",
       "family": "moonshine",
       "parameters": "62M",
       "base_model": "UsefulSensors/moonshine-base-zh",
@@ -2680,6 +2748,74 @@
       "accuracy_score": 87
     },
     {
+      "id": "moss-transcribe-diarize",
+      "name": "MOSS-Transcribe-Diarize 0.9B",
+      "description": "2-language speech-to-text with segment-level timestamps.",
+      "family": "moss",
+      "parameters": "909M",
+      "base_model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+      "license": "apache-2.0",
+      "languages": [
+        "en",
+        "zh"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "segment"
+      },
+      "quants": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "MOSS-Transcribe-Diarize-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q4_K_M.gguf",
+          "sha256": "e371990f2c8f21ded18e18cfac8906b059b5ee7cbce154ed4d3c582c05100b8b",
+          "size_bytes": 617345184
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "MOSS-Transcribe-Diarize-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q5_K_M.gguf",
+          "sha256": "52deaeff931272f3d49eb437f0f4916e42fce9f42e68db250047408241cf473c",
+          "size_bytes": 700313760
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "MOSS-Transcribe-Diarize-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q6_K.gguf",
+          "sha256": "f36e6edd7cae9d9c280b8bc48b4bfd10d9ccfe17995cf8daa9517a94329e2bbd",
+          "size_bytes": 768151712
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "MOSS-Transcribe-Diarize-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q8_0.gguf",
+          "sha256": "64ec654dc6ffcfdfe180422dffce1d33422b0c30959b7edfd131bad77ee35039",
+          "size_bytes": 986899616
+        },
+        {
+          "quant": "BF16",
+          "filename": "MOSS-Transcribe-Diarize-BF16.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-BF16.gguf",
+          "sha256": "ccf9aa138e18beb295ec69e1979206c6e48f872fbc3a8c887d6a1fee9dbe7712",
+          "size_bytes": 1826882720
+        },
+        {
+          "quant": "F16",
+          "filename": "MOSS-Transcribe-Diarize-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-F16.gguf",
+          "sha256": "fee2e436f7a6e768756446cf31e34bbf4223c4448fa2073d2f424d46f83d7f4b",
+          "size_bytes": 1833665696
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 31,
+      "accuracy_score": 88
+    },
+    {
       "id": "nemotron-speech-streaming-en-0.6b",
       "name": "Nemotron Speech Streaming EN",
       "description": "English speech-to-text with streaming, token-level timestamps.",
@@ -2812,6 +2948,115 @@
       "recommended_rank": null,
       "speed_score": 98,
       "accuracy_score": 85
+    },
+    {
+      "id": "multitalker-parakeet-streaming-0.6b-v1",
+      "name": "Multitalker Parakeet Streaming EN",
+      "description": "English speech-to-text with streaming, token-level timestamps.",
+      "family": "parakeet",
+      "parameters": "0.6B",
+      "base_model": "nvidia/multitalker-parakeet-streaming-0.6b-v1",
+      "license": "other",
+      "languages": [
+        "en"
+      ],
+      "capabilities": {
+        "streaming": true,
+        "translate": false,
+        "lang_detect": false,
+        "timestamps": "token"
+      },
+      "quants": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
+          "sha256": "d9f05f95ab70054f37af71aae7bc64d37eabfc2d266935224a827cb0d838bb4f",
+          "size_bytes": 477812416
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
+          "sha256": "247a14c84dc6d0e7d4f5604b6f2b89b927af2e49eb0ed9fe350b447e849acf01",
+          "size_bytes": 541890240
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
+          "sha256": "c5ad23c5e59e3f73d5adebc963992818109d1ecb272f5c862b2355bc41950dac",
+          "size_bytes": 603878080
+        },
+        {
+          "quant": "Q4_K_M",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
+          "sha256": "f3ea86dd8415b10ddb6cd7df12bed2798b72e8c1f09b83d227a3892ab7d2cd8a",
+          "size_bytes": 617132032
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
+          "sha256": "6914abb66959caede909df26ec63d930d5becdb66cc7dc3409d805f275b8727c",
+          "size_bytes": 681209856
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
+          "sha256": "4748deea0222eb9057ebdac1679eebb970bbe882ee10a96ae34596ffe83615c7",
+          "size_bytes": 734123712
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
+          "sha256": "771673b7266ff6f79d8b1f5cde01c114eb7e575179160c8a046f4c78b90bc743",
+          "size_bytes": 743197696
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
+          "sha256": "847df2b5b7576ee69801d74d60f5863df1503d09a790a57f0609323c15f26d64",
+          "size_bytes": 873443328
+        },
+        {
+          "quant": "F16",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
+          "sha256": "d2b3cbd7d202f97dd7d91da228a70cc47d5f60ba57c8431a37462b2c2d035ba7",
+          "size_bytes": 1246058304
+        },
+        {
+          "quant": "F16",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
+          "sha256": "a8c2b0172b3a8963bef52501eaaf628df194374e494b01973b8098f085ba0827",
+          "size_bytes": 1482674144
+        },
+        {
+          "quant": "F32",
+          "filename": "multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
+          "sha256": "a73ea5c34cffd714e97ef6de22db8e9437b6c0265f86f8bd31825fd2b0f49e6c",
+          "size_bytes": 2489180480
+        },
+        {
+          "quant": "F32",
+          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
+          "sha256": "e94fa869969470a4434b38d551f444c22d545bb65a48e640d4f5c7439720251a",
+          "size_bytes": 2960100320
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 96,
+      "accuracy_score": 86
     },
     {
       "id": "parakeet-ctc-0.6b",
@@ -3013,6 +3258,97 @@
       "recommended_rank": null,
       "speed_score": 83,
       "accuracy_score": 88
+    },
+    {
+      "id": "parakeet-primeline",
+      "name": "Parakeet TDT 0.6B primeLine (German-tuned)",
+      "description": "25-language speech-to-text with auto language detection, token-level timestamps.",
+      "family": "parakeet",
+      "parameters": "0.6B",
+      "base_model": "primeline/parakeet-primeline",
+      "license": "cc-by-4.0",
+      "languages": [
+        "de",
+        "bg",
+        "hr",
+        "cs",
+        "da",
+        "nl",
+        "en",
+        "et",
+        "fi",
+        "fr",
+        "el",
+        "hu",
+        "it",
+        "lv",
+        "lt",
+        "mt",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sk",
+        "sl",
+        "es",
+        "sv",
+        "uk"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": true,
+        "timestamps": "token"
+      },
+      "quants": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "parakeet-primeline-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-Q4_K_M.gguf",
+          "sha256": "8b01f1893fa1db166d8b08375f8300c140fc7f110af7e9b68480a27b145dad7d",
+          "size_bytes": 485425568
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "parakeet-primeline-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-Q5_K_M.gguf",
+          "sha256": "a1dd12b7f374c33d5e33a61c8a852035d27064cefe53f8cdfc3410cddf3b31c8",
+          "size_bytes": 548946336
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "parakeet-primeline-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-Q6_K.gguf",
+          "sha256": "62301f4a2c393421a4162864718e85edac7eb85ce8ed82c343a4b994b6d85594",
+          "size_bytes": 610342304
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "parakeet-primeline-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-Q8_0.gguf",
+          "sha256": "dbd1ec2985aea64d16550a0068ea9153c0bc01955bf2a5c18b74ca213546d3cd",
+          "size_bytes": 739508640
+        },
+        {
+          "quant": "F16",
+          "filename": "parakeet-primeline-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-F16.gguf",
+          "sha256": "a6f626fa7263cf55a27eda312d1f91dfe6edfeb8de85a5536fbb3cb93af064e1",
+          "size_bytes": 1255869920
+        },
+        {
+          "quant": "F32",
+          "filename": "parakeet-primeline-F32.gguf",
+          "url": "https://huggingface.co/handy-computer/parakeet-primeline-gguf/resolve/main/parakeet-primeline-F32.gguf",
+          "sha256": "6075ededee05ad520b3402bf089d00cd87819025b8509f746587c822d99a9a2d",
+          "size_bytes": 2508435680
+        }
+      ],
+      "default_quant": "Q8_0",
+      "recommended": false,
+      "recommended_rank": null,
+      "speed_score": 79,
+      "accuracy_score": 67
     },
     {
       "id": "parakeet-tdt-1.1b",
@@ -4296,7 +4632,7 @@
     {
       "id": "whisper-large-v3-turbo",
       "name": "Whisper Large v3 Turbo",
-      "description": "100-language speech-to-text with translation, auto language detection, segment-level timestamps.",
+      "description": "100-language speech-to-text with auto language detection, segment-level timestamps.",
       "family": "whisper",
       "parameters": "809M",
       "base_model": "openai/whisper-large-v3-turbo",
@@ -4405,7 +4741,7 @@
       ],
       "capabilities": {
         "streaming": false,
-        "translate": true,
+        "translate": false,
         "lang_detect": true,
         "timestamps": "segment"
       },
@@ -4414,153 +4750,55 @@
           "quant": "Q4_K_M",
           "filename": "whisper-large-v3-turbo-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q4_K_M.gguf",
-          "sha256": "f950528a644b0d73401616f6bfc19c4a21dfe24444bac226d860405b24a06a0f",
-          "size_bytes": 536069792
+          "sha256": "ecfe9b6beb4ab18fef49187cc968cc74b5168b94629c8830e2ca6b794c6e25ed",
+          "size_bytes": 536069728
         },
         {
           "quant": "Q5_K_M",
           "filename": "whisper-large-v3-turbo-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q5_K_M.gguf",
-          "sha256": "065dce9c5c13c6b5f5b92b926a519ad3b4416ecbbe701a247835bda529d4b2a9",
-          "size_bytes": 619628192
+          "sha256": "977b5db4e004349dffd1ab9caa10ba5aaba3fc3edd3ba72cadb84328a3203e36",
+          "size_bytes": 619628128
         },
         {
           "quant": "Q6_K",
           "filename": "whisper-large-v3-turbo-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q6_K.gguf",
-          "sha256": "0ae5c09e1c6f387bdd696c733e2b21aafa8c551382f5c775b53f69e83d7bb9be",
-          "size_bytes": 692536992
+          "sha256": "3881dc17bf345f7ce4a3c48327074951e1550c8a1e89fa58d554d9f26a1b6274",
+          "size_bytes": 692536928
         },
         {
           "quant": "Q8_0",
           "filename": "whisper-large-v3-turbo-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-Q8_0.gguf",
-          "sha256": "d5e65f2b0828802ae2c231673d31982cebe3a778c95d9494a9f3efee6bd17448",
-          "size_bytes": 886381824
+          "sha256": "b2e30cc286bc9f3aba4db9099fc7403543497c05ce7100d0d83091ddfd25a183",
+          "size_bytes": 886381760
         },
         {
           "quant": "F16",
           "filename": "whisper-large-v3-turbo-F16.gguf",
           "url": "https://huggingface.co/handy-computer/whisper-large-v3-turbo-gguf/resolve/main/whisper-large-v3-turbo-F16.gguf",
-          "sha256": "cb56b859e97d7c89386b88c5cd992d8da25a12da055da0a2e049e573c8a17800",
-          "size_bytes": 1636749024
+          "sha256": "e1d0144e9afc9f479d9e51fc92c7dea9dc36059655eeb3819f16ad2de779046a",
+          "size_bytes": 1625935520
         }
       ],
       "default_quant": "Q8_0",
       "recommended": false,
       "recommended_rank": null,
       "speed_score": 35,
-      "accuracy_score": 87
+      "accuracy_score": 88
     },
     {
-      "id": "whisper-large-v3",
-      "name": "Whisper Large v3",
-      "description": "100-language speech-to-text with translation, auto language detection, segment-level timestamps.",
+      "id": "Breeze-ASR-25",
+      "name": "Breeze-ASR-25",
+      "description": "Optimized for Taiwanese Mandarin. Code-switching support.",
       "family": "whisper",
       "parameters": "1.5B",
-      "base_model": "openai/whisper-large-v3",
+      "base_model": "MediaTek-Research/Breeze-ASR-25",
       "license": "apache-2.0",
       "languages": [
-        "en",
         "zh",
-        "de",
-        "es",
-        "ru",
-        "ko",
-        "fr",
-        "ja",
-        "pt",
-        "tr",
-        "pl",
-        "ca",
-        "nl",
-        "ar",
-        "sv",
-        "it",
-        "id",
-        "hi",
-        "fi",
-        "vi",
-        "he",
-        "uk",
-        "el",
-        "ms",
-        "cs",
-        "ro",
-        "da",
-        "hu",
-        "ta",
-        "no",
-        "th",
-        "ur",
-        "hr",
-        "bg",
-        "lt",
-        "la",
-        "mi",
-        "ml",
-        "cy",
-        "sk",
-        "te",
-        "fa",
-        "lv",
-        "bn",
-        "sr",
-        "az",
-        "sl",
-        "kn",
-        "et",
-        "mk",
-        "br",
-        "eu",
-        "is",
-        "hy",
-        "ne",
-        "mn",
-        "bs",
-        "kk",
-        "sq",
-        "sw",
-        "gl",
-        "mr",
-        "pa",
-        "si",
-        "km",
-        "sn",
-        "yo",
-        "so",
-        "af",
-        "oc",
-        "ka",
-        "be",
-        "tg",
-        "sd",
-        "gu",
-        "am",
-        "yi",
-        "lo",
-        "uz",
-        "fo",
-        "ht",
-        "ps",
-        "tk",
-        "nn",
-        "mt",
-        "sa",
-        "lb",
-        "my",
-        "bo",
-        "tl",
-        "mg",
-        "as",
-        "tt",
-        "haw",
-        "ln",
-        "ha",
-        "ba",
-        "jw",
-        "su",
-        "yue"
+        "en"
       ],
       "capabilities": {
         "streaming": false,
@@ -4571,45 +4809,52 @@
       "quants": [
         {
           "quant": "Q4_K_M",
-          "filename": "whisper-large-v3-Q4_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q4_K_M.gguf",
-          "sha256": "6fe933811cec4cd3159debc46520ecd3aac6c7e322ece2ac61fcfdab184e1fe0",
-          "size_bytes": 997303008
+          "filename": "Breeze-ASR-25-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q4_K_M.gguf",
+          "sha256": "cb056e63e5606284637c8a9c6d35e3c544f190dd5d26335466c7e584e61815c4",
+          "size_bytes": 996526080
         },
         {
           "quant": "Q5_K_M",
-          "filename": "whisper-large-v3-Q5_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q5_K_M.gguf",
-          "sha256": "6053d0fd69a0fd48b8fea5ea7a52b9e0cde389343566fa30e453a1b2b258dc38",
-          "size_bytes": 1161143008
+          "filename": "Breeze-ASR-25-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q5_K_M.gguf",
+          "sha256": "c871fc811b33a16a5607c4d4166cfa2c0a1d359f7796e3da255e3e922f59139b",
+          "size_bytes": 1160366080
         },
         {
           "quant": "Q6_K",
-          "filename": "whisper-large-v3-Q6_K.gguf",
-          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q6_K.gguf",
-          "sha256": "88e6dc60bd0538da145a50c19f4778e4a106fe28713adeeca43163215ee02805",
-          "size_bytes": 1297130208
+          "filename": "Breeze-ASR-25-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q6_K.gguf",
+          "sha256": "4c7fe8eed7b36a00dc345e9825fb0f4ac717c38cc5a9292cd552c2f141e3b258",
+          "size_bytes": 1296353280
         },
         {
           "quant": "Q8_0",
-          "filename": "whisper-large-v3-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q8_0.gguf",
-          "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3",
-          "size_bytes": 1668741440
+          "filename": "Breeze-ASR-25-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q8_0.gguf",
+          "sha256": "1650c163cd1623d13b585368ffd87d7e669c5ff23014511e0fa91bb4ce994756",
+          "size_bytes": 1667964224
+        },
+        {
+          "quant": "BF16",
+          "filename": "Breeze-ASR-25-BF16.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-BF16.gguf",
+          "sha256": "b2ae64afd2bea002c0188bba34e868f208eca8ab2b5d1359bd5d4b052209851e",
+          "size_bytes": 3096013408
         },
         {
           "quant": "F16",
-          "filename": "whisper-large-v3-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-F16.gguf",
-          "sha256": "e633ab1d74b0e98f4f57daedaee34291297dbbf01389bda3d890766600c1c584",
-          "size_bytes": 3107236640
+          "filename": "Breeze-ASR-25-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-F16.gguf",
+          "sha256": "1ed33e23e1dd7183c7d60e8713d159a61bfa1852019e7a65fd04ec6042a44f98",
+          "size_bytes": 3106458208
         }
       ],
       "default_quant": "Q5_K_M",
       "recommended": false,
       "recommended_rank": null,
       "speed_score": 23,
-      "accuracy_score": 89
+      "accuracy_score": 86
     },
     {
       "id": "whisper-large",
@@ -4942,16 +5187,114 @@
       "accuracy_score": 84
     },
     {
-      "id": "Breeze-ASR-25",
-      "name": "Breeze-ASR-25",
-      "description": "Optimized for Taiwanese Mandarin. Code-switching support.",
+      "id": "whisper-large-v3",
+      "name": "Whisper Large v3",
+      "description": "100-language speech-to-text with translation, auto language detection, segment-level timestamps.",
       "family": "whisper",
       "parameters": "1.5B",
-      "base_model": "MediaTek-Research/Breeze-ASR-25",
+      "base_model": "openai/whisper-large-v3",
       "license": "apache-2.0",
       "languages": [
+        "en",
         "zh",
-        "en"
+        "de",
+        "es",
+        "ru",
+        "ko",
+        "fr",
+        "ja",
+        "pt",
+        "tr",
+        "pl",
+        "ca",
+        "nl",
+        "ar",
+        "sv",
+        "it",
+        "id",
+        "hi",
+        "fi",
+        "vi",
+        "he",
+        "uk",
+        "el",
+        "ms",
+        "cs",
+        "ro",
+        "da",
+        "hu",
+        "ta",
+        "no",
+        "th",
+        "ur",
+        "hr",
+        "bg",
+        "lt",
+        "la",
+        "mi",
+        "ml",
+        "cy",
+        "sk",
+        "te",
+        "fa",
+        "lv",
+        "bn",
+        "sr",
+        "az",
+        "sl",
+        "kn",
+        "et",
+        "mk",
+        "br",
+        "eu",
+        "is",
+        "hy",
+        "ne",
+        "mn",
+        "bs",
+        "kk",
+        "sq",
+        "sw",
+        "gl",
+        "mr",
+        "pa",
+        "si",
+        "km",
+        "sn",
+        "yo",
+        "so",
+        "af",
+        "oc",
+        "ka",
+        "be",
+        "tg",
+        "sd",
+        "gu",
+        "am",
+        "yi",
+        "lo",
+        "uz",
+        "fo",
+        "ht",
+        "ps",
+        "tk",
+        "nn",
+        "mt",
+        "sa",
+        "lb",
+        "my",
+        "bo",
+        "tl",
+        "mg",
+        "as",
+        "tt",
+        "haw",
+        "ln",
+        "ha",
+        "ba",
+        "jw",
+        "su",
+        "yue"
       ],
       "capabilities": {
         "streaming": false,
@@ -4962,52 +5305,45 @@
       "quants": [
         {
           "quant": "Q4_K_M",
-          "filename": "Breeze-ASR-25-Q4_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q4_K_M.gguf",
-          "sha256": "cb056e63e5606284637c8a9c6d35e3c544f190dd5d26335466c7e584e61815c4",
-          "size_bytes": 996526080
+          "filename": "whisper-large-v3-Q4_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q4_K_M.gguf",
+          "sha256": "6fe933811cec4cd3159debc46520ecd3aac6c7e322ece2ac61fcfdab184e1fe0",
+          "size_bytes": 997303008
         },
         {
           "quant": "Q5_K_M",
-          "filename": "Breeze-ASR-25-Q5_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q5_K_M.gguf",
-          "sha256": "c871fc811b33a16a5607c4d4166cfa2c0a1d359f7796e3da255e3e922f59139b",
-          "size_bytes": 1160366080
+          "filename": "whisper-large-v3-Q5_K_M.gguf",
+          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q5_K_M.gguf",
+          "sha256": "6053d0fd69a0fd48b8fea5ea7a52b9e0cde389343566fa30e453a1b2b258dc38",
+          "size_bytes": 1161143008
         },
         {
           "quant": "Q6_K",
-          "filename": "Breeze-ASR-25-Q6_K.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q6_K.gguf",
-          "sha256": "4c7fe8eed7b36a00dc345e9825fb0f4ac717c38cc5a9292cd552c2f141e3b258",
-          "size_bytes": 1296353280
+          "filename": "whisper-large-v3-Q6_K.gguf",
+          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q6_K.gguf",
+          "sha256": "88e6dc60bd0538da145a50c19f4778e4a106fe28713adeeca43163215ee02805",
+          "size_bytes": 1297130208
         },
         {
           "quant": "Q8_0",
-          "filename": "Breeze-ASR-25-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-Q8_0.gguf",
-          "sha256": "1650c163cd1623d13b585368ffd87d7e669c5ff23014511e0fa91bb4ce994756",
-          "size_bytes": 1667964224
-        },
-        {
-          "quant": "BF16",
-          "filename": "Breeze-ASR-25-BF16.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-BF16.gguf",
-          "sha256": "b2ae64afd2bea002c0188bba34e868f208eca8ab2b5d1359bd5d4b052209851e",
-          "size_bytes": 3096013408
+          "filename": "whisper-large-v3-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-Q8_0.gguf",
+          "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3",
+          "size_bytes": 1668741440
         },
         {
           "quant": "F16",
-          "filename": "Breeze-ASR-25-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/Breeze-ASR-25-gguf/resolve/main/Breeze-ASR-25-F16.gguf",
-          "sha256": "1ed33e23e1dd7183c7d60e8713d159a61bfa1852019e7a65fd04ec6042a44f98",
-          "size_bytes": 3106458208
+          "filename": "whisper-large-v3-F16.gguf",
+          "url": "https://huggingface.co/handy-computer/whisper-large-v3-gguf/resolve/main/whisper-large-v3-F16.gguf",
+          "sha256": "e633ab1d74b0e98f4f57daedaee34291297dbbf01389bda3d890766600c1c584",
+          "size_bytes": 3107236640
         }
       ],
       "default_quant": "Q5_K_M",
       "recommended": false,
       "recommended_rank": null,
       "speed_score": 23,
-      "accuracy_score": 86
+      "accuracy_score": 89
     }
   ]
 }
