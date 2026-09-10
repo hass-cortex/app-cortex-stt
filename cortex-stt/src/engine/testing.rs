@@ -3,6 +3,7 @@
 //! the `tests/` crate can use it; not part of the runtime API.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::engine::manager::SharedEngineFactory;
 use crate::engine::traits::{
@@ -21,6 +22,10 @@ pub struct FakeEngine {
     max_audio_ms: i64,
     supports_streaming: bool,
     panics: bool,
+    /// Wall-clock cost of one `transcribe` call. Lets a test hold an
+    /// engine busy long enough to observe concurrency rules rather than
+    /// racing them.
+    inference_delay: Duration,
     // Streaming state (per instance).
     revision: i32,
     words: usize,
@@ -41,6 +46,7 @@ impl FakeEngine {
             max_audio_ms: 0,
             supports_streaming: false,
             panics: false,
+            inference_delay: Duration::ZERO,
             revision: 0,
             words: 0,
         }
@@ -83,6 +89,12 @@ impl FakeEngine {
         self
     }
 
+    /// Make each `transcribe` take `delay`.
+    pub fn slow(mut self, delay: Duration) -> Self {
+        self.inference_delay = delay;
+        self
+    }
+
     /// Factory producing a fresh clone per pool instance.
     pub fn factory(self) -> SharedEngineFactory {
         Arc::new(move || Ok(Box::new(self.clone()) as Box<dyn SpeechEngine>))
@@ -111,6 +123,10 @@ impl SpeechEngine for FakeEngine {
     ) -> Result<TranscriptionResult, AsrError> {
         if self.panics {
             panic!("fake engine panicked on purpose");
+        }
+        if !self.inference_delay.is_zero() {
+            // Sync on purpose: `transcribe` runs inside spawn_blocking.
+            std::thread::sleep(self.inference_delay);
         }
         let segments = if self.emit_segment {
             vec![TranscriptionSegment {

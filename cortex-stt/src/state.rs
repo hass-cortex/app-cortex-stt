@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
+use crate::eval::{Eval, EvalRunner};
 use crate::history::History;
 use crate::job::JobStore;
 use crate::model::catalog::ModelCatalog;
@@ -37,6 +38,10 @@ pub struct AppState {
     pub transcriber: Arc<Transcriber>,
     /// Install / Uninstall operations (quant switch, engine registration, HA notify).
     pub installer: Arc<ModelInstaller>,
+    /// Evaluation samples, runs, results and judgements.
+    pub eval: Arc<Eval>,
+    /// Executes evaluation runs (model-major, explicit unload).
+    pub eval_runner: Arc<EvalRunner>,
 }
 
 impl AppState {
@@ -79,6 +84,16 @@ impl AppState {
             db.clone(),
         );
         let downloads = DownloadManager::new(model_dir, progress, Some(installer.clone()));
+        // Evaluation owns its own audio store, decoupled from history's
+        // (ADR 0005) — retention never sees it.
+        let eval = Eval::new(db.clone(), data_dir.join("eval-audio")).await?;
+        let eval_runner = EvalRunner::new(
+            eval.clone(),
+            engine_manager.clone(),
+            catalog.clone(),
+            db.clone(),
+            version.clone(),
+        );
 
         Ok(Arc::new(Self {
             engine_manager,
@@ -94,6 +109,8 @@ impl AppState {
             history,
             transcriber,
             installer,
+            eval,
+            eval_runner,
         }))
     }
 }

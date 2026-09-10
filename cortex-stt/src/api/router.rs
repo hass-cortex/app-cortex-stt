@@ -30,6 +30,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(crate::api::transcribe::transcribe_routes())
         .merge(crate::api::stream::stream_routes())
         .merge(crate::api::history::history_routes())
+        .merge(crate::api::eval::eval_routes())
         .merge(crate::api::keys::key_routes())
         .merge(crate::api::settings::settings_routes())
         .merge(crate::api::metrics::metrics_routes())

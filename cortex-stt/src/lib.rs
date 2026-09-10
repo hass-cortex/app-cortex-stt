@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod engine;
 pub mod error;
+pub mod eval;
 pub mod history;
 mod http;
 pub mod job;

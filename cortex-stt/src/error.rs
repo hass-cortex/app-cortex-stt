@@ -67,6 +67,29 @@ pub enum AsrError {
     #[error("no audio stored for record: {record_id}")]
     NoAudio { record_id: String },
 
+    #[error("evaluation samples require lossless audio; this recording is not")]
+    EvalAudioNotLossless,
+
+    #[error("record {record_id} is already in the evaluation set")]
+    EvalSampleExists { record_id: String },
+
+    #[error("evaluation sample not found: {sample_id}")]
+    EvalSampleNotFound { sample_id: String },
+
+    #[error("evaluation run not found: {run_id}")]
+    EvalRunNotFound { run_id: String },
+
+    #[error("an evaluation run is already in progress")]
+    EvalRunInProgress,
+
+    #[error("evaluation run {run_id} is not the one in flight")]
+    EvalRunNotRunning { run_id: String },
+
+    #[error(
+        "a model download is in flight ({model_ids}); evaluation measures memory and cannot share the machine with one"
+    )]
+    EvalBlockedByDownload { model_ids: String },
+
     #[error("job not found: {job_id}")]
     JobNotFound { job_id: String },
 
@@ -113,7 +136,8 @@ impl AsrError {
             Self::AudioFormatError { .. }
             | Self::ProtocolError { .. }
             | Self::StreamingUnsupported
-            | Self::StreamProtocol { .. } => StatusCode::BAD_REQUEST,
+            | Self::StreamProtocol { .. }
+            | Self::EvalAudioNotLossless => StatusCode::BAD_REQUEST,
             // 413
             Self::InputTooLong { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             // 401
@@ -125,11 +149,18 @@ impl AsrError {
             | Self::ModelFileNotFound { .. }
             | Self::RecordNotFound { .. }
             | Self::NoAudio { .. }
-            | Self::JobNotFound { .. } => StatusCode::NOT_FOUND,
+            | Self::JobNotFound { .. }
+            | Self::EvalSampleNotFound { .. }
+            | Self::EvalRunNotFound { .. } => StatusCode::NOT_FOUND,
             // 408
             Self::InferenceTimeout { .. } => StatusCode::REQUEST_TIMEOUT,
             // 409
-            Self::DownloadInProgress { .. } | Self::JobNotComplete { .. } => StatusCode::CONFLICT,
+            Self::DownloadInProgress { .. }
+            | Self::JobNotComplete { .. }
+            | Self::EvalSampleExists { .. }
+            | Self::EvalRunInProgress
+            | Self::EvalRunNotRunning { .. }
+            | Self::EvalBlockedByDownload { .. } => StatusCode::CONFLICT,
             // 410
             Self::JobCancelled { .. } => StatusCode::GONE,
             // 429
@@ -172,6 +203,13 @@ impl AsrError {
             Self::ModelNotLoaded { .. } => "MODEL_NOT_LOADED",
             Self::AudioFormatError { .. } => "AUDIO_FORMAT_ERROR",
             Self::ProtocolError { .. } => "PROTOCOL_ERROR",
+            Self::EvalAudioNotLossless => "EVAL_AUDIO_NOT_LOSSLESS",
+            Self::EvalSampleExists { .. } => "EVAL_SAMPLE_EXISTS",
+            Self::EvalSampleNotFound { .. } => "EVAL_SAMPLE_NOT_FOUND",
+            Self::EvalRunNotFound { .. } => "EVAL_RUN_NOT_FOUND",
+            Self::EvalRunInProgress => "EVAL_RUN_IN_PROGRESS",
+            Self::EvalRunNotRunning { .. } => "EVAL_RUN_NOT_RUNNING",
+            Self::EvalBlockedByDownload { .. } => "EVAL_BLOCKED_BY_DOWNLOAD",
             Self::InputTooLong { .. } => "INPUT_TOO_LONG",
             Self::StreamingUnsupported => "STREAMING_UNSUPPORTED",
             Self::StreamProtocol { .. } => "STREAM_PROTOCOL",
@@ -217,6 +255,11 @@ impl AsrError {
             Self::ModelFileNotFound { path } => Some(path.display().to_string()),
             Self::RecordNotFound { record_id } | Self::NoAudio { record_id } => {
                 Some(record_id.clone())
+            }
+            Self::EvalSampleExists { record_id } => Some(record_id.clone()),
+            Self::EvalSampleNotFound { sample_id } => Some(sample_id.clone()),
+            Self::EvalRunNotFound { run_id } | Self::EvalRunNotRunning { run_id } => {
+                Some(run_id.clone())
             }
             Self::JobNotFound { job_id }
             | Self::JobNotComplete { job_id }
