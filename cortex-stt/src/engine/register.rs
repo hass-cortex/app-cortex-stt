@@ -121,7 +121,6 @@ pub fn create_factory(
             model_id.to_string(),
             model_path,
             o.backend,
-            o.gpu_device,
         ))
     }
     #[cfg(not(feature = "engine"))]
@@ -164,7 +163,6 @@ mod tests {
             "m1".into(),
             BackendOverride {
                 backend: EngineBackend::Cpu,
-                gpu_device: 0,
             },
         );
         apply_engine_settings(&manager, tmp.path(), &old, &new).await;

@@ -43,7 +43,6 @@ impl TranscribeBridge {
         model_id: &str,
         model_path: &Path,
         backend: EngineBackend,
-        gpu_device: u32,
     ) -> Result<Self, AsrError> {
         let options = ModelOptions {
             backend: match backend {
@@ -51,7 +50,8 @@ impl TranscribeBridge {
                 EngineBackend::Cpu => Backend::Cpu,
                 EngineBackend::Cuda => Backend::Cuda,
             },
-            gpu_device: gpu_device as i32,
+            // None = let the backend choose.
+            device: None,
         };
         let model =
             Model::load_with(model_path, &options).map_err(|e| AsrError::InferenceFailed {
@@ -191,6 +191,13 @@ fn resolve_language(requested: Option<&str>, declared: &[String]) -> Option<Stri
         .cloned()
 }
 
+/// The exact `transcribe-cpp` version this build links against.
+///
+/// This file is the only binding to the crate, so a dependency bump
+/// lands here anyway; `the_pinned_version_matches_cargo_toml` fails the
+/// build if the two ever disagree.
+pub const TRANSCRIBE_CPP_VERSION: &str = "0.2.3";
+
 fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -> AsrError {
     use transcribe_cpp::Error as E;
     match e {
@@ -218,6 +225,7 @@ fn convert_transcript(t: Transcript, truncated: bool) -> TranscriptionResult {
     }
     TranscriptionResult {
         text: t.text,
+        raw_text: t.raw_text,
         language: t.language,
         segments: t
             .segments
@@ -339,10 +347,9 @@ pub fn transcribe_factory(
     model_id: String,
     model_path: PathBuf,
     backend: EngineBackend,
-    gpu_device: u32,
 ) -> crate::engine::manager::SharedEngineFactory {
     std::sync::Arc::new(move || {
-        let bridge = TranscribeBridge::load(&model_id, &model_path, backend, gpu_device)?;
+        let bridge = TranscribeBridge::load(&model_id, &model_path, backend)?;
         Ok(Box::new(bridge) as Box<dyn SpeechEngine>)
     })
 }
@@ -410,5 +417,25 @@ mod tests {
     #[test]
     fn no_hint_stays_no_hint() {
         assert_eq!(resolve_language(None, &declared(&["en-US"])), None);
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::TRANSCRIBE_CPP_VERSION;
+
+    /// The recorded version is a constant, so nothing stops it drifting
+    /// from the dependency it claims to describe — except this.
+    #[test]
+    fn the_pinned_version_matches_cargo_toml() {
+        let manifest = include_str!("../../Cargo.toml");
+        let pin = manifest
+            .lines()
+            .find(|l| l.starts_with("transcribe-cpp ="))
+            .expect("transcribe-cpp dependency present in Cargo.toml");
+        assert!(
+            pin.contains(&format!("\"={TRANSCRIBE_CPP_VERSION}\"")),
+            "TRANSCRIBE_CPP_VERSION is {TRANSCRIBE_CPP_VERSION} but Cargo.toml pins: {pin}"
+        );
     }
 }
