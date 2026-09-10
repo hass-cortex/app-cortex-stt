@@ -34,7 +34,7 @@ and rootfs.
 ├── images/                    README + DOCS.md screenshots (one per admin-UI page)
 └── cortex-stt/                ── ADDON / SOURCE SUBDIR ──
     ├── config.yaml            HA addon metadata (slug=cortex_stt, port=8769, ingress)
-    ├── build.yaml             multi-arch base image: hassio-addons/debian-base
+    ├── build.yaml             base image: hassio-addons/debian-base (amd64 only)
     ├── Dockerfile             3-stage: rust-builder → web-builder → runtime
     ├── Dockerfile.local       single-stage variant for `scripts/dev.sh --init`
     ├── DOCS.md                HA App Store documentation page
@@ -367,19 +367,23 @@ model**).
 A git-tag push on `hass-cortex/app-cortex-stt` drives the full
 pipeline:
 
-1. **`release.yml`** cross-compiles binaries and creates a GitHub
-   Release. Tags containing `-` (e.g. `0.1.4-beta.1`) are auto-marked
-   prerelease.
+1. **`release.yml`** builds the x86_64 binary and the web bundle and
+   creates a GitHub Release. Tags containing `-` (e.g. `0.1.4-beta.1`)
+   are auto-marked prerelease.
 2. **`deploy.yaml`** (using `hassio-addons/workflows/app-deploy.yaml@v2.0.6`)
-   builds multi-arch images, pushes
-   `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>` (plus `aarch64`), and
-   dispatches `repository_dispatch` to one or both catalogs:
+   builds the image, pushes
+   `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>`, and dispatches
+   `repository_dispatch` to one or both catalogs:
    - Stable tags → both **`hass-cortex/repository`** and
      **`hass-cortex/repository-beta`**.
    - Prerelease tags → **`hass-cortex/repository-beta`** only.
 3. Each catalog's **`repository-updater.yaml`** filters releases per
    its `.apps.yml` `channel:` field (`stable` vs `beta`) and writes
    `cortex-stt/config.yaml`.
+
+Unlike the sibling apps, this one is **amd64 only** — `config.yaml` and
+`build.yaml` declare no `aarch64`, and none has ever been built. The
+bundled ggml kernels need `x86-64-v3` (see README's Proxmox note).
 
 See the workspace-level [`docs/release/`](../docs/release/README.md)
 for the full pipeline diagram, end-user install paths, and the
