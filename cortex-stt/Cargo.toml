@@ -47,6 +47,7 @@ transcribe-cpp = { version = "=0.2.3", default-features = false, optional = true
 # Self-referential holder for an active engine stream (Stream<'a> mutably
 # borrows its Session; both must live in the bridge across feed calls).
 ouroboros = { version = "0.18", optional = true }
+ferrous-opencc = "0.2.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

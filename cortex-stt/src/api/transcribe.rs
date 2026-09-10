@@ -280,7 +280,7 @@ async fn get_job_result(
     let job = fetch_job(&state, &job_id).await?;
 
     match job.status {
-        AsyncJobStatus::Completed { result } => Ok(axum::Json(result)),
+        AsyncJobStatus::Completed { result } => Ok(axum::Json(*result)),
         AsyncJobStatus::Processing => Err(AsrError::JobNotComplete { job_id }),
         AsyncJobStatus::Failed { error } => Err(AsrError::JobFailed { detail: error }),
         AsyncJobStatus::Cancelled => Err(AsrError::JobCancelled { job_id }),

@@ -25,8 +25,11 @@ pub enum AsyncJobStatus {
     /// Job is queued or actively running.
     Processing,
     /// Job completed successfully.
+    ///
+    /// Boxed: the response dwarfs every other variant, and this enum is
+    /// cloned per status poll.
     Completed {
-        result: crate::transcriber::TranscribeResponse,
+        result: Box<crate::transcriber::TranscribeResponse>,
     },
     /// Job failed with an error.
     Failed { error: String },
@@ -133,7 +136,13 @@ impl JobStore {
     /// Record a successful result — but only if the job is still
     /// Processing. See [`finish`](Self::finish) for the terminal guard.
     pub async fn complete(&self, id: &str, result: crate::transcriber::TranscribeResponse) {
-        self.finish(id, AsyncJobStatus::Completed { result }).await;
+        self.finish(
+            id,
+            AsyncJobStatus::Completed {
+                result: Box::new(result),
+            },
+        )
+        .await;
     }
 
     /// Record a failure — but only if the job is still Processing.

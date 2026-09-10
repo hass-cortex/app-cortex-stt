@@ -13,4 +13,5 @@ pub mod retention;
 pub mod settings;
 pub mod state;
 pub mod supervisor;
+pub mod text;
 pub mod transcriber;
