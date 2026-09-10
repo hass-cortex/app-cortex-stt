@@ -57,7 +57,7 @@ export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
 							type="button"
 							onClick={() => cancelMutation.mutate(modelId)}
 							className="p-0.5 text-text-muted hover:text-error transition-colors cursor-pointer"
-							title="Cancel download"
+							aria-label="Cancel download"
 						>
 							<X size={14} />
 						</button>

@@ -1,8 +1,10 @@
 /** Route path constants */
 export const ROUTES = {
 	DASHBOARD: "/",
+	TRANSCRIBE: "/transcribe",
 	MODELS: "/models",
 	HISTORY: "/history",
+	EVAL: "/eval",
 	KEYS: "/keys",
 	SETTINGS: "/settings",
 } as const;
@@ -31,6 +33,19 @@ export const queryKeys = {
 			[...queryKeys.history.all, "list", filters ?? {}] as const,
 		detail: (id: string) => [...queryKeys.history.all, "detail", id] as const,
 		facets: () => [...queryKeys.history.all, "facets"] as const,
+	},
+	eval: {
+		all: ["eval"] as const,
+		overview: () => [...queryKeys.eval.all, "overview"] as const,
+		samples: () => [...queryKeys.eval.all, "samples"] as const,
+		pending: () => [...queryKeys.eval.all, "pending"] as const,
+		taken: () => [...queryKeys.eval.all, "taken"] as const,
+		runs: (text?: string) => [...queryKeys.eval.all, "runs", text ?? ""] as const,
+		run: (id: string) => [...queryKeys.eval.all, "run", id] as const,
+		results: (filters?: Record<string, string>) =>
+			[...queryKeys.eval.all, "results", filters ?? {}] as const,
+		judgements: () => [...queryKeys.eval.all, "judgements"] as const,
+		modelRuns: (id: string) => [...queryKeys.eval.all, "model", id] as const,
 	},
 	keys: {
 		all: ["keys"] as const,

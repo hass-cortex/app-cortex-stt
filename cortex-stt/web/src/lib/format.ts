@@ -1,3 +1,4 @@
+import type { CaptureBatchOutcome } from "@/hooks/use-eval";
 import { parseUTC } from "@/utils/time";
 
 /** Format bytes to human readable (e.g., "1.5 GB") */
@@ -51,4 +52,43 @@ export function formatScore(score: number): string {
 export function formatNumber(n: number): string {
 	if (n == null) return "—";
 	return n.toLocaleString();
+}
+
+/**
+ * Name a downloaded clip after what it is.
+ *
+ * Parts are joined with `_`; anything that is not a letter, a digit or
+ * `._-` becomes a separator, so a CJK reference survives intact while a
+ * path separator or a colon cannot. Empty parts drop out rather than
+ * leaving a stray `_`, and each is capped so a long transcript does not
+ * become a long filename. Every clip this app plays is WAV.
+ */
+export function clipFileName(...parts: (string | null | undefined)[]): string {
+	const stem = parts
+		.map((part) =>
+			(part ?? "")
+				.replace(/[^\p{L}\p{N}._-]+/gu, "-")
+				.replace(/^[-.]+|[-.]+$/g, "")
+				.slice(0, 40),
+		)
+		.filter(Boolean)
+		.join("_");
+	return `${stem || "clip"}.wav`;
+}
+
+/** One line saying what a batch of captures did, refusals and all. */
+export function describeCaptureOutcome(o: CaptureBatchOutcome): string {
+	const refused = [
+		o.alreadyTaken > 0 ? `${o.alreadyTaken} already in the set` : null,
+		o.notLossless > 0 ? `${o.notLossless} not lossless` : null,
+		o.noAudio > 0 ? `${o.noAudio} without audio` : null,
+		o.failed > 0 ? `${o.failed} failed${o.firstError ? ` (${o.firstError})` : ""}` : null,
+	].filter(Boolean);
+	const added =
+		o.labelled === 0
+			? `Added ${o.added} to labelling`
+			: o.labelled === o.added
+				? `Added ${o.added} sample(s)`
+				: `Added ${o.added}, ${o.labelled} of them labelled`;
+	return refused.length === 0 ? added : `${added}; ${refused.join(", ")}`;
 }

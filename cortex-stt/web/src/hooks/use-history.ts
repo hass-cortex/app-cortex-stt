@@ -4,6 +4,7 @@ import { subscribeSSE } from "@/api/client";
 import {
 	deleteAllHistory,
 	deleteHistoryRecord,
+	deleteHistoryRecords,
 	getHistoryDetail,
 	getHistoryFacets,
 	listHistory,
@@ -65,6 +66,13 @@ export function useHistoryDetail(id: string | null) {
 export function useDeleteHistoryRecord() {
 	return useInvalidatingMutation({
 		mutationFn: (id: string) => deleteHistoryRecord(id),
+		invalidates: HISTORY_MUTATION_INVALIDATES,
+	});
+}
+
+export function useDeleteHistoryRecords() {
+	return useInvalidatingMutation({
+		mutationFn: (ids: string[]) => deleteHistoryRecords(ids),
 		invalidates: HISTORY_MUTATION_INVALIDATES,
 	});
 }

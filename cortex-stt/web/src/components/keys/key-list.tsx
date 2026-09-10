@@ -2,7 +2,9 @@ import { Check, Copy, Eye, EyeOff, Key, Lock, Plus, Trash2 } from "lucide-react"
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Hint } from "@/components/ui/hint";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useKeys, useRevokeKey } from "@/hooks/use-keys";
@@ -19,13 +21,19 @@ export function KeyList({ onGenerate }: KeyListProps) {
 	const { data: keys, isLoading, error } = useKeys();
 	const revokeMutation = useRevokeKey();
 	const { toast } = useToast();
+	const confirm = useConfirm();
 	const runRevoke = useMutationToast(revokeMutation, { success: "API key revoked" });
 	const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
 	const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-	const handleRevoke = (id: string, name: string) => {
-		if (!window.confirm(`Revoke API key "${name}"? This cannot be undone.`)) return;
-		runRevoke(id);
+	const handleRevoke = async (id: string, name: string) => {
+		const ok = await confirm({
+			title: `Revoke “${name}”?`,
+			body: "Anything still authenticating with this key starts failing immediately. Other keys keep working.",
+			confirmLabel: "Revoke key",
+			destructive: true,
+		});
+		if (ok) runRevoke(id);
 	};
 
 	const toggleVisibility = (id: string) => {
@@ -68,8 +76,8 @@ export function KeyList({ onGenerate }: KeyListProps) {
 	return (
 		<Card>
 			<CardHeader
-				title="API Keys"
-				description="Keys authenticate HTTP API requests."
+				title="Keys"
+				description="one key per caller — revoking one then silences only that caller"
 				action={
 					<Button size="sm" icon={<Plus size={14} />} onClick={onGenerate}>
 						Generate Key
@@ -90,19 +98,19 @@ export function KeyList({ onGenerate }: KeyListProps) {
 				/>
 			) : (
 				<div className="overflow-x-auto">
-					<table className="w-full text-sm">
+					<table className="w-full min-w-[680px] text-[12.5px]">
 						<thead>
 							<tr className="border-b border-border">
-								<th className="text-left py-2 px-3 text-xs font-medium text-text-muted uppercase">
+								<th className="num text-left py-2 px-3 text-[10px] tracking-[0.06em] text-text-faint uppercase">
 									Name
 								</th>
-								<th className="text-left py-2 px-3 text-xs font-medium text-text-muted uppercase">
+								<th className="num text-left py-2 px-3 text-[10px] tracking-[0.06em] text-text-faint uppercase">
 									Key
 								</th>
-								<th className="text-left py-2 px-3 text-xs font-medium text-text-muted uppercase hidden sm:table-cell">
+								<th className="num text-left py-2 px-3 text-[10px] tracking-[0.06em] text-text-faint uppercase hidden sm:table-cell">
 									Created
 								</th>
-								<th className="text-left py-2 px-3 text-xs font-medium text-text-muted uppercase hidden md:table-cell">
+								<th className="num text-left py-2 px-3 text-[10px] tracking-[0.06em] text-text-faint uppercase hidden md:table-cell">
 									Last Used
 								</th>
 								<th className="text-right py-2 px-3 text-xs font-medium text-text-muted uppercase">
@@ -115,24 +123,29 @@ export function KeyList({ onGenerate }: KeyListProps) {
 								const isVisible = visibleKeys.has(key.id);
 								const isCopied = copiedKey === key.id;
 								return (
-									<tr key={key.id} className="border-b border-border/50 hover:bg-surface-3/50">
+									<tr
+										key={key.id}
+										className="border-b border-border-soft last:border-0 hover:bg-surface-3/40"
+									>
 										<td className="py-2.5 px-3 font-medium text-text-primary">
 											<div className="flex items-center gap-1.5">
 												<span>{key.name}</span>
 												{key.system && (
-													<span
-														className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-surface-3 text-text-muted"
-														title="Managed by the addon — edit via the Configuration tab."
+													<Hint
+														label="Managed"
+														content="Managed by the addon — edit via the Configuration tab."
+														width={240}
+														className="gap-0.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-surface-3 text-text-muted"
 													>
 														<Lock size={9} />
 														Managed
-													</span>
+													</Hint>
 												)}
 											</div>
 										</td>
 										<td className="py-2.5 px-3">
 											<div className="flex items-center gap-1.5">
-												<code className="text-xs text-text-muted font-mono select-all">
+												<code className="num text-[11.5px] text-text-muted select-all">
 													{isVisible && key.key ? key.key : `****${key.last4}`}
 												</code>
 												{key.key && (
@@ -141,7 +154,7 @@ export function KeyList({ onGenerate }: KeyListProps) {
 															type="button"
 															onClick={() => toggleVisibility(key.id)}
 															className="p-1 text-text-muted hover:text-text-secondary rounded transition-colors"
-															title={isVisible ? "Hide key" : "Show key"}
+															aria-label={isVisible ? "Hide key" : "Show key"}
 														>
 															{isVisible ? <EyeOff size={13} /> : <Eye size={13} />}
 														</button>
@@ -149,7 +162,7 @@ export function KeyList({ onGenerate }: KeyListProps) {
 															type="button"
 															onClick={() => handleCopy(key.id, key.key)}
 															className="p-1 text-text-muted hover:text-text-secondary rounded transition-colors"
-															title="Copy key"
+															aria-label="Copy key"
 														>
 															{isCopied ? (
 																<Check size={13} className="text-success" />
@@ -161,11 +174,17 @@ export function KeyList({ onGenerate }: KeyListProps) {
 												)}
 											</div>
 										</td>
-										<td className="py-2.5 px-3 text-text-secondary hidden sm:table-cell">
+										<td className="num py-2.5 px-3 text-[11.5px] text-text-secondary hidden sm:table-cell">
 											{formatTimestamp(key.created_at)}
 										</td>
-										<td className="py-2.5 px-3 text-text-muted hidden md:table-cell">
-											{key.last_used_at ? formatRelativeTime(key.last_used_at) : "Never"}
+										<td className="num py-2.5 px-3 text-[11.5px] hidden md:table-cell">
+											{key.last_used_at ? (
+												<span className="text-text-secondary">
+													{formatRelativeTime(key.last_used_at)}
+												</span>
+											) : (
+												<span className="text-text-faint">never used</span>
+											)}
 										</td>
 										<td className="py-2.5 px-3 text-right">
 											{!key.system && (

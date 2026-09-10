@@ -1,10 +1,12 @@
 import {
 	ChevronLeft,
 	ChevronRight,
+	FlaskConical,
 	History,
 	Key,
 	LayoutDashboard,
 	LogOut,
+	Mic,
 	Package,
 	Settings,
 } from "lucide-react";
@@ -12,6 +14,8 @@ import { useCallback, useState } from "react";
 import { NavLink } from "react-router";
 import { setApiKey } from "@/api/client";
 import { CortexLogo } from "@/components/ui/cortex-logo";
+import { useEvalOverview } from "@/hooks/use-eval";
+import { useModels } from "@/hooks/use-models";
 import { useHealth } from "@/hooks/use-system";
 import { ROUTES, SIDEBAR_COLLAPSED_KEY } from "@/lib/constants";
 import { isIngress } from "@/lib/ingress";
@@ -20,15 +24,11 @@ interface NavItem {
 	path: string;
 	label: string;
 	icon: typeof LayoutDashboard;
+	/** Count shown at the end of the row — a standing fact about the
+	 *  section, not a notification. */
+	badge?: number;
+	badgeTone?: "muted" | "accent";
 }
-
-const navItems: NavItem[] = [
-	{ path: ROUTES.DASHBOARD, label: "Dashboard", icon: LayoutDashboard },
-	{ path: ROUTES.MODELS, label: "Models", icon: Package },
-	{ path: ROUTES.HISTORY, label: "History", icon: History },
-	{ path: ROUTES.KEYS, label: "API Keys", icon: Key },
-	{ path: ROUTES.SETTINGS, label: "Settings", icon: Settings },
-];
 
 function getInitialCollapsed(): boolean {
 	try {
@@ -46,6 +46,8 @@ interface SidebarProps {
 export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 	const [collapsed, setCollapsed] = useState(getInitialCollapsed);
 	const { data: health } = useHealth();
+	const { data: models } = useModels();
+	const { data: evalOverview } = useEvalOverview();
 
 	const toggleCollapsed = useCallback(() => {
 		setCollapsed((prev) => {
@@ -59,21 +61,48 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 		});
 	}, []);
 
-	// Mobile sidebar is always expanded
+	const installed = (models ?? []).filter(
+		(m) => m.status === "downloaded" || m.status === "custom",
+	).length;
+	const pending = evalOverview?.pending_count ?? 0;
+
+	const navItems: NavItem[] = [
+		{ path: ROUTES.DASHBOARD, label: "Dashboard", icon: LayoutDashboard },
+		{ path: ROUTES.TRANSCRIBE, label: "Transcribe", icon: Mic },
+		{
+			path: ROUTES.MODELS,
+			label: "Models",
+			icon: Package,
+			badge: installed || undefined,
+			badgeTone: "muted",
+		},
+		{ path: ROUTES.HISTORY, label: "History", icon: History },
+		{
+			path: ROUTES.EVAL,
+			label: "Evaluation",
+			icon: FlaskConical,
+			badge: pending || undefined,
+			badgeTone: "accent",
+		},
+		{ path: ROUTES.KEYS, label: "API Keys", icon: Key },
+		{ path: ROUTES.SETTINGS, label: "Settings", icon: Settings },
+	];
+
 	const isCollapsed = mobile ? false : collapsed;
 
 	return (
 		<aside
 			className={`flex flex-col bg-surface-1 border-r border-border h-full transition-all duration-200 ${
-				isCollapsed ? "w-16" : "w-56"
-			} ${mobile ? "w-56" : ""}`}
+				isCollapsed ? "w-16" : "w-[216px]"
+			} ${mobile ? "w-[216px]" : ""}`}
 		>
-			{/* Header */}
-			<div className="flex items-center justify-between h-14 px-3 border-b border-border">
+			<div className="flex items-center justify-between h-[52px] px-4 border-b border-border">
 				{!isCollapsed && (
-					<div className="flex items-center gap-2 overflow-hidden">
+					<div className="flex items-center gap-2.5 overflow-hidden">
 						<CortexLogo size={22} className="shrink-0" />
-						<span className="text-sm font-semibold text-text-primary truncate">Cortex STT</span>
+						<span className="text-[13px] font-semibold tracking-[0.02em] text-text-primary truncate">
+							Cortex STT
+						</span>
 					</div>
 				)}
 				{isCollapsed && <CortexLogo size={22} className="mx-auto" />}
@@ -82,15 +111,14 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 						type="button"
 						onClick={toggleCollapsed}
 						className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-3 transition-colors cursor-pointer"
-						title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+						aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
 					>
 						{isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
 					</button>
 				)}
 			</div>
 
-			{/* Navigation */}
-			<nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
+			<nav className="flex-1 py-3 px-2.5 space-y-0.5 overflow-y-auto">
 				{navItems.map((item) => (
 					<NavLink
 						key={item.path}
@@ -98,42 +126,71 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 						end={item.path === "/"}
 						onClick={onNavigate}
 						className={({ isActive }) =>
-							`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+							`flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13px] transition-colors ${
 								isActive
-									? "bg-accent/10 text-accent"
+									? "bg-accent-wash text-text-primary font-medium shadow-[inset_2px_0_0_var(--accent)]"
 									: "text-text-secondary hover:bg-surface-3 hover:text-text-primary"
 							} ${isCollapsed ? "justify-center" : ""}`
 						}
-						title={isCollapsed ? item.label : undefined}
+						aria-label={isCollapsed ? item.label : undefined}
 					>
-						<item.icon size={18} className="shrink-0" />
-						{!isCollapsed && <span className="truncate">{item.label}</span>}
+						{({ isActive }) => (
+							<>
+								<item.icon
+									size={17}
+									strokeWidth={1.6}
+									className={`shrink-0 ${isActive ? "text-accent-ink" : "text-text-muted"}`}
+								/>
+								{!isCollapsed && (
+									<>
+										<span className="truncate">{item.label}</span>
+										{item.badge !== undefined && (
+											<span
+												className={`num ml-auto text-[10.5px] px-[5px] rounded-[3px] ${
+													item.badgeTone === "accent"
+														? "bg-accent-wash text-accent-ink"
+														: "text-text-faint"
+												}`}
+											>
+												{item.badge}
+											</span>
+										)}
+									</>
+								)}
+							</>
+						)}
 					</NavLink>
 				))}
 			</nav>
 
-			{/* Footer */}
-			<div className="px-2 py-2 border-t border-border space-y-1.5">
-				{!isIngress() && (
-					<button
-						type="button"
-						onClick={() => {
-							setApiKey(null);
-							window.location.reload();
-						}}
-						className={`flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-surface-3 hover:text-text-primary transition-colors cursor-pointer ${
-							isCollapsed ? "justify-center" : ""
+			<div className="px-4 py-3.5 border-t border-border space-y-1.5">
+				<div className="flex items-center gap-[7px]">
+					<span
+						className={`w-1.5 h-1.5 rounded-full ${
+							health?.status === "ok" ? "bg-success" : "bg-warning"
 						}`}
-						title={isCollapsed ? "Sign out" : undefined}
-					>
-						<LogOut size={18} className="shrink-0" />
-						{!isCollapsed && <span className="truncate">Sign out</span>}
-					</button>
-				)}
+					/>
+					<span className="num text-[11px] text-text-secondary">
+						{health?.status === "ok" ? "engine ready" : (health?.status ?? "connecting")}
+					</span>
+				</div>
 				{!isCollapsed && (
-					<p className="text-[10px] text-text-muted px-0.5">
-						Cortex STT{health?.version ? ` ${health.version}` : ""}
-					</p>
+					<div className="flex items-center justify-between">
+						<span className="num text-[11px] text-text-faint">v{health?.version ?? "—"}</span>
+						{!isIngress() && (
+							<button
+								type="button"
+								onClick={() => {
+									setApiKey(null);
+									window.location.reload();
+								}}
+								className="flex items-center gap-1.5 text-[11px] text-text-faint hover:text-text-primary transition-colors cursor-pointer"
+							>
+								<LogOut size={13} strokeWidth={1.6} />
+								Sign out
+							</button>
+						)}
+					</div>
 				)}
 			</div>
 		</aside>

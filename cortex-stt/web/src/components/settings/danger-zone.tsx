@@ -1,10 +1,12 @@
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { useDeleteAllHistory } from "@/hooks/use-history";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 
 export function DangerZone() {
+	const confirm = useConfirm();
 	const deleteAllMutation = useDeleteAllHistory();
 	const runDeleteAll = useMutationToast(deleteAllMutation, {
 		success: (data) =>
@@ -12,15 +14,14 @@ export function DangerZone() {
 		error: "Delete failed",
 	});
 
-	const handleDeleteAll = () => {
-		if (
-			!window.confirm(
-				"Delete ALL transcription records and audio files? This action cannot be undone.",
-			)
-		) {
-			return;
-		}
-		runDeleteAll(undefined);
+	const handleDeleteAll = async () => {
+		const ok = await confirm({
+			title: "Delete every transcription record?",
+			body: "Every row and every audio file goes, not just the ones older than the retention window. Evaluation samples survive — each owns its own copy of the audio.",
+			confirmLabel: "Delete everything",
+			destructive: true,
+		});
+		if (ok) runDeleteAll(undefined);
 	};
 
 	return (

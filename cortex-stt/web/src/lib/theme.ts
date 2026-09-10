@@ -36,13 +36,11 @@ function getSystemPreference(): "light" | "dark" {
 	return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+// Dark is the ground the palette was built on; light is the override.
 function applyTheme(resolved: "light" | "dark") {
 	const root = document.documentElement;
-	if (resolved === "dark") {
-		root.classList.add("dark");
-	} else {
-		root.classList.remove("dark");
-	}
+	root.classList.toggle("light", resolved === "light");
+	root.style.colorScheme = resolved;
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

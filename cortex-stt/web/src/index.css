@@ -3,38 +3,62 @@
 /* --- Theme: CSS Custom Properties --- */
 
 :root {
-	/* Light theme (default) */
-	--surface-0: #f5f5f5;
-	--surface-1: #ffffff;
-	--surface-2: #ffffff;
-	--surface-3: #e8e8ed;
-	--border: #d4d4d8;
-	--text-primary: #1e1e2e;
-	--text-secondary: #4c4f69;
-	--text-muted: #9ca0b0;
-	--accent: #1e66f5;
-	--accent-hover: #04a5e5;
-	--success: #40a02b;
-	--warning: #df8e1d;
-	--error: #d20f39;
-	--info: #209fb5;
+	/* Dark (default). The accent is the brand mark's Ruby Crimson lifted
+	   to #e11d48 so it clears contrast on this ground; the mark itself
+	   stays #be123c at every size. */
+	--surface-0: #100d0e;
+	--surface-1: #14100f;
+	--surface-2: #171214;
+	--surface-3: #1f181b;
+	--border: #2a2225;
+	--border-soft: #241c1f;
+	--text-primary: #f0e9eb;
+	--text-secondary: #a9989d;
+	--text-muted: #7c7075;
+	--text-faint: #6b5d62;
+	--accent: #e11d48;
+	--accent-hover: #f43f5e;
+	--accent-ink: #fb7185;
+	--accent-wash: #23161b;
+	--accent-quiet: #4a2c35;
+	--success: #4ade80;
+	--success-wash: #14301f;
+	--warning: #fbbf24;
+	--warning-wash: #2e2410;
+	--error: #f87171;
+	--error-wash: #331717;
+	--info: #89dceb;
+	--chart-grid: #231b1e;
+	--chart-axis: #2f2529;
+	--brand: #be123c;
 }
 
-.dark {
-	--surface-0: #11111b;
-	--surface-1: #181825;
-	--surface-2: #1e1e2e;
-	--surface-3: #313244;
-	--border: #45475a;
-	--text-primary: #cdd6f4;
-	--text-secondary: #a6adc8;
-	--text-muted: #6c7086;
-	--accent: #89b4fa;
-	--accent-hover: #74c7ec;
-	--success: #a6e3a1;
-	--warning: #f9e2af;
-	--error: #f38ba8;
-	--info: #89dceb;
+.light {
+	--surface-0: #faf8f7;
+	--surface-1: #ffffff;
+	--surface-2: #ffffff;
+	--surface-3: #f3efee;
+	--border: #e5dedd;
+	--border-soft: #efe9e8;
+	--text-primary: #1b1416;
+	--text-secondary: #5f5356;
+	--text-muted: #877a7e;
+	--text-faint: #a2949a;
+	--accent: #be123c;
+	--accent-hover: #9f1239;
+	--accent-ink: #be123c;
+	--accent-wash: #fdf2f4;
+	--accent-quiet: #f2c9d3;
+	--success: #16a34a;
+	--success-wash: #eefaf1;
+	--warning: #b45309;
+	--warning-wash: #fdf6ec;
+	--error: #b91c1c;
+	--error-wash: #fdf1f1;
+	--info: #0e7490;
+	--chart-grid: #f1ecec;
+	--chart-axis: #ddd4d4;
+	--brand: #be123c;
 }
 
 @theme inline {
@@ -43,15 +67,35 @@
 	--color-surface-2: var(--surface-2);
 	--color-surface-3: var(--surface-3);
 	--color-border: var(--border);
+	--color-border-soft: var(--border-soft);
 	--color-text-primary: var(--text-primary);
 	--color-text-secondary: var(--text-secondary);
 	--color-text-muted: var(--text-muted);
+	--color-text-faint: var(--text-faint);
 	--color-accent: var(--accent);
 	--color-accent-hover: var(--accent-hover);
+	--color-accent-ink: var(--accent-ink);
+	--color-accent-wash: var(--accent-wash);
+	--color-accent-quiet: var(--accent-quiet);
 	--color-success: var(--success);
+	--color-success-wash: var(--success-wash);
 	--color-warning: var(--warning);
+	--color-warning-wash: var(--warning-wash);
 	--color-error: var(--error);
+	--color-error-wash: var(--error-wash);
 	--color-info: var(--info);
+	--color-chart-grid: var(--chart-grid);
+	--color-chart-axis: var(--chart-axis);
+	--color-brand: var(--brand);
+
+	--font-sans:
+		"Space Grotesk Variable", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui,
+		-apple-system, sans-serif;
+	--font-mono:
+		"JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, "Noto Sans Mono CJK TC", monospace;
+
+	--radius-card: 10px;
+	--radius-control: 7px;
 }
 
 /* --- Base Styles --- */
@@ -59,26 +103,32 @@
 body {
 	background-color: var(--surface-0);
 	color: var(--text-primary);
-	font-family: "Inter", system-ui, -apple-system, sans-serif;
+	font-family: var(--font-sans);
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling for dark theme */
-.dark ::-webkit-scrollbar {
+/* Every number a reader compares down a column — latency, size, RTF,
+   timestamps — wears this. Prose never does. */
+.num {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
 	width: 8px;
 	height: 8px;
 }
 
-.dark ::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
 	background: var(--surface-1);
 }
 
-.dark ::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
 	background: var(--border);
 	border-radius: 4px;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
 	background: var(--text-muted);
 }

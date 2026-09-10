@@ -24,15 +24,18 @@ export function Select({
 }: SelectProps) {
 	const selectId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
 	return (
-		<div className="space-y-1.5">
+		<div className="space-y-[6px]">
 			{label && (
-				<label htmlFor={selectId} className="block text-sm font-medium text-text-secondary">
+				<label
+					htmlFor={selectId}
+					className="num block text-[10.5px] uppercase tracking-[0.07em] text-text-muted"
+				>
 					{label}
 				</label>
 			)}
 			<select
 				id={selectId}
-				className={`w-full px-3 py-2 text-sm bg-surface-3 border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-colors appearance-none cursor-pointer ${
+				className={`w-full h-[34px] px-[11px] text-[12.5px] bg-surface-3 border border-border rounded-[7px] text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition-colors cursor-pointer ${
 					error ? "border-error" : ""
 				} ${className}`}
 				{...props}

@@ -36,7 +36,7 @@ export function AppLayout() {
 					/>
 
 					{/* Drawer panel */}
-					<div className="fixed inset-y-0 left-0 z-50 w-56">
+					<div className="fixed inset-y-0 left-0 z-50 w-[216px]">
 						<div className="relative h-full">
 							<Sidebar mobile onNavigate={closeDrawer} />
 							<button
@@ -54,7 +54,7 @@ export function AppLayout() {
 			{/* Main content area */}
 			<div className="flex flex-col flex-1 min-w-0">
 				<TopBar onMenuClick={openDrawer} />
-				<main className="flex-1 overflow-y-auto p-4 sm:p-6">
+				<main className="flex-1 overflow-y-auto p-4 sm:px-7 sm:py-6">
 					<Outlet />
 				</main>
 			</div>

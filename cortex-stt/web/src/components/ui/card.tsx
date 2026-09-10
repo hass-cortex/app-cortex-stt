@@ -8,15 +8,15 @@ interface CardProps {
 
 const paddingMap = {
 	none: "",
-	sm: "p-3",
-	md: "p-4 sm:p-5",
-	lg: "p-5 sm:p-6",
+	sm: "p-3.5",
+	md: "p-4",
+	lg: "px-[18px] py-4",
 };
 
-export function Card({ children, className = "", padding = "md" }: CardProps) {
+export function Card({ children, className = "", padding = "lg" }: CardProps) {
 	return (
 		<div
-			className={`bg-surface-2 border border-border rounded-xl ${paddingMap[padding]} ${className}`}
+			className={`bg-surface-2 border border-border rounded-[10px] ${paddingMap[padding]} ${className}`}
 		>
 			{children}
 		</div>
@@ -25,18 +25,20 @@ export function Card({ children, className = "", padding = "md" }: CardProps) {
 
 interface CardHeaderProps {
 	title: string;
-	description?: string;
+	/** Sub-line under the title. Set in the mono face — it usually carries
+	 *  counts, units or model ids rather than prose. */
+	description?: ReactNode;
 	action?: ReactNode;
 }
 
 export function CardHeader({ title, description, action }: CardHeaderProps) {
 	return (
-		<div className="flex items-start justify-between mb-4">
-			<div>
-				<h3 className="text-base font-semibold text-text-primary">{title}</h3>
-				{description && <p className="text-sm text-text-secondary mt-0.5">{description}</p>}
+		<div className="flex items-baseline justify-between gap-4">
+			<div className="min-w-0">
+				<h3 className="text-[13.5px] font-semibold text-text-primary">{title}</h3>
+				{description && <p className="num text-[11px] text-text-muted mt-[3px]">{description}</p>}
 			</div>
-			{action && <div className="ml-4 shrink-0">{action}</div>}
+			{action && <div className="shrink-0">{action}</div>}
 		</div>
 	);
 }

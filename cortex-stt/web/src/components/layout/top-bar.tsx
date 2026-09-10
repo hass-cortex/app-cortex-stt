@@ -1,4 +1,5 @@
 import { Menu } from "lucide-react";
+import { LiveInput } from "./live-input";
 import { ThemeToggle } from "./theme-toggle";
 
 interface TopBarProps {
@@ -7,8 +8,7 @@ interface TopBarProps {
 
 export function TopBar({ onMenuClick }: TopBarProps) {
 	return (
-		<header className="flex items-center justify-between h-14 px-4 bg-surface-1 border-b border-border lg:px-6">
-			{/* Mobile hamburger */}
+		<header className="flex items-center gap-4 h-[52px] px-4 lg:px-7 bg-surface-1 border-b border-border">
 			<button
 				type="button"
 				onClick={onMenuClick}
@@ -18,11 +18,9 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 				<Menu size={20} />
 			</button>
 
-			{/* Spacer for desktop (sidebar provides branding) */}
-			<div className="hidden lg:block" />
+			<LiveInput />
 
-			{/* Right side */}
-			<div className="flex items-center gap-3">
+			<div className="ml-auto flex items-center gap-3">
 				<ThemeToggle />
 			</div>
 		</header>

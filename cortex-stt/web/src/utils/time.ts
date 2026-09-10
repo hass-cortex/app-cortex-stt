@@ -32,6 +32,17 @@ export function formatTimestamp(utcTimestamp: string, timezone = "auto"): string
 	});
 }
 
+/** Clock time only — for rows where the date is implied by the window. */
+export function formatClock(utcTimestamp: string, timezone = "auto"): string {
+	const tz = timezone === "auto" ? getBrowserTimezone() : timezone;
+	return parseUTC(utcTimestamp).toLocaleTimeString("default", {
+		timeZone: tz,
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	});
+}
+
 export function getBrowserTimezone(): string {
 	try {
 		return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -51,3 +62,28 @@ export const COMMON_TIMEZONES = [
 	{ value: "Europe/Berlin", label: "Europe/Berlin (UTC+1/+2)" },
 	{ value: "UTC", label: "UTC" },
 ];
+
+/**
+ * A sortable `YYYYMMDD-HHMMSS` stamp in the given timezone — for
+ * filenames, where the separators `formatTimestamp` uses cannot go.
+ *
+ * It reads the same timezone as the screen on purpose: a clip named in
+ * UTC while the row above it says 06:34 local looks like a different
+ * recording.
+ */
+export function timestampSlug(utcTimestamp: string, timezone = "auto"): string {
+	const tz = timezone === "auto" ? getBrowserTimezone() : timezone;
+	const parts = new Intl.DateTimeFormat("en-CA", {
+		timeZone: tz,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		// `hour12: false` still renders midnight as 24 on some engines.
+		hourCycle: "h23",
+	}).formatToParts(parseUTC(utcTimestamp));
+	const at = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+	return `${at("year")}${at("month")}${at("day")}-${at("hour")}${at("minute")}${at("second")}`;
+}

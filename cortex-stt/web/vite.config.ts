@@ -2,6 +2,10 @@ import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+// Point the dev proxy at a running server: a local `cargo run` by default,
+// or a deployed addon via CORTEX_STT_PROXY=http://<host>:8769.
+const apiTarget = process.env.CORTEX_STT_PROXY ?? "http://localhost:10400";
+
 export default defineConfig({
 	base: "./",
 	plugins: [react()],
@@ -14,11 +18,11 @@ export default defineConfig({
 		port: 5173,
 		proxy: {
 			"/api": {
-				target: "http://localhost:10400",
+				target: apiTarget,
 				changeOrigin: true,
 			},
 			"/health": {
-				target: "http://localhost:10400",
+				target: apiTarget,
 				changeOrigin: true,
 			},
 		},

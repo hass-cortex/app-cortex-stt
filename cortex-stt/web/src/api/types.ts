@@ -151,6 +151,10 @@ export interface TranscriptionRecord {
 	pool_wait_ms: number;
 	cold_load_ms: number;
 	text: string;
+	/** What the model produced, when it differs from `text` — family
+	 *  post-processing stripped tags from it, or an output rendering
+	 *  rewrote it. Null when nothing changed. */
+	raw_text: string | null;
 	segments: TranscriptionSegment[];
 	audio_path: string | null;
 	has_error: boolean;
@@ -216,7 +220,6 @@ export type BackendKind = "auto" | "cpu" | "cuda";
 /** Per-model compute backend override. */
 export interface BackendOverride {
 	backend: BackendKind;
-	gpu_device: number;
 }
 
 export type RetentionPolicyType = "Count" | "Days" | "DiskLimitMb" | "Unlimited";
@@ -247,4 +250,180 @@ export interface ApiErrorBody {
 	code: string;
 	message: string;
 	model_id?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation
+// ---------------------------------------------------------------------------
+
+/** Audio copied into the evaluation store that has no reference yet. */
+export interface PendingCapture {
+	id: string;
+	created_at: string;
+	audio_path: string;
+	audio_duration_ms: number;
+	origin_record_id: string | null;
+	capture_device: string | null;
+	/** What a model transcribed at capture time — a starting point, not truth. */
+	origin_text: string | null;
+}
+
+/** Lossless audio plus the hand-typed truth about what it says. */
+export interface EvalSample {
+	id: string;
+	created_at: string;
+	audio_path: string;
+	audio_duration_ms: number;
+	reference_transcript: string;
+	/** Orthography the reference is written in (BCP-47). Null when
+	 *  unlabelled — a run rendering to a different locale is flagged
+	 *  rather than scored against it. */
+	reference_locale: string | null;
+	origin_record_id: string | null;
+	capture_device: string | null;
+}
+
+/** A sample as the list shows it, with what deleting it would destroy —
+ *  the cascade reaches every run that used it. */
+export interface EvalSampleListEntry extends EvalSample {
+	run_count: number;
+	result_count: number;
+}
+
+export type RunStatus = "running" | "completed" | "cancelled" | "failed";
+
+export interface EvalRun {
+	id: string;
+	started_at: string;
+	finished_at: string | null;
+	status: RunStatus;
+	app_version: string;
+	engine_version: string;
+	max_loaded_models: number;
+	process_floor_bytes: number;
+	available_memory_bytes: number;
+	/** The language hint this run used; part of its configuration. */
+	language: string | null;
+	note: string | null;
+}
+
+/** A run as the list shows it — the row plus enough of its shape to tell
+ *  one run from another. Model ids are in the run's own order. */
+export interface EvalRunListEntry extends EvalRun {
+	model_ids: string[];
+	sample_count: number;
+	/** Verdicts summed across every model in the run. */
+	correct: number;
+	scored: number;
+	/** Correct cells nobody checked. */
+	unchecked_correct: number;
+}
+
+export interface EvalResult {
+	id: string;
+	run_id: string;
+	sample_id: string;
+	model_id: string;
+	text: string;
+	raw_text: string | null;
+	inference_ms: number;
+	error_message: string | null;
+	/** What the server's comparison alone makes of this output. */
+	matches_reference: boolean;
+	/** A person's ruling on this exact output string, where one exists.
+	 *  It outranks the comparison, in both directions. */
+	ruling: boolean | null;
+}
+
+export interface Judgement {
+	sample_id: string;
+	output_text: string;
+	correct: boolean;
+	created_at: string;
+}
+
+export interface ModelSummary {
+	model_id: string;
+	quant: string | null;
+	file_size_bytes: number;
+	cold_load_ms: number;
+	load_failed: boolean;
+	failure_reason: string | null;
+	/** What the model costs on its own. */
+	resident_bytes: number;
+	/** What it needs with the rest of the working set resident. */
+	coexist_bytes: number;
+	fits_alongside: boolean | null;
+	results: number;
+	/** Cells whose verdict is correct — a person's ruling where there is
+	 *  one, the comparison against the reference otherwise. */
+	correct: number;
+	/** Cells carrying a verdict at all: everything but an error. */
+	scored: number;
+	/** Correct cells nobody checked — the unverified verdicts that could
+	 *  be inflating this figure. An unchecked wrong costs the model a
+	 *  point rather than granting one, so it is not counted here. */
+	unchecked_correct: number;
+	median_inference_ms: number | null;
+	max_inference_ms: number | null;
+	median_rtf: number | null;
+	changed_from_previous: number | null;
+}
+
+export interface RunSummary {
+	run: EvalRun;
+	sample_count: number;
+	models: ModelSummary[];
+	previous_run_id: string | null;
+	/** Samples both runs covered — the only valid basis for comparison. */
+	compared_samples: number;
+	/** Completed runs skipped as a baseline for using a different
+	 *  language hint, so an absent comparison can be explained. */
+	skipped_baselines: number;
+}
+
+export interface DeviceCount {
+	capture_device: string;
+	count: number;
+}
+
+export interface SampleSetComposition {
+	total: number;
+	total_duration_ms: number;
+	judged_outputs: number;
+	by_capture_device: DeviceCount[];
+}
+
+export interface EvalOverview {
+	latest: RunSummary | null;
+	composition: SampleSetComposition;
+	pending_count: number;
+	coverage: DeviceCount[];
+}
+
+export interface ModelRunEntry {
+	run: EvalRun;
+	sample_count: number;
+	compared_samples: number;
+	summary: ModelSummary;
+}
+
+export interface RunProgress {
+	run_id: string;
+	status: RunStatus;
+	model_index: number;
+	model_total: number;
+	current_model: string | null;
+	sample_index: number;
+	sample_total: number;
+}
+
+export interface EvalResultFilters {
+	run_id?: string;
+	sample_id?: string;
+	model?: string;
+	text?: string;
+	capture_device?: string;
+	limit?: number;
+	offset?: number;
 }

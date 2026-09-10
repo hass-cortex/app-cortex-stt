@@ -17,7 +17,7 @@ export function ThemeToggle() {
 					key={m}
 					type="button"
 					onClick={() => setMode(m)}
-					title={label}
+					aria-label={label}
 					className={`p-1.5 rounded-md transition-colors cursor-pointer ${
 						mode === m
 							? "bg-surface-2 text-accent shadow-sm"

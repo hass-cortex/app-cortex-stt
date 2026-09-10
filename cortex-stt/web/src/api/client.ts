@@ -52,6 +52,12 @@ async function handleResponse<T>(response: Response): Promise<T> {
 		}
 		throw new ApiClientError(response.status, code, message);
 	}
+	// A write that reports success by saying nothing. Handing an empty body
+	// to json() throws — after the write has already landed, so the caller
+	// sees a failure for something that worked and never refetches.
+	if (response.status === 204 || response.headers.get("content-length") === "0") {
+		return undefined as T;
+	}
 	return response.json();
 }
 
@@ -107,7 +113,37 @@ export async function del<T = void>(path: string): Promise<T> {
 		method: "DELETE",
 		headers: buildHeaders(),
 	});
-	if (response.status === 204) return undefined as T;
+	return handleResponse<T>(response);
+}
+
+/** Typed DELETE carrying a JSON body. For resources whose identity is a
+ *  composite value (an output string, say) that has no place in a path. */
+export async function delWithBody<T = void>(path: string, body: unknown): Promise<T> {
+	const response = await fetch(`${getBaseUrl()}${path}`, {
+		method: "DELETE",
+		headers: buildHeaders(),
+		body: JSON.stringify(body),
+	});
+	return handleResponse<T>(response);
+}
+
+/** POST raw bytes (an audio file) rather than JSON. */
+export async function postBinary<T>(
+	path: string,
+	body: ArrayBuffer | Blob,
+	contentType: string,
+	params?: Record<string, string>,
+): Promise<T> {
+	const url = new URL(`${getBaseUrl()}${path}`, window.location.origin);
+	if (params) {
+		for (const [k, v] of Object.entries(params)) {
+			if (v !== undefined && v !== "") url.searchParams.set(k, v);
+		}
+	}
+	const headers: Record<string, string> = { "Content-Type": contentType };
+	const key = getApiKey();
+	if (key) headers.Authorization = `Bearer ${key}`;
+	const response = await fetch(url.toString(), { method: "POST", headers, body });
 	return handleResponse<T>(response);
 }
 
@@ -151,7 +187,16 @@ export function subscribeSSE(
 
 /** Build audio URL for playback (with auth query param if needed) */
 export function audioUrl(recordId: string): string {
+	return withKey(`${getBaseUrl()}/api/history/${recordId}/audio`);
+}
+
+/** Audio for an evaluation sample or pending capture (always WAV). */
+export function evalAudioUrl(id: string): string {
+	return withKey(`${getBaseUrl()}/api/eval/samples/${encodeURIComponent(id)}/audio`);
+}
+
+/** Append the key for URLs consumed by elements that cannot set headers. */
+function withKey(base: string): string {
 	const key = getApiKey();
-	const base = `${getBaseUrl()}/api/history/${recordId}/audio`;
 	return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
 }

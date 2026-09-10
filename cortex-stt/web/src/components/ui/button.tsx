@@ -1,10 +1,11 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { Spinner } from "./spinner";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+	ref?: Ref<HTMLButtonElement>;
 	variant?: ButtonVariant;
 	size?: ButtonSize;
 	loading?: boolean;
@@ -14,21 +15,23 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<ButtonVariant, string> = {
 	primary:
-		"bg-accent text-surface-0 hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed",
-	secondary:
-		"bg-surface-3 text-text-primary hover:bg-border disabled:opacity-50 disabled:cursor-not-allowed",
-	ghost: "text-text-secondary hover:bg-surface-3 hover:text-text-primary disabled:opacity-50",
-	danger:
-		"bg-error/15 text-error hover:bg-error/25 disabled:opacity-50 disabled:cursor-not-allowed",
+		"bg-accent text-white border border-accent hover:bg-accent-hover hover:border-accent-hover",
+	secondary: "bg-surface-3 text-text-primary border border-border hover:border-text-muted",
+	outline:
+		"bg-transparent text-text-secondary border border-border hover:text-text-primary hover:border-text-muted",
+	ghost:
+		"bg-transparent text-text-secondary border border-transparent hover:bg-surface-3 hover:text-text-primary",
+	danger: "bg-error-wash text-error border border-transparent hover:border-error/40",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-	sm: "px-2.5 py-1 text-xs rounded-md gap-1.5",
-	md: "px-3.5 py-1.5 text-sm rounded-lg gap-2",
-	lg: "px-5 py-2.5 text-base rounded-lg gap-2",
+	sm: "px-2.5 py-1 text-xs gap-1.5",
+	md: "px-3 py-1.5 text-[12.5px] gap-[7px]",
+	lg: "px-5 py-2.5 text-sm gap-2",
 };
 
 export function Button({
+	ref,
 	variant = "primary",
 	size = "md",
 	loading = false,
@@ -40,7 +43,8 @@ export function Button({
 }: ButtonProps) {
 	return (
 		<button
-			className={`inline-flex items-center justify-center font-medium transition-colors cursor-pointer ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+			ref={ref}
+			className={`inline-flex items-center justify-center rounded-[7px] font-medium whitespace-nowrap transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
 			disabled={disabled || loading}
 			{...props}
 		>

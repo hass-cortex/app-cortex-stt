@@ -1,5 +1,15 @@
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, type RefObject, useEffect, useRef } from "react";
+
+/** How much horizontal room the body needs. `md` is a form or a
+ *  question; `xl` is for a body that puts two lists side by side. */
+type ModalWidth = "md" | "lg" | "xl";
+
+const widthClass: Record<ModalWidth, string> = {
+	md: "max-w-md",
+	lg: "max-w-2xl",
+	xl: "max-w-4xl",
+};
 
 interface ModalProps {
 	open: boolean;
@@ -7,9 +17,22 @@ interface ModalProps {
 	title: string;
 	children: ReactNode;
 	footer?: ReactNode;
+	width?: ModalWidth;
+	/** Control to focus on open. `showModal()` focuses the first focusable
+	 *  descendant — the close button — and runs after React's own
+	 *  `autoFocus`, so the choice has to be made here. */
+	initialFocus?: RefObject<HTMLElement | null>;
 }
 
-export function Modal({ open, onClose, title, children, footer }: ModalProps) {
+export function Modal({
+	open,
+	onClose,
+	title,
+	children,
+	footer,
+	width = "md",
+	initialFocus,
+}: ModalProps) {
 	const dialogRef = useRef<HTMLDialogElement>(null);
 
 	useEffect(() => {
@@ -18,10 +41,11 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
 
 		if (open) {
 			dialog.showModal();
+			initialFocus?.current?.focus();
 		} else {
 			dialog.close();
 		}
-	}, [open]);
+	}, [open, initialFocus]);
 
 	useEffect(() => {
 		const dialog = dialogRef.current;
@@ -48,9 +72,14 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
 				if (e.key === "Escape") onClose();
 			}}
 		>
-			<div className="bg-surface-2 border border-border rounded-xl shadow-2xl max-w-md w-full p-5">
-				<div className="flex items-center justify-between mb-4">
-					<h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+			{/* The body scrolls, the title and the footer do not: a long body
+			    used to grow the dialog past the viewport, which put Start
+			    somewhere the page could not be scrolled to. */}
+			<div
+				className={`bg-surface-2 border border-border rounded-[10px] shadow-2xl ${widthClass[width]} w-full max-h-[90vh] flex flex-col px-5 py-4`}
+			>
+				<div className="flex items-center justify-between mb-4 shrink-0">
+					<h2 className="text-[15px] font-semibold text-text-primary">{title}</h2>
 					<button
 						type="button"
 						onClick={onClose}
@@ -59,9 +88,11 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
 						<X size={18} />
 					</button>
 				</div>
-				<div className="text-sm text-text-secondary">{children}</div>
+				<div className="min-h-0 flex-1 overflow-y-auto text-[12.5px] text-text-secondary">
+					{children}
+				</div>
 				{footer && (
-					<div className="flex items-center justify-end gap-2 mt-5 pt-4 border-t border-border">
+					<div className="flex items-center justify-end gap-2 mt-5 pt-3.5 border-t border-border shrink-0">
 						{footer}
 					</div>
 				)}
