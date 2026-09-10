@@ -6,6 +6,10 @@ use crate::error::AsrError;
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptionResult {
     pub text: String,
+    /// The model's output before family post-processing stripped its
+    /// markers (sensevoice emotion/event tags, whisper special tokens,
+    /// qwen3_asr chat envelopes). Empty when the engine reports none.
+    pub raw_text: String,
     /// Detected source language, when the model reports one.
     pub language: Option<String>,
     pub segments: Vec<TranscriptionSegment>,
@@ -50,9 +54,6 @@ pub enum EngineBackend {
 pub struct BackendOverride {
     #[serde(default)]
     pub backend: EngineBackend,
-    /// GPU device registry index (0 = auto / first matching device).
-    #[serde(default)]
-    pub gpu_device: u32,
 }
 
 /// Options controlling transcription behavior.

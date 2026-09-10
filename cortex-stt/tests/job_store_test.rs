@@ -9,6 +9,7 @@ use cortex_stt::transcriber::TranscribeResponse;
 fn response(text: &str) -> TranscribeResponse {
     TranscribeResponse {
         text: text.to_string(),
+        raw_text: None,
         language: None,
         segments: vec![],
         words: vec![],
@@ -20,6 +21,7 @@ fn response(text: &str) -> TranscribeResponse {
         pool_wait_ms: 0,
         cold_load_ms: 0,
         device: "cpu".to_string(),
+        applied_transforms: Vec::new(),
     }
 }
 
@@ -38,8 +40,9 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
         id: id.to_string(),
         model: "mock".to_string(),
         status: AsyncJobStatus::Completed {
-            result: TranscribeResponse {
+            result: Box::new(TranscribeResponse {
                 text: "ok".to_string(),
+                raw_text: None,
                 language: None,
                 segments: vec![],
                 words: vec![],
@@ -51,7 +54,8 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
                 pool_wait_ms: 0,
                 cold_load_ms: 0,
                 device: "cpu".to_string(),
-            },
+                applied_transforms: Vec::new(),
+            }),
         },
         created_at: completed_at - chrono::Duration::milliseconds(1),
         completed_at: Some(completed_at),

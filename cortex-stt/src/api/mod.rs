@@ -7,6 +7,7 @@ pub mod history;
 pub mod keys;
 pub mod metrics;
 pub mod models;
+pub mod range;
 pub mod router;
 pub mod settings;
 pub mod stream;

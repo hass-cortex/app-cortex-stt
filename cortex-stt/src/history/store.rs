@@ -67,6 +67,9 @@ pub struct CreateRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
+    /// Model output before family post-processing, stored only when it
+    /// differs from `text`. See `raw_text_if_distinct`.
+    pub raw_text: Option<String>,
     pub segments: Vec<RecordSegment>,
     pub has_error: bool,
     pub error_message: Option<String>,
@@ -97,6 +100,7 @@ pub struct TranscriptionRecord {
     pub pool_wait_ms: i64,
     pub cold_load_ms: i64,
     pub text: String,
+    pub raw_text: Option<String>,
     pub segments: Vec<RecordSegment>,
     pub audio_path: Option<String>,
     pub has_error: bool,
@@ -132,12 +136,28 @@ pub struct ListRecordsFilter {
     pub offset: Option<i64>,
 }
 
+/// Coerce a caller's timestamp into the shape the `timestamp` column
+/// stores (`YYYY-MM-DD HH:MM:SS`).
+///
+/// The range filter is a plain string comparison, so an ISO-8601 value
+/// with the `T` separator sorts *after* every stored row (`'T'` > `' '`)
+/// and a `Z` suffix sorts after every same-second row. Passed through
+/// untouched, `from=2026-08-21T00:00:00Z` therefore matches nothing and
+/// reads as "no records in that range" rather than as a rejected input
+/// — the worst way for a filter to be wrong.
+fn to_column_format(value: &str) -> String {
+    value
+        .replacen('T', " ", 1)
+        .trim_end_matches('Z')
+        .to_string()
+}
+
 /// The full ordered column list for a `records` row, shared by every
 /// `SELECT … FROM records` that hydrates a [`TranscriptionRecord`]. The
 /// order MUST match the positional `row.get(N)` indices in
 /// [`row_to_record`]; keeping the list in one place stops the SELECT
 /// sites and the mapper from drifting apart when a column is added.
-const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio";
+const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text";
 
 // ---------------------------------------------------------------------------
 // Schema — the `records` table is owned by this module. Adding a column
@@ -167,6 +187,7 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
                 pool_wait_ms INTEGER NOT NULL DEFAULT 0,
                 cold_load_ms INTEGER NOT NULL DEFAULT 0,
                 text TEXT NOT NULL,
+                raw_text TEXT,
                 segments_json TEXT NOT NULL DEFAULT '[]',
                 audio_path TEXT,
                 has_error INTEGER NOT NULL DEFAULT 0,
@@ -207,9 +228,15 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
         .await?;
 
     // Migration: add acquire timing breakdown columns.
+    db.add_column_if_missing("records", "model_load_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
     db.add_column_if_missing("records", "pool_wait_ms", "INTEGER NOT NULL DEFAULT 0")
         .await?;
     db.add_column_if_missing("records", "cold_load_ms", "INTEGER NOT NULL DEFAULT 0")
+        .await?;
+
+    // Migration: API key attribution.
+    db.add_column_if_missing("records", "api_key_id", "TEXT")
         .await?;
 
     // Migration: capture device (microphone/satellite) + input-signal
@@ -221,6 +248,11 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
     db.add_column_if_missing("records", "peak_db", "REAL")
         .await?;
     db.add_column_if_missing("records", "clip_ratio", "REAL")
+        .await?;
+
+    // Migration: raw model output. Rows predating the column stay NULL,
+    // which reads the same as "the model added nothing".
+    db.add_column_if_missing("records", "raw_text", "TEXT")
         .await?;
 
     Ok(())
@@ -249,6 +281,7 @@ pub(super) async fn insert(
     let pool_wait_ms = rec.pool_wait_ms;
     let cold_load_ms = rec.cold_load_ms;
     let text = rec.text.clone();
+    let raw_text = rec.raw_text.clone();
     let segments_json = serde_json::to_string(&rec.segments).unwrap_or_else(|_| "[]".into());
     let audio_path = audio_path.map(|s| s.to_string());
     let has_error = rec.has_error as i32;
@@ -263,8 +296,8 @@ pub(super) async fn insert(
     db.connection()
         .call(move |conn| {
             conn.execute(
-                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 params![
                     id,
                     source,
@@ -286,6 +319,7 @@ pub(super) async fn insert(
                     rms_db,
                     peak_db,
                     clip_ratio,
+                    raw_text,
                 ],
             )?;
             Ok(())
@@ -359,8 +393,8 @@ pub(super) async fn list(
     let source = filter.source;
     let model_id = filter.model_id.clone();
     let text = filter.text.clone();
-    let from = filter.from.clone();
-    let to = filter.to.clone();
+    let from = filter.from.as_deref().map(to_column_format);
+    let to = filter.to.as_deref().map(to_column_format);
     let has_error = filter.has_error;
     let capture_device = filter.capture_device.clone();
     let limit = filter.limit;
@@ -660,6 +694,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         rms_db: row.get(18)?,
         peak_db: row.get(19)?,
         clip_ratio: row.get(20)?,
+        raw_text: row.get(21)?,
     })
 }
 
@@ -668,4 +703,40 @@ fn repeat_placeholders(n: usize) -> String {
         .map(|i| format!("?{i}"))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+#[cfg(test)]
+mod timestamp_filter_tests {
+    use super::to_column_format;
+
+    #[test]
+    fn iso_8601_is_coerced_to_the_stored_shape() {
+        assert_eq!(
+            to_column_format("2026-08-21T16:10:00Z"),
+            "2026-08-21 16:10:00"
+        );
+        assert_eq!(
+            to_column_format("2026-08-21T16:10:00"),
+            "2026-08-21 16:10:00"
+        );
+    }
+
+    #[test]
+    fn a_value_already_in_the_stored_shape_is_untouched() {
+        assert_eq!(
+            to_column_format("2026-08-21 16:10:00"),
+            "2026-08-21 16:10:00"
+        );
+        // A bare date is a valid prefix and must stay one.
+        assert_eq!(to_column_format("2026-08-21"), "2026-08-21");
+    }
+
+    /// Why the coercion exists: without it the ISO form sorts after
+    /// every stored row, so the filter silently excludes everything.
+    #[test]
+    fn the_iso_form_would_otherwise_exclude_every_row() {
+        let stored = "2026-08-21 16:15:29";
+        assert!("2026-08-21T16:10:00Z" > stored);
+        assert!(to_column_format("2026-08-21T16:10:00Z").as_str() < stored);
+    }
 }

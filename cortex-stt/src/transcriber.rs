@@ -31,6 +31,7 @@ use crate::engine::pool::PoolGuard;
 use crate::engine::traits::{StreamSnapshot, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::{CreateRecord, History, TranscriptionSource};
+use crate::text::Renderer;
 
 /// Buffering ceiling for stream sessions against models with no input
 /// limit — a WebSocket left open must not grow the buffer unboundedly.
@@ -48,6 +49,11 @@ pub struct SegmentResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct TranscribeResponse {
     pub text: String,
+    /// The model's raw output, present only when it says something the
+    /// clean transcript does not. Whitespace-only differences are not
+    /// worth a second copy of the same sentence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_text: Option<String>,
     /// Detected source language, when the model reports one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -72,6 +78,12 @@ pub struct TranscribeResponse {
     pub cold_load_ms: u64,
     /// Compute backend the engine ran on (e.g. "cpu", "cuda").
     pub device: String,
+    /// Output renderings applied to `text`, in order (e.g.
+    /// `["script:s2tw"]`). Empty when the request asked for none, so a
+    /// response says what was done to it rather than leaving a consumer
+    /// to infer it from the characters.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub applied_transforms: Vec<String>,
 }
 
 impl TranscribeResponse {
@@ -85,12 +97,22 @@ impl TranscribeResponse {
         inference_ms: u64,
         metrics: AcquireMetrics,
         device: String,
+        renderer: Option<&Renderer>,
     ) -> Self {
+        let model_text = result.text;
+        let text = match renderer {
+            Some(r) => r.render(&model_text),
+            None => model_text.clone(),
+        };
         Self {
-            text: result.text,
+            raw_text: raw_text_if_distinct(&result.raw_text, &model_text, &text),
+            text,
             language: result.language,
             segments: to_segment_responses(result.segments),
             words: to_segment_responses(result.words),
+            applied_transforms: renderer
+                .map(|r| r.ids().into_iter().map(str::to_string).collect())
+                .unwrap_or_default(),
             truncated: result.truncated,
             model,
             duration_ms,
@@ -326,6 +348,7 @@ impl Transcriber {
             pool_wait_ms: response.pool_wait_ms as i64,
             cold_load_ms: response.cold_load_ms as i64,
             text: response.text.clone(),
+            raw_text: response.raw_text.clone(),
             segments,
             device: response.device.clone(),
             rms_db: stats.map(|s| s.rms_db),
@@ -538,6 +561,7 @@ impl StreamSession {
 
         match result {
             Ok(r) => {
+                let renderer = Renderer::for_language(self.options.language.as_deref());
                 let response = TranscribeResponse::from_result(
                     r,
                     self.meta.model.clone(),
@@ -545,6 +569,7 @@ impl StreamSession {
                     inference_ms,
                     self.metrics,
                     self.device.clone(),
+                    renderer.as_ref(),
                 );
                 let samples = std::mem::take(&mut self.buffer);
                 let stats = AudioStats::of(&samples);
@@ -704,6 +729,30 @@ impl InputLimit {
     }
 }
 
+/// The stored copy of what the model produced, or `None` when it adds
+/// nothing over what we return.
+///
+/// History archives losslessly, so the engine's own stream wins where
+/// there is one: its special tags and emotion/event tokens are the only
+/// record that the model emitted them at all. `model_text` covers the
+/// families that emit no raw stream, where a rendering would otherwise
+/// leave no trace of the script the model chose.
+///
+/// Evaluation asks a narrower question and keeps its own rule — see
+/// `eval::runner::pre_render_text`. The two must not be merged: a record
+/// is an archive of one transcription, a result is a cell in a table
+/// read 620 at a time.
+pub(crate) fn raw_text_if_distinct(
+    engine_raw: &str,
+    model_text: &str,
+    returned: &str,
+) -> Option<String> {
+    if !engine_raw.is_empty() && engine_raw.trim() != returned.trim() {
+        return Some(engine_raw.to_string());
+    }
+    (model_text.trim() != returned.trim()).then(|| model_text.to_string())
+}
+
 /// Common history fields shared by the success and failure paths, with
 /// outcome-neutral defaults (no timings, empty transcript, no error).
 /// Callers fill in only the fields that differ via struct-update syntax,
@@ -720,6 +769,7 @@ fn base_record(meta: &RecordMeta) -> CreateRecord {
         pool_wait_ms: 0,
         cold_load_ms: 0,
         text: String::new(),
+        raw_text: None,
         segments: Vec::new(),
         has_error: false,
         error_message: None,
@@ -755,6 +805,9 @@ async fn run_inference(
 ) -> Result<TranscribeResponse, AsrError> {
     let device = guard.device();
     let model_owned = model.clone();
+    // Resolved from what the caller asked for, before the engine drops
+    // every subtag matching it against the model's declared set.
+    let renderer = Renderer::for_language(options.language.as_deref());
     let inference_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || guard.transcribe(&samples, &options))
         .await
@@ -770,6 +823,7 @@ async fn run_inference(
         inference_ms,
         metrics,
         device,
+        renderer.as_ref(),
     ))
 }
 
@@ -832,5 +886,74 @@ impl RequestSettings {
                 save_audio: true,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::raw_text_if_distinct;
+
+    /// The common case: families that emit clean text natively give a
+    /// raw copy identical to the transcript, and nothing was rendered.
+    /// Storing it twice buys nothing, so the column stays NULL.
+    #[test]
+    fn an_identical_raw_copy_is_not_stored() {
+        assert_eq!(
+            raw_text_if_distinct("打開客廳燈", "打開客廳燈", "打開客廳燈"),
+            None
+        );
+    }
+
+    /// The library documents raw as "equal modulo whitespace" for those
+    /// families — a trailing newline is not a second opinion.
+    #[test]
+    fn a_whitespace_only_difference_is_not_stored() {
+        assert_eq!(
+            raw_text_if_distinct("  打開客廳燈\n", "打開客廳燈", "打開客廳燈"),
+            None
+        );
+    }
+
+    /// The case the column exists for: sensevoice-style tags that
+    /// post-processing strips out of the transcript. A record is an
+    /// archive, so they are kept even though the evaluation grid, which
+    /// reads hundreds of cells at once, deliberately drops them.
+    #[test]
+    fn stripped_markers_are_stored_verbatim() {
+        let raw = "<|zh|><|HAPPY|><|Speech|>打開客廳燈";
+        assert_eq!(
+            raw_text_if_distinct(raw, "打開客廳燈", "打開客廳燈"),
+            Some(raw.to_string())
+        );
+    }
+
+    /// An engine that reports no raw output at all (the fake engine, and
+    /// the real one before a successful run) must not read as a diff.
+    #[test]
+    fn an_absent_raw_output_is_not_a_difference() {
+        assert_eq!(raw_text_if_distinct("", "打開客廳燈", "打開客廳燈"), None);
+        assert_eq!(raw_text_if_distinct("", "", ""), None);
+    }
+
+    /// Rendering is the other way the returned text can differ from what
+    /// the model produced. Most families emit no raw stream, so without
+    /// this the script the model chose would leave no trace.
+    #[test]
+    fn a_rendered_transcript_keeps_the_models_own_script() {
+        assert_eq!(
+            raw_text_if_distinct("", "关闭入口灯", "關閉入口燈"),
+            Some("关闭入口灯".to_string())
+        );
+    }
+
+    /// When both differ, the engine stream wins: it is the more complete
+    /// record and already contains the model's own wording.
+    #[test]
+    fn the_engine_stream_outranks_the_pre_render_text() {
+        let raw = "<|zh|>关闭入口灯";
+        assert_eq!(
+            raw_text_if_distinct(raw, "关闭入口灯", "關閉入口燈"),
+            Some(raw.to_string())
+        );
     }
 }

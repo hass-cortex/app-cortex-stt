@@ -2,10 +2,11 @@
 //! an optional audio file on disk. See `CONTEXT.md` for the domain
 //! vocabulary (Delete record vs Drop audio, Retention candidate, …).
 //!
-//! New audio files are written as Ogg Opus (`.opus`) for storage
-//! efficiency. Legacy `.wav` rows created before this change continue
-//! to be served as-is; the read path picks Content-Type from the file
-//! extension stored on the record.
+//! New audio files are written as 16-bit PCM WAV (`.wav`): history
+//! audio is replayed to compare models, and a lossy archive changes
+//! what that comparison measures. Rows from the Ogg Opus era keep
+//! their `.opus` files until retention reclaims them; the read path
+//! picks Content-Type from the extension stored on the record.
 //!
 //! Two invariants this module exists to protect:
 //!
@@ -23,7 +24,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::warn;
 
-use crate::audio::opus_writer::write_opus;
+use crate::audio::wav_writer::write_wav;
 use crate::db::database::Database;
 use crate::error::AsrError;
 use crate::retention::{RetentionCandidate, RetentionPolicy, select_to_delete};
@@ -91,9 +92,9 @@ impl History {
 
         let audio_filename: Option<String> = match samples {
             Some(samples) => {
-                let filename = format!("{id}.opus");
+                let filename = format!("{id}.wav");
                 let path = self.audio_dir.join(&filename);
-                match write_opus(&path, samples).await {
+                match write_wav(&path, samples).await {
                     Ok(()) => Some(filename),
                     Err(e) => {
                         warn!(error = %e, record_id = %id, "Failed to save audio file; recording row without audio");
@@ -394,7 +395,8 @@ impl History {
 }
 
 /// MIME type for serving a history audio file based on its extension.
-/// New rows are `.opus` (Ogg Opus); pre-migration rows remain `.wav`.
+/// New rows are `.wav`; rows from the Ogg Opus era remain `.opus`
+/// until retention reclaims them.
 fn mime_for(filename: &str) -> &'static str {
     let lower = filename.to_ascii_lowercase();
     if lower.ends_with(".opus") || lower.ends_with(".ogg") {

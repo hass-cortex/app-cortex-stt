@@ -24,6 +24,7 @@ fn sample_record() -> CreateRecord {
         pool_wait_ms: 0,
         cold_load_ms: 0,
         text: "hello world".to_string(),
+        raw_text: None,
         segments: Vec::new(),
         has_error: false,
         error_message: None,
@@ -83,7 +84,7 @@ async fn create_with_samples_writes_wav_and_links_path() {
     let filename = fetched
         .audio_path
         .expect("audio_path set when samples given");
-    assert_eq!(filename, format!("{id}.opus"));
+    assert_eq!(filename, format!("{id}.wav"));
 
     let audio_file = tmp.path().join("audio").join(&filename);
     assert!(audio_file.exists(), "audio file should be written to disk");
@@ -97,7 +98,7 @@ async fn delete_record_removes_row_and_audio() {
         .create(sample_record(), Some(&samples))
         .await
         .unwrap();
-    let audio_file = tmp.path().join("audio").join(format!("{id}.opus"));
+    let audio_file = tmp.path().join("audio").join(format!("{id}.wav"));
     assert!(audio_file.exists());
 
     assert!(history.delete(&id).await.unwrap(), "first delete succeeds");
@@ -118,7 +119,7 @@ async fn drop_audios_nulls_audio_path_but_keeps_row() {
         .create(sample_record(), Some(&samples))
         .await
         .unwrap();
-    let audio_file = tmp.path().join("audio").join(format!("{id}.opus"));
+    let audio_file = tmp.path().join("audio").join(format!("{id}.wav"));
 
     let dropped = history
         .drop_audios(std::slice::from_ref(&id))
@@ -325,4 +326,63 @@ async fn metrics_snapshot_aggregates_by_source_and_error() {
     assert!((s.avg_inference_ms - 350.0).abs() < f64::EPSILON);
     assert_eq!(s.error_count, 1);
     assert_eq!(s.today_error_count, 1);
+}
+
+/// Upgrading an existing install runs the ALTER TABLE chain, not the
+/// CREATE TABLE in `migrate`. Every other test here opens a fresh
+/// in-memory DB and so only ever exercises the create path — this one
+/// stands the real legacy shape up first — the 12-column table an early
+/// install actually has on disk — and checks that a row written before
+/// any of the added columns existed still reads back.
+#[tokio::test]
+async fn migrate_upgrades_a_legacy_records_table() {
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "
+                CREATE TABLE records (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                    source TEXT,
+                    language TEXT,
+                    model_id TEXT NOT NULL,
+                    audio_duration_ms INTEGER NOT NULL,
+                    inference_ms INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    segments_json TEXT NOT NULL DEFAULT '[]',
+                    audio_path TEXT,
+                    has_error INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT
+                );
+                INSERT INTO records (id, source, model_id, audio_duration_ms, inference_ms, text)
+                VALUES ('legacy-1', 'http_api', 'whisper-tiny', 1000, 50, 'old row');
+                ",
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let history = History::new(db.clone(), tmp.path().join("audio"))
+        .await
+        .unwrap();
+
+    let rows = history.list(&ListRecordsFilter::default()).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "legacy-1");
+    assert_eq!(rows[0].text, "old row");
+    // Columns added after this row was written read as absent, not as
+    // a decode failure.
+    assert_eq!(rows[0].raw_text, None);
+    assert_eq!(rows[0].capture_device, None);
+    assert_eq!(rows[0].rms_db, None);
+    assert_eq!(rows[0].api_key_id, None);
+    assert_eq!(rows[0].model_load_ms, 0);
+
+    // The upgraded table still accepts a current-shape write.
+    history.create(sample_record(), None).await.unwrap();
+    let rows = history.list(&ListRecordsFilter::default()).await.unwrap();
+    assert_eq!(rows.len(), 2);
 }

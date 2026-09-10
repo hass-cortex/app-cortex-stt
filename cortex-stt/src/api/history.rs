@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{delete, get, post};
@@ -82,9 +81,10 @@ async fn get_history_record(
 async fn get_history_audio(
     State(state): State<Arc<AppState>>,
     Path(record_id): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, AsrError> {
     let (data, mime) = state.history.read_audio(&record_id).await?;
-    Ok((StatusCode::OK, [(header::CONTENT_TYPE, mime)], data))
+    Ok(crate::api::range::audio_response(&headers, data, mime))
 }
 
 async fn delete_history_record(
@@ -110,6 +110,26 @@ async fn cleanup_history(
     Ok(Json(serde_json::json!({
         "deleted_records": outcome.deleted_records,
         "dropped_audios": outcome.dropped_audios,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteManyBody {
+    ids: Vec<String>,
+}
+
+/// POST /api/history/delete — delete the listed records.
+///
+/// `deleted` can be short of `requested`: a row already gone, or one
+/// whose audio could not be unlinked and is left for the next sweep.
+async fn delete_history_records(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DeleteManyBody>,
+) -> Result<Json<serde_json::Value>, AsrError> {
+    let deleted = state.history.delete_many(&body.ids).await?;
+    Ok(Json(serde_json::json!({
+        "requested": body.ids.len(),
+        "deleted": deleted,
     })))
 }
 
@@ -152,6 +172,8 @@ pub fn history_routes() -> Router<Arc<AppState>> {
         .route("/api/history/facets", get(get_history_facets))
         .route("/api/history/live", get(history_live))
         .route("/api/history/cleanup", post(cleanup_history))
+        // Static segment: axum prefers it over `{record_id}`.
+        .route("/api/history/delete", post(delete_history_records))
         .route("/api/history/{record_id}", get(get_history_record))
         .route("/api/history/{record_id}/audio", get(get_history_audio))
         .route("/api/history/{record_id}", delete(delete_history_record))
