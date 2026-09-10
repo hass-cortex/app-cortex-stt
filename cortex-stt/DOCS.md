@@ -7,7 +7,8 @@ Runs [Whisper](https://github.com/openai/whisper) (multilingual),
 (low-latency), [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
 (Asian languages), Qwen3-ASR, and more — all as GGUF models on one
 runtime — via a unified HTTP API with WebSocket streaming, plus a
-built-in admin UI for downloading and managing models.
+built-in admin UI for downloading models, trying them on your own
+recordings, and measuring which one to keep.
 
 ## System Requirements
 
@@ -103,6 +104,60 @@ becomes its own STT entity.
 Pick (or create) a pipeline → **Speech-to-text** → select your Cortex STT
 entity. Create one pipeline per model if you want to switch per language
 or per use case.
+
+## The admin UI
+
+Open it from the app's **OPEN WEB UI** button, or from the Cortex STT
+panel in the Home Assistant sidebar.
+
+![Dashboard](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/dashboard.png)
+
+**Dashboard** — what this machine has actually done: transcriptions per
+hour, the distribution of inference latency, and the real-time factor,
+all over the last 24 hours. Every figure is measured here; none of it
+comes from the catalog.
+
+![Transcribe](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/transcribe.png)
+
+**Transcribe** — drop a recording (or record one, if you reach this page
+over HTTPS — the microphone needs a secure context) and run it through up
+to three models at once. Each result shows what the model returned, how long it took, and
+its raw output where that differs from the written transcript. From
+there you can make a model the default or keep the clip as an
+evaluation sample. Every run is a real request, so it appears in
+History with the capture device `web-transcribe`.
+
+![Models](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/models.png)
+
+**Models** — the installable catalog plus what is on disk. The `MEASURED
+p50` and `RUNS` columns come from this deployment's own history over the
+last seven days; a model that has never run here shows `—` rather than a
+borrowed score. Filter by family or language, pick a quantization when
+downloading, and load or unload a model without restarting the app.
+
+![History](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/history.png)
+
+**History** — every transcription, with its audio while retention keeps
+it. Expanding a row puts the waveform, the model's segments and the
+playhead on one time axis; clicking the wave plays from that point.
+Filter by result, capture device, model or time.
+
+![Evaluation](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/evaluation.png)
+
+**Evaluation** — the answer to "which model should I actually use". Keep
+a set of recordings with the correct transcription typed in, run every
+candidate over them, and compare: how many outputs you judged correct,
+median and worst inference time, real-time factor, resident memory alone
+and alongside the rest of the working set, and cold-load time. A run can
+be stopped part-way and keeps what it measured. Rulings are keyed to the
+output text, so a model that produces a string you have already judged
+inherits that ruling.
+
+**API Keys** — issue and revoke keys for direct API access. The
+system-managed discovery key cannot be deleted here.
+
+**Settings** — default model, pre-loading, how many models stay resident,
+idle timeout, history retention, and timezone.
 
 ## Configuration
 

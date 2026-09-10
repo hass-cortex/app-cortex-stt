@@ -9,13 +9,40 @@ Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, S
 
 ## Screenshots
 
-**Models** — browse and download speech-to-text models.
+**Dashboard** — throughput, latency and real-time factor measured on this
+machine over the last 24 hours.
+
+![Dashboard](images/dashboard.png)
+
+**Transcribe** — run one recording through up to three models and compare
+what each returned, and how long it took.
+
+![Transcribe](images/transcribe.png)
+
+**Models** — the catalog plus what is on disk, with the p50 and run count
+measured from this deployment's own history.
 
 ![Models](images/models.png)
 
-**History** — inspect transcription history with audio playback and per-segment timing.
+**History** — every transcription, with its audio, waveform and timings;
+select rows to delete a batch of them.
 
 ![History](images/history.png)
+
+**Evaluation** — score candidate models against hand-typed references:
+accuracy you judged, inference time, real-time factor, memory and load time.
+
+![Evaluation](images/evaluation.png)
+
+The same run two other ways — every output beside the reference it was
+scored against…
+
+![Evaluation · transcripts](images/evaluation-transcripts.png)
+
+…and as a grid, hardest sample first and strongest model first, where the
+number is how many models got that sample right.
+
+![Evaluation · grid](images/evaluation-grid.png)
 
 ## Installation
 
