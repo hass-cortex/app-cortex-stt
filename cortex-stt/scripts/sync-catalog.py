@@ -123,11 +123,24 @@ def convert(handy: dict) -> tuple[dict, list[str]]:
 
     converted = {
         "catalog_version": handy.get("catalog_version"),
-        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": None,  # filled in by main(), see stamp_for
         "source": "cjpais/Handy catalog.json",
         "models": models,
     }
     return converted, skipped
+
+
+def stamp_for(out: Path, catalog: dict) -> str:
+    """Keep the previous timestamp when only it would change."""
+    try:
+        previous = json.loads(out.read_text())
+    except (OSError, json.JSONDecodeError):
+        previous = None
+    if previous is not None:
+        kept = previous.get("generated_at")
+        if kept and {**previous, "generated_at": None} == catalog:
+            return kept
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def main() -> None:
@@ -141,7 +154,13 @@ def main() -> None:
     print(f"Converting {len(handy['models'])} models…", file=sys.stderr)
     catalog, skipped = convert(handy)
 
-    Path(args.out).write_text(json.dumps(catalog, indent=2, ensure_ascii=False) + "\n")
+    # The release gate re-syncs and asks git whether anything moved, so a
+    # stamp that advances on every run would fail every tag. It marks when
+    # the pins last changed, not when the script last ran.
+    out = Path(args.out)
+    catalog["generated_at"] = stamp_for(out, catalog)
+
+    out.write_text(json.dumps(catalog, indent=2, ensure_ascii=False) + "\n")
 
     print(f"\nWrote {args.out} ({len(catalog['models'])} models)", file=sys.stderr)
     if skipped:
