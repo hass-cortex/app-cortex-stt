@@ -1,0 +1,8 @@
+---
+# Inline `zizmor: ignore` comments do not attach to a step whose first line
+# is the `uses:` key, so this one lives here instead.
+rules:
+  artipacked:
+    ignore:
+      # The drift job pushes a branch with the checkout credentials.
+      - catalog-drift.yml

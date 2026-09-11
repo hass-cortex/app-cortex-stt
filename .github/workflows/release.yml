@@ -7,8 +7,7 @@ on:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+*"
 
-permissions:
-  contents: write
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,11 +18,18 @@ jobs:
   catalog-freshness:
     name: Catalog freshness
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      # No cache: a tag build must not read anything a pull request could have written.
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: false
 
       # A stale pin ships a model nobody can install, so a tag fails here
       # rather than at the user's download. Deliberately not in ci.yml:
@@ -44,11 +50,17 @@ jobs:
     name: Build binary (x86_64)
     runs-on: ubuntu-latest
     needs: [catalog-freshness]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
 
       - name: Build release binary
         working-directory: cortex-stt
@@ -58,7 +70,7 @@ jobs:
           cp target/release/cortex-stt ../cortex-stt-x86_64-unknown-linux-gnu
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cortex-stt-x86_64-unknown-linux-gnu
           path: cortex-stt-x86_64-unknown-linux-gnu
@@ -67,13 +79,18 @@ jobs:
     name: Build Web UI
     runs-on: ubuntu-latest
     needs: [catalog-freshness]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3.0"
+          no-cache: true
 
       - name: Install and build
         working-directory: cortex-stt/web
@@ -85,7 +102,7 @@ jobs:
         run: tar -czf cortex-stt-web.tar.gz -C cortex-stt/web/dist .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cortex-stt-web
           path: cortex-stt-web.tar.gz
@@ -94,16 +111,23 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [build-binary, build-web]
+    # The release itself is created with DISPATCH_TOKEN, not GITHUB_TOKEN.
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        # zizmor: ignore[superfluous-actions] - gh release cannot set
+        # prerelease from an expression without extra scripting
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # Use PAT so that the release.published event triggers deploy.yaml.
           # GITHUB_TOKEN-created releases do not trigger downstream workflows.
