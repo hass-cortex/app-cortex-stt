@@ -1,20 +1,20 @@
 # Default owner for everything
-* @bthndncr
+* @parkghost
 
 # Rust core
-/src/ @bthndncr
-/Cargo.toml @bthndncr
-/Cargo.lock @bthndncr
+/cortex-stt/src/ @parkghost
+/cortex-stt/tests/ @parkghost
+/cortex-stt/Cargo.toml @parkghost
+/cortex-stt/Cargo.lock @parkghost
 
 # Web UI
-/web/ @bthndncr
+/cortex-stt/web/ @parkghost
 
 # Deployment
-/Dockerfile @bthndncr
-/rootfs/ @bthndncr
-/deploy/ @bthndncr
-/config.yaml @bthndncr
-/build.yaml @bthndncr
+/cortex-stt/Dockerfile @parkghost
+/cortex-stt/rootfs/ @parkghost
+/cortex-stt/config.yaml @parkghost
+/cortex-stt/build.yaml @parkghost
 
 # CI/CD
-/.github/ @bthndncr
+/.github/ @parkghost
