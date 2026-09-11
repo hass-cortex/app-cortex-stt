@@ -23,11 +23,11 @@ and rootfs.
 ```
 .
 ├── .github/workflows/         CI + release pipeline
-│   ├── ci.yaml                hassio-addons app-ci (HA addon shell lint)
+│   ├── app-ci.yaml            hassio-addons app-ci (HA addon shell lint)
 │   ├── ci.yml                 Rust + Bun checks (fmt/clippy/test/deny + lint/typecheck/build)
 │   ├── deploy.yaml            release-triggered: app-deploy → GHCR + dispatch
 │   └── release.yml            release-triggered: cross-compile binaries + GitHub Release
-├── .yamllint, .mdlrc          lint configs (consumed by ci.yaml)
+├── .yamllint, .mdlrc          lint configs (consumed by app-ci.yaml)
 ├── .pre-commit-config.yaml    pre-commit hook config
 ├── README.md                  user-facing install instructions
 ├── LICENSE.md                 MIT

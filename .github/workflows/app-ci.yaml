@@ -1,5 +1,5 @@
 ---
-name: CI
+name: App CI
 
 # yamllint disable-line rule:truthy
 on:

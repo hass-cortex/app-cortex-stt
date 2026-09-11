@@ -46,14 +46,15 @@ repos:
   - repo: local
     hooks:
       # Mirror the Prettier step in hassio-addons/workflows/.github/workflows/
-      # app-ci.yaml@v2.0.6 — it pins prettier@3.8.3 and runs --check on the
-      # whole repo (minus .prettierignore). Catch the same issues locally so
-      # the release deploy doesn't get blocked on whitespace.
+      # app-ci.yaml, which runs --check on the whole repo (minus
+      # .prettierignore). It installs prettier@latest, so this pin drifts
+      # from CI the moment prettier ships a release that reformats
+      # markdown — bump it when that happens.
       - id: prettier-md
         name: prettier (markdown)
         entry: prettier
         language: node
-        additional_dependencies: ["prettier@3.8.3"]
+        additional_dependencies: ["prettier@3.9.6"]
         files: \.md$
         args: ["--write"]
 
