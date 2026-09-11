@@ -7,6 +7,20 @@
 
 Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, SenseVoice, Qwen3-ASR, and more on a single [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (GGUF) runtime. See the [transcribe.cpp supported-models table](https://github.com/handy-computer/transcribe.cpp#supported-models) and its per-model cards under [`docs/models/`](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models) for the full list of built-in models.
 
+## Features
+
+- **Runs on your hardware** — no cloud, no API key, no per-minute bill.
+- **Every model family on one runtime** — Whisper, Parakeet, SenseVoice,
+  Qwen3-ASR and more as GGUF on a single transcribe.cpp engine.
+- **One STT entity per downloaded model**, so a pipeline can pick the right
+  one per language or per use case.
+- **WebSocket streaming** — audio reaches the server while you are still
+  speaking, so decoding overlaps capture.
+- **Measure before you choose** — run one recording through up to three models
+  side by side, and score candidates against transcripts you typed yourself.
+- **Discovered by Home Assistant** through the Supervisor, so the companion
+  integration needs no URL or key typed in.
+
 ## Screenshots
 
 **Dashboard** — throughput, latency and real-time factor measured on this
@@ -57,6 +71,19 @@ See [cortex-stt/DOCS.md](cortex-stt/DOCS.md) for full install, configuration, di
 > addon's init oneshot detects the missing flags and prints a
 > readable diagnostic instead of crash-looping. Full steps in
 > [DOCS.md](cortex-stt/DOCS.md#system-requirements).
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+- [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — dev setup, the
+  checks, and the PR flow.
+- [`AGENTS.md`](AGENTS.md) — the module tree, cross-module guarantees and the
+  API endpoint reference.
+- [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — the domain vocabulary both
+  of those use.
+- [`cortex-stt/docs/adr/`](cortex-stt/docs/adr) — the decisions behind the
+  runtime, the vendored catalog and the evaluation store.
 
 ## Acknowledgements
 

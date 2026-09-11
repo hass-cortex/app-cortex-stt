@@ -123,4 +123,6 @@ the single transcribe.cpp runtime behind the `SpeechEngine` trait.
 
 ## Questions?
 
-Open a [Discussion](https://github.com/hass-cortex/app-cortex-stt/discussions) for questions or ideas.
+Open an [issue](https://github.com/hass-cortex/app-cortex-stt/issues/new/choose). The
+templates cover a bug report and a feature request; anything else is welcome as
+a blank issue.
