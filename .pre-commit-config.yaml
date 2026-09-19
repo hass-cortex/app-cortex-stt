@@ -48,14 +48,16 @@ repos:
       # Mirror the Prettier step in hassio-addons/workflows/.github/workflows/
       # app-ci.yaml, which runs --check on the whole repo (minus
       # .prettierignore). It installs prettier@latest, so this pin drifts
-      # from CI the moment prettier ships a release that reformats
-      # markdown — bump it when that happens.
-      - id: prettier-md
-        name: prettier (markdown)
+      # from CI the moment prettier ships a release that reformats anything
+      # below — bump it when that happens.
+      - id: prettier
+        name: prettier
         entry: prettier
         language: node
         additional_dependencies: ["prettier@3.9.8"]
-        files: \.md$
+        # Everything prettier understands, matching app-ci's md/json/js/yaml
+        # rather than markdown alone; .prettierignore does the excluding.
+        types_or: [markdown, yaml, json, javascript, css, html]
         args: ["--write"]
 
       - id: cargo-fmt
