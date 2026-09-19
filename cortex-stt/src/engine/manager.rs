@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{RwLock, broadcast};
@@ -65,6 +65,25 @@ fn remove_model(
     load_locks.remove(model_id);
 }
 
+/// Capacity held by a load that is in flight.
+///
+/// A model being built already owns its weights but is not in `pools`
+/// yet, so without this it would be invisible to capacity accounting and
+/// a concurrent load could spend the very capacity this one just freed.
+/// Released on drop, so a failed or panicking load frees it too.
+struct LoadReservation {
+    loading: Arc<StdMutex<HashSet<String>>>,
+    model_id: String,
+}
+
+impl Drop for LoadReservation {
+    fn drop(&mut self) {
+        if let Ok(mut loading) = self.loading.lock() {
+            loading.remove(&self.model_id);
+        }
+    }
+}
+
 /// Manages the lifecycle of speech engine model pools.
 ///
 /// Models are lazily loaded on first request and evicted (LRU) when the
@@ -79,6 +98,10 @@ pub struct EngineManager {
     /// given model_id acquires this lock; concurrent requests wait here
     /// instead of racing to build duplicate pools.
     load_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Model IDs whose pool is being built right now. Counted against
+    /// `max_loaded_models` alongside `pools`. Never held across an await,
+    /// so a std mutex suffices and `LoadReservation::drop` can release it.
+    loading: Arc<StdMutex<HashSet<String>>>,
     /// Broadcast fired on any load-state change (load, unload, LRU/idle
     /// eviction, registration). Payload-free — subscribers refetch.
     events: broadcast::Sender<()>,
@@ -93,6 +116,7 @@ impl EngineManager {
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
             load_locks: RwLock::new(HashMap::new()),
+            loading: Arc::new(StdMutex::new(HashSet::new())),
             events,
         })
     }
@@ -186,13 +210,59 @@ impl EngineManager {
         Ok((pool.acquire(acquire_timeout).await?, cold_load))
     }
 
-    /// Load a model pool, evicting the LRU model if at capacity.
+    /// Free capacity for `model_id`, then mark its load as in flight.
+    ///
+    /// Eviction happens **before** the incoming pool is built. transcribe.cpp
+    /// copies weights into the resident set rather than mmap-ing them, so
+    /// building first and evicting after peaks at both models' resident size
+    /// at once; on a small host the OOM killer, not the LRU policy, then
+    /// decides what gets unloaded.
+    ///
+    /// When every slot is held by another in-flight load there is nothing to
+    /// evict and the load proceeds anyway — blocking would trade a memory
+    /// peak for a stalled request. That only happens when more distinct
+    /// models are loading concurrently than `max_loaded_models` allows.
+    async fn reserve_slot(&self, model_id: &str, max_loaded_models: usize) -> LoadReservation {
+        let mut evicted = false;
+        {
+            let mut pools = self.pools.write().await;
+            let mut locks = self.load_locks.write().await;
+            let mut loading = self.loading.lock().expect("loading mutex poisoned");
+
+            while pools.len() + loading.len() >= max_loaded_models {
+                let lru_id = pools
+                    .iter()
+                    .filter(|(id, _)| id.as_str() != model_id)
+                    .min_by_key(|(_, loaded)| loaded.last_used)
+                    .map(|(id, _)| id.clone());
+                match lru_id {
+                    Some(id) => {
+                        info!(model_id = %id, incoming = %model_id, "evicting LRU model to make room");
+                        remove_model(&mut pools, &mut locks, &id);
+                        evicted = true;
+                    }
+                    None => break,
+                }
+            }
+            loading.insert(model_id.to_string());
+        }
+        if evicted {
+            self.notify_changed();
+        }
+        LoadReservation {
+            loading: Arc::clone(&self.loading),
+            model_id: model_id.to_string(),
+        }
+    }
+
+    /// Load a model pool, evicting to make room first if at capacity.
     /// Returns `true` if this call actually built the pool, `false` if a
     /// concurrent loader already had.
     ///
     /// Serializes concurrent loads of the *same* model via a per-model
     /// async mutex — two requests racing on `model_id` will not both
-    /// build a pool. Different model_ids still load in parallel.
+    /// build a pool. Different model_ids still load in parallel, bounded
+    /// by [`reserve_slot`](Self::reserve_slot).
     async fn load_model(&self, model_id: &str) -> Result<bool, AsrError> {
         // Serialize against concurrent loaders of this same model.
         let load_lock = self.load_lock_for(model_id).await;
@@ -223,6 +293,11 @@ impl EngineManager {
                 })?;
             Arc::clone(factory)
         };
+        // Make room before a single weight byte is allocated. Held until
+        // this function returns, so a load that fails leaves the manager
+        // with no model rather than the outgoing one half-evicted.
+        let _reservation = self.reserve_slot(model_id, config.max_loaded_models).await;
+
         let pool_size = config.pool_size;
         let model_id_for_pool: Arc<str> = Arc::from(model_id);
         let model_id_for_pool_clone = Arc::clone(&model_id_for_pool);
@@ -257,27 +332,6 @@ impl EngineManager {
         }
 
         let mut pools = self.pools.write().await;
-        let mut locks = self.load_locks.write().await;
-        // Evict LRU under write lock. The per-model load lock above
-        // already ensures we are the only loader for `model_id`, so no
-        // re-check needed here. `remove_model` drops each evicted pool and
-        // its load lock together, so the lock map can't grow unbounded
-        // across many load/evict cycles.
-        while pools.len() >= config.max_loaded_models {
-            let lru_id = pools
-                .iter()
-                .filter(|(id, _)| id.as_str() != model_id)
-                .min_by_key(|(_, loaded)| loaded.last_used)
-                .map(|(id, _)| id.clone());
-            match lru_id {
-                Some(id) => {
-                    info!(model_id = %id, "evicting LRU model");
-                    remove_model(&mut pools, &mut locks, &id);
-                }
-                None => break,
-            }
-        }
-        drop(locks);
         pools.insert(
             model_id.to_string(),
             LoadedModel {
@@ -286,7 +340,6 @@ impl EngineManager {
             },
         );
         drop(pools);
-        // Covers both the load and any LRU eviction performed above.
         self.notify_changed();
 
         Ok(true)
