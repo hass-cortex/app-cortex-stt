@@ -1,6 +1,6 @@
 {
   "catalog_version": 2,
-  "generated_at": "2026-08-21T18:46:06Z",
+  "generated_at": "2026-09-19T16:27:40Z",
   "source": "cjpais/Handy catalog.json",
   "models": [
     {
@@ -2948,115 +2948,6 @@
       "recommended_rank": null,
       "speed_score": 98,
       "accuracy_score": 85
-    },
-    {
-      "id": "multitalker-parakeet-streaming-0.6b-v1",
-      "name": "Multitalker Parakeet Streaming EN",
-      "description": "English speech-to-text with streaming, token-level timestamps.",
-      "family": "parakeet",
-      "parameters": "0.6B",
-      "base_model": "nvidia/multitalker-parakeet-streaming-0.6b-v1",
-      "license": "other",
-      "languages": [
-        "en"
-      ],
-      "capabilities": {
-        "streaming": true,
-        "translate": false,
-        "lang_detect": false,
-        "timestamps": "token"
-      },
-      "quants": [
-        {
-          "quant": "Q4_K_M",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
-          "sha256": "d9f05f95ab70054f37af71aae7bc64d37eabfc2d266935224a827cb0d838bb4f",
-          "size_bytes": 477812416
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
-          "sha256": "247a14c84dc6d0e7d4f5604b6f2b89b927af2e49eb0ed9fe350b447e849acf01",
-          "size_bytes": 541890240
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
-          "sha256": "c5ad23c5e59e3f73d5adebc963992818109d1ecb272f5c862b2355bc41950dac",
-          "size_bytes": 603878080
-        },
-        {
-          "quant": "Q4_K_M",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q4_K_M.gguf",
-          "sha256": "f3ea86dd8415b10ddb6cd7df12bed2798b72e8c1f09b83d227a3892ab7d2cd8a",
-          "size_bytes": 617132032
-        },
-        {
-          "quant": "Q5_K_M",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q5_K_M.gguf",
-          "sha256": "6914abb66959caede909df26ec63d930d5becdb66cc7dc3409d805f275b8727c",
-          "size_bytes": 681209856
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
-          "sha256": "4748deea0222eb9057ebdac1679eebb970bbe882ee10a96ae34596ffe83615c7",
-          "size_bytes": 734123712
-        },
-        {
-          "quant": "Q6_K",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q6_K.gguf",
-          "sha256": "771673b7266ff6f79d8b1f5cde01c114eb7e575179160c8a046f4c78b90bc743",
-          "size_bytes": 743197696
-        },
-        {
-          "quant": "Q8_0",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
-          "sha256": "847df2b5b7576ee69801d74d60f5863df1503d09a790a57f0609323c15f26d64",
-          "size_bytes": 873443328
-        },
-        {
-          "quant": "F16",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
-          "sha256": "d2b3cbd7d202f97dd7d91da228a70cc47d5f60ba57c8431a37462b2c2d035ba7",
-          "size_bytes": 1246058304
-        },
-        {
-          "quant": "F16",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F16.gguf",
-          "sha256": "a8c2b0172b3a8963bef52501eaaf628df194374e494b01973b8098f085ba0827",
-          "size_bytes": 1482674144
-        },
-        {
-          "quant": "F32",
-          "filename": "multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
-          "sha256": "a73ea5c34cffd714e97ef6de22db8e9437b6c0265f86f8bd31825fd2b0f49e6c",
-          "size_bytes": 2489180480
-        },
-        {
-          "quant": "F32",
-          "filename": "bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
-          "url": "https://huggingface.co/handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf/resolve/main/bundle/multitalker-parakeet-streaming-0.6b-v1-F32.gguf",
-          "sha256": "e94fa869969470a4434b38d551f444c22d545bb65a48e640d4f5c7439720251a",
-          "size_bytes": 2960100320
-        }
-      ],
-      "default_quant": "Q8_0",
-      "recommended": false,
-      "recommended_rank": null,
-      "speed_score": 96,
-      "accuracy_score": 86
     },
     {
       "id": "parakeet-ctc-0.6b",
