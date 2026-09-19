@@ -54,7 +54,7 @@ repos:
         name: prettier (markdown)
         entry: prettier
         language: node
-        additional_dependencies: ["prettier@3.9.6"]
+        additional_dependencies: ["prettier@3.9.8"]
         files: \.md$
         args: ["--write"]
 
