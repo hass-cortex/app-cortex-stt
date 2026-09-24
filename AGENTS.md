@@ -16,7 +16,7 @@ and rootfs.
 - **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a _Transcription history record_? _Drop audio_ vs _Delete record_? _Retention candidate_? _Evaluation sample_ vs _Pending capture_?
 - **Contributor guide**: [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — fork → branch → PR flow.
 - **Release runbook**: workspace-level [`docs/release/`](../docs/release/README.md) — pipeline diagram, beta/stable cuts, troubleshooting.
-- **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). Standalone Docker / LXC / systemd packaging was removed before 0.1.0; the HA app is the only supported distribution form.
+- **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). The HA app is the only supported distribution form — there is no standalone Docker / LXC / systemd packaging.
 
 ## Repository Layout
 
