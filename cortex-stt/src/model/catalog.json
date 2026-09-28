@@ -1,6 +1,6 @@
 {
   "catalog_version": 2,
-  "generated_at": "2026-09-19T16:27:40Z",
+  "generated_at": "2026-09-28T12:47:33Z",
   "source": "cjpais/Handy catalog.json",
   "models": [
     {
@@ -1710,42 +1710,42 @@
           "quant": "Q4_K_M",
           "filename": "granite-4.0-1b-speech-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-Q4_K_M.gguf",
-          "sha256": "eacd9bc06063a3fdb6bf904a2a82c2646d504922c6e4e5eb1988d61e780884d1",
+          "sha256": "ef108265344d605d530e2d44f125fa046d6a11bf21a1523eb129729269a73c3b",
           "size_bytes": 1602904800
         },
         {
           "quant": "Q5_K_M",
           "filename": "granite-4.0-1b-speech-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-Q5_K_M.gguf",
-          "sha256": "f5e371d2a894e5b30dce793d573df2a965d7705488750b4ef5a6cad1069e2572",
+          "sha256": "4f47208116b3d4dcf73b8562a739bd675f80eeefb4f64e7481b08aee223c9b86",
           "size_bytes": 1829704544
         },
         {
           "quant": "Q6_K",
           "filename": "granite-4.0-1b-speech-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-Q6_K.gguf",
-          "sha256": "b50af8f3c99767f87ccae800589688096678d086daba5e482f6da14e59e2f99c",
+          "sha256": "9d5642999db0a40cda5f66db7bb1ac10aa0f483aefb1ab944bb4364cf6355cce",
           "size_bytes": 2024967936
         },
         {
           "quant": "Q8_0",
           "filename": "granite-4.0-1b-speech-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-Q8_0.gguf",
-          "sha256": "1a48716efce9468bc99f33619e15942ae6a262f7ef51883c3c39b519302a533f",
+          "sha256": "86067453be2216487b6895e1a0ebd28dce81afaef2690484f771444f1be84488",
           "size_bytes": 2559878848
         },
         {
           "quant": "BF16",
           "filename": "granite-4.0-1b-speech-BF16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-BF16.gguf",
-          "sha256": "c10ceec82a87949a6192917aab6b75ca2df5a07faed1d05140a06787cae12a76",
+          "sha256": "9ca799c486970f4feb221f0b25b167016c9a6f558a6acee73c0a98623bfe8fac",
           "size_bytes": 4631640064
         },
         {
           "quant": "F16",
           "filename": "granite-4.0-1b-speech-F16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-4.0-1b-speech-gguf/resolve/main/granite-4.0-1b-speech-F16.gguf",
-          "sha256": "443e5f2cb8ab47dbef8ddaba20823ff5d928662565eb16b2164215f281ec4053",
+          "sha256": "409dbe09f60b92b1523f99a4544817cce45fc5ea78eedf30176ac15dd96f5071",
           "size_bytes": 4632623104
         }
       ],
@@ -1782,42 +1782,42 @@
           "quant": "Q4_K_M",
           "filename": "granite-speech-4.1-2b-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-Q4_K_M.gguf",
-          "sha256": "3171de08a99315481f0eac1979cbc0684911631d59907b2fe1e189dbcdce135f",
+          "sha256": "a7e92314cdff11a095024a3fc35ad3fffd637455b3f6764ffa54d7411d653d3c",
           "size_bytes": 1602904800
         },
         {
           "quant": "Q5_K_M",
           "filename": "granite-speech-4.1-2b-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-Q5_K_M.gguf",
-          "sha256": "63e0d3a82fa6f0f4688af0b7d7ee784864d271b7be820f4ea43c8298c59b0ac5",
+          "sha256": "1ea15c2174b485b8de81337a1da3ae6703a7892a5330345b9a2212e9a6a0c365",
           "size_bytes": 1829704544
         },
         {
           "quant": "Q6_K",
           "filename": "granite-speech-4.1-2b-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-Q6_K.gguf",
-          "sha256": "f2de8601facb83a5be83aa61198366b2e9cae739ded451c70abcd710f43d8877",
+          "sha256": "37585ad793ad03fd7d72f3daa490364130074e2d401a4ee9f5ca5b8f3f572c41",
           "size_bytes": 2024967936
         },
         {
           "quant": "Q8_0",
           "filename": "granite-speech-4.1-2b-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-Q8_0.gguf",
-          "sha256": "8c0b2dce2861feb1dba91e9d59f2ab4a9c23ad808bff86465151576e096ec7a6",
+          "sha256": "666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218",
           "size_bytes": 2559878848
         },
         {
           "quant": "BF16",
           "filename": "granite-speech-4.1-2b-BF16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-BF16.gguf",
-          "sha256": "6a0489017b2410b411e62460c20019573f1fb2163f44b2f92a892846d6b0c844",
+          "sha256": "8d1289a4e5effeb82c99d3c34ab84ac3589afb49397471489b6f31613c160233",
           "size_bytes": 4631640064
         },
         {
           "quant": "F16",
           "filename": "granite-speech-4.1-2b-F16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf/resolve/main/granite-speech-4.1-2b-F16.gguf",
-          "sha256": "28285a4aafc3979a6587084fa0166556e97aaeea55204546036b95f6f0dbb48e",
+          "sha256": "0da20adff483987c6a1e8afa0b35bc812dbc8673acd00c98ecd9cf4c1e40f2b0",
           "size_bytes": 4632623104
         }
       ],
@@ -1853,42 +1853,42 @@
           "quant": "Q4_K_M",
           "filename": "granite-speech-4.1-2b-plus-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-Q4_K_M.gguf",
-          "sha256": "5d52b6bb9bc2b504120448b4da61aeb383da3c1bcfe88b22c6ed667f2520206f",
+          "sha256": "3f822444967f82da8ecd80d1c2564071db3f162a03aebe12289fbf3d0b8aed70",
           "size_bytes": 1489663424
         },
         {
           "quant": "Q5_K_M",
           "filename": "granite-speech-4.1-2b-plus-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-Q5_K_M.gguf",
-          "sha256": "3415f2c2d5979ded038dc012e5a875d77602fa5a0699cc75ee7fa47991f42530",
+          "sha256": "4b762cb221169db53863aa2ace3489310d619263b3a5382b39f1abac60f87301",
           "size_bytes": 1691297088
         },
         {
           "quant": "Q6_K",
           "filename": "granite-speech-4.1-2b-plus-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-Q6_K.gguf",
-          "sha256": "fe281f479ea53ad41d5d1e4d29f1c7174177803717c9b63771416312a3838817",
+          "sha256": "58cd9d1958c73dac49e95ebba614ed175e4f8a8f4b976c73f82f1ad04d1a6135",
           "size_bytes": 1859821504
         },
         {
           "quant": "Q8_0",
           "filename": "granite-speech-4.1-2b-plus-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-Q8_0.gguf",
-          "sha256": "a2ffe6c8db730f3eb3719ad0ac27016cad30c87b18cd33e214c7b2083e38ce10",
+          "sha256": "37e018d83a834924d72919e747db0cf5929db5399245a9c5da635db70e06fcbe",
           "size_bytes": 2345973152
         },
         {
           "quant": "BF16",
           "filename": "granite-speech-4.1-2b-plus-BF16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-BF16.gguf",
-          "sha256": "fcf1499c5bcaf71f587337501d198b52c0cf0307c73732b619b2071ed0d2360c",
+          "sha256": "7f6766d3122ff6a7e20f2a4370627dbb4fd8638a53143214f3ed37309e7a5288",
           "size_bytes": 4228988768
         },
         {
           "quant": "F16",
           "filename": "granite-speech-4.1-2b-plus-F16.gguf",
           "url": "https://huggingface.co/handy-computer/granite-speech-4.1-2b-plus-gguf/resolve/main/granite-speech-4.1-2b-plus-F16.gguf",
-          "sha256": "a9eba6a2df0d446c8c5020404abe6c9e3da0d077f010f772481ef1f221957c02",
+          "sha256": "fa2ca00cbc56adc84a60b9caca3dbdf137028eb05978367c08d3d50a3f0f34d9",
           "size_bytes": 4229971808
         }
       ],
@@ -2770,42 +2770,42 @@
           "quant": "Q4_K_M",
           "filename": "MOSS-Transcribe-Diarize-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q4_K_M.gguf",
-          "sha256": "e371990f2c8f21ded18e18cfac8906b059b5ee7cbce154ed4d3c582c05100b8b",
+          "sha256": "1e40cd8a6f385a2bb2a53a8b89b04949c47c870e4f930a69105460538bd16ec0",
           "size_bytes": 617345184
         },
         {
           "quant": "Q5_K_M",
           "filename": "MOSS-Transcribe-Diarize-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q5_K_M.gguf",
-          "sha256": "52deaeff931272f3d49eb437f0f4916e42fce9f42e68db250047408241cf473c",
+          "sha256": "cc36d8ad46c66a55125cd9339dc063e62c657d63de60d571442d19aea87e7349",
           "size_bytes": 700313760
         },
         {
           "quant": "Q6_K",
           "filename": "MOSS-Transcribe-Diarize-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q6_K.gguf",
-          "sha256": "f36e6edd7cae9d9c280b8bc48b4bfd10d9ccfe17995cf8daa9517a94329e2bbd",
+          "sha256": "7fd37409dbec9c732f912717f3cd8f4cd2c5083841edfab2f3b670f816512b44",
           "size_bytes": 768151712
         },
         {
           "quant": "Q8_0",
           "filename": "MOSS-Transcribe-Diarize-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-Q8_0.gguf",
-          "sha256": "64ec654dc6ffcfdfe180422dffce1d33422b0c30959b7edfd131bad77ee35039",
+          "sha256": "2f9039f1f06c7795de78f45ec1abea2712e881eb0f5c7ff8a080e66e1a3ce015",
           "size_bytes": 986899616
         },
         {
           "quant": "BF16",
           "filename": "MOSS-Transcribe-Diarize-BF16.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-BF16.gguf",
-          "sha256": "ccf9aa138e18beb295ec69e1979206c6e48f872fbc3a8c887d6a1fee9dbe7712",
+          "sha256": "f943293c6c6443b339d7466187181f1ecd31c77cf796740391fdb459e5b7ca4a",
           "size_bytes": 1826882720
         },
         {
           "quant": "F16",
           "filename": "MOSS-Transcribe-Diarize-F16.gguf",
           "url": "https://huggingface.co/handy-computer/moss-transcribe-diarize-gguf/resolve/main/MOSS-Transcribe-Diarize-F16.gguf",
-          "sha256": "fee2e436f7a6e768756446cf31e34bbf4223c4448fa2073d2f424d46f83d7f4b",
+          "sha256": "e14d8a3b807fb9416bea9efe51d7a33555672b20753886e08c5bb1d89552cc99",
           "size_bytes": 1833665696
         }
       ],
