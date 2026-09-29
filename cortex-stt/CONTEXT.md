@@ -55,8 +55,15 @@ Any `.gguf` file placed in the model directory by hand and picked up by a rescan
 The model used when a transcription request omits `model=`. Configured via `/api/engine/default`.
 
 **Install**:
-The transition "download reached Completed → model usable": remove any other quant (one quant per model), refresh the engine factory registration, announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
+The transition "download reached Completed → model usable": remove any other quant (one quant per model), unload the model so the next acquire reads the new file, refresh the engine factory registration, announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
 _Avoid_: "register" alone (the engine-factory step is one part of an Install), "post-download hook", "completion watch" (the old polling mechanism)
+
+**Fingerprint**:
+The SHA-256 an installed catalog file was verified against, kept in a `<file>.sha256` sidecar. Written when a verified download moves into place; computed once at startup for files installed before fingerprints existed.
+
+**Model update**:
+A re-download of the installed quant after upstream republished the file under the same name — shown when the **Fingerprint** differs from the catalog's sha256. The installed file keeps serving, and the model stays Downloaded, until the new file verifies and its Install replaces it.
+_Avoid_: "upgrade" (the quant does not change)
 
 **Uninstall**:
 The mirror operation: unload the Loaded model, delete its files, announce to HA. Deleting files is one step of an Uninstall, not the whole of it.

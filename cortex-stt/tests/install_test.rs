@@ -91,7 +91,7 @@ async fn install_quant_switch_unloads_the_stale_engine() {
 }
 
 #[tokio::test]
-async fn install_without_old_quant_keeps_loaded_engine() {
+async fn install_over_the_same_file_unloads_the_stale_engine() {
     let f = fixture().await;
     let model = multi_quant_model();
     let new = &model.quants[1].filename;
@@ -102,10 +102,11 @@ async fn install_without_old_quant_keeps_loaded_engine() {
 
     f.installer.install(&model.id, new).await;
 
+    // An update: the download replaced the file the engine was built from.
     assert!(f.model_dir.join(new).exists());
     assert!(
-        f.engine_manager.loaded_models().await.contains(&model.id),
-        "no quant switch happened, engine must stay loaded"
+        !f.engine_manager.loaded_models().await.contains(&model.id),
+        "engine built from the replaced file must be unloaded"
     );
 }
 
@@ -155,6 +156,33 @@ async fn uninstall_refuses_a_downloading_model() {
 
     let err = f.installer.uninstall(&model.id).await.unwrap_err();
     assert!(matches!(err, AsrError::DownloadInProgress { .. }));
+}
+
+/// An update re-downloads over an installed, loaded model. Refusing to
+/// uninstall it must not unload it on the way to the refusal.
+#[tokio::test]
+async fn a_refused_uninstall_leaves_an_updating_model_loaded() {
+    let f = fixture().await;
+    let model = multi_quant_model();
+    std::fs::write(f.model_dir.join(&model.quants[0].filename), b"installed").unwrap();
+    f.engine_manager.register(&model.id, mock_factory()).await;
+    drop(f.engine_manager.acquire(&model.id).await.unwrap());
+    f.downloads
+        .set_progress(DownloadProgress {
+            model_id: model.id.clone(),
+            status: DownloadPhase::Downloading,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        })
+        .await;
+
+    let err = f.installer.uninstall(&model.id).await.unwrap_err();
+    assert!(matches!(err, AsrError::DownloadInProgress { .. }));
+    assert!(f.engine_manager.loaded_models().await.contains(&model.id));
+    assert!(f.model_dir.join(&model.quants[0].filename).exists());
 }
 
 // NOTE: the old `download_manager_install_hook_is_wired_once` test is gone —

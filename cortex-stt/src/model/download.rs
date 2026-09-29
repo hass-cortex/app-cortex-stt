@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::error::AsrError;
 use crate::model::download_manager::{DownloadManager, QueuedDownloadRequest};
+use crate::model::fingerprint;
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
 /// Hosts allowed for model downloads. The vendored catalog only points
@@ -441,7 +442,8 @@ async fn download_task(
     );
 
     // SHA-256 verification.
-    if config.verify_sha256 && !expected_sha256.is_empty() {
+    let verified = config.verify_sha256 && !expected_sha256.is_empty();
+    if verified {
         // Honour a cancel before publishing a Verifying snapshot (which
         // cancel can't clear) and before burning time hashing a (possibly
         // multi-GB) file the user abandoned.
@@ -487,6 +489,13 @@ async fn download_task(
 
     // GGUF models are single files — rename .part to final destination.
     fs::rename(&part_path, dest_path).await?;
+    // The fingerprint vouches only for a verified file; a stale one from
+    // the replaced file must not survive an unverified install.
+    if verified {
+        fingerprint::record(dest_path, expected_sha256).await;
+    } else {
+        fingerprint::remove(dest_path).await;
+    }
 
     info!(model_id = %model_id, path = %dest_path.display(), "model download complete");
     Ok(DownloadOutcome::Completed)

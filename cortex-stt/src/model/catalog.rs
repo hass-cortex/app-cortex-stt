@@ -10,6 +10,7 @@ use tracing::info;
 use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
 use crate::model::catalog_data::{CatalogModel, QuantFile, catalog_models, find_model};
+use crate::model::fingerprint;
 use crate::model::progress::ProgressBoard;
 use crate::model::storage::dir_size;
 use crate::model::types::{DownloadPhase, ModelInfo, ModelStatus};
@@ -85,41 +86,34 @@ impl ModelCatalog {
         let mut models = Vec::new();
 
         for model in catalog_models() {
-            let on_disk = downloaded_quant(&self.model_dir, model);
-            let (status, quant, disk_bytes) =
-                if let Some(progress) = self.progress.get(&model.id).await {
-                    match progress.status {
-                        DownloadPhase::Queued => (ModelStatus::Queued, None, 0),
-                        // A completed download whose file is in place is
-                        // Downloaded, even if the progress entry has not been
-                        // cleared yet. Otherwise list_models briefly reports
-                        // Downloading right after completion, so the
-                        // event-driven HA reconcile (which fires on the same
-                        // download-complete event) filters the model out and
-                        // never adds it.
-                        DownloadPhase::Completed if on_disk.is_some() => {
-                            let q = on_disk.expect("checked is_some");
-                            let path = self.model_dir.join(&q.filename);
-                            (
-                                ModelStatus::Downloaded,
-                                Some(q.quant.clone()),
-                                dir_size(&path),
-                            )
-                        }
-                        _ => (ModelStatus::Downloading, None, 0),
-                    }
-                } else if let Some(q) = on_disk {
+            let phase = self.progress.get(&model.id).await.map(|p| p.status);
+            let info = match downloaded_quant(&self.model_dir, model) {
+                // A file on disk stays in service while a download runs for
+                // the model (an update or a quant switch): it is replaced
+                // only once the new file verifies. Reporting it Downloaded
+                // throughout keeps the HA reconcile from dropping it.
+                Some(q) => {
                     let path = self.model_dir.join(&q.filename);
-                    (
+                    let mut info = ModelInfo::from_catalog(
+                        model,
                         ModelStatus::Downloaded,
                         Some(q.quant.clone()),
                         dir_size(&path),
-                    )
-                } else {
-                    (ModelStatus::Available, None, 0)
-                };
-
-            models.push(ModelInfo::from_catalog(model, status, quant, disk_bytes));
+                    );
+                    info.updating = phase.is_some_and(|p| !p.is_terminal());
+                    info.update_available = fingerprint::update_available(&path, &q.sha256);
+                    info
+                }
+                None => {
+                    let status = match phase {
+                        Some(DownloadPhase::Queued) => ModelStatus::Queued,
+                        Some(_) => ModelStatus::Downloading,
+                        None => ModelStatus::Available,
+                    };
+                    ModelInfo::from_catalog(model, status, None, 0)
+                }
+            };
+            models.push(info);
         }
 
         for info in self.scan_custom_models() {
@@ -185,6 +179,11 @@ impl ModelCatalog {
             })?;
 
         match model.status {
+            ModelStatus::Downloaded if model.updating => {
+                return Err(AsrError::DownloadInProgress {
+                    model_id: id.to_string(),
+                });
+            }
             ModelStatus::Downloaded | ModelStatus::Custom | ModelStatus::Error => {}
             ModelStatus::Available => {
                 return Err(AsrError::ModelFileNotFound {
@@ -204,6 +203,7 @@ impl ModelCatalog {
             });
         };
         tokio::fs::remove_file(&path).await?;
+        fingerprint::remove(&path).await;
 
         info!(model_id = %id, path = %path.display(), "model files deleted");
         Ok(())
@@ -313,6 +313,97 @@ mod tests {
         let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert!(tiny.disk_usage_bytes > 0);
+    }
+
+    fn progress_at(phase: DownloadPhase) -> crate::model::types::DownloadProgress {
+        crate::model::types::DownloadProgress {
+            model_id: "whisper-tiny".to_string(),
+            status: phase,
+            downloaded_bytes: 0,
+            total_bytes: 4,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_republished_file_reports_an_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join(tiny_filename());
+        std::fs::write(&file, b"fake").unwrap();
+        let catalog = make_catalog(tmp.path().to_path_buf());
+
+        // No fingerprint yet: unknown, not an update.
+        assert!(
+            !catalog
+                .get_model("whisper-tiny")
+                .await
+                .unwrap()
+                .update_available
+        );
+
+        fingerprint::record(&file, "0000").await;
+        assert!(
+            catalog
+                .get_model("whisper-tiny")
+                .await
+                .unwrap()
+                .update_available
+        );
+
+        let pinned = &find_model("whisper-tiny")
+            .unwrap()
+            .default_quant_file()
+            .sha256;
+        fingerprint::record(&file, pinned).await;
+        assert!(
+            !catalog
+                .get_model("whisper-tiny")
+                .await
+                .unwrap()
+                .update_available
+        );
+    }
+
+    /// An update re-downloads over an installed file. The model must stay
+    /// Downloaded (in service, kept by the HA reconcile) and undeletable
+    /// until the download ends.
+    #[tokio::test]
+    async fn an_update_in_flight_keeps_the_model_downloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join(tiny_filename());
+        std::fs::write(&file, b"fake").unwrap();
+
+        let progress = ProgressBoard::new();
+        progress.set(progress_at(DownloadPhase::Downloading)).await;
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
+
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert!(tiny.updating);
+        assert!(matches!(
+            catalog.delete_model("whisper-tiny").await,
+            Err(AsrError::DownloadInProgress { .. })
+        ));
+
+        progress.set(progress_at(DownloadPhase::Failed)).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert!(!tiny.updating);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_fingerprint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join(tiny_filename());
+        std::fs::write(&file, b"fake").unwrap();
+        fingerprint::record(&file, "0000").await;
+        let catalog = make_catalog(tmp.path().to_path_buf());
+
+        catalog.delete_model("whisper-tiny").await.unwrap();
+        assert!(!fingerprint::sidecar_path(&file).exists());
     }
 
     /// Regression: `get_model`/`list_models` must reflect engine load state.

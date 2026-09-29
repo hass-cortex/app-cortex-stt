@@ -52,6 +52,12 @@ pub struct ModelInfo {
     pub disk_usage_bytes: u64,
     /// Whether the model is currently loaded in the engine manager.
     pub is_loaded: bool,
+    /// The installed file differs from the one the catalog now pins
+    /// (upstream republished it); re-downloading the installed quant updates it.
+    pub update_available: bool,
+    /// A download is replacing the installed file, which stays in service
+    /// until the new one verifies.
+    pub updating: bool,
 }
 
 fn to_mb(bytes: u64) -> u64 {
@@ -95,6 +101,8 @@ impl ModelInfo {
             status,
             disk_usage_bytes,
             is_loaded: false,
+            update_available: false,
+            updating: false,
         }
     }
 
@@ -124,6 +132,8 @@ impl ModelInfo {
             status: ModelStatus::Custom,
             disk_usage_bytes,
             is_loaded: false,
+            update_available: false,
+            updating: false,
         }
     }
 }
