@@ -1,3 +1,4 @@
+import { getBrowserTimezone } from "@/utils/time";
 import { get } from "./client";
 import type { HealthResponse, Metrics, StorageInfo, SystemInfo } from "./types";
 
@@ -11,9 +12,9 @@ export function getSystemInfo(): Promise<SystemInfo> {
 	return get<SystemInfo>("/api/system");
 }
 
-/** Get transcription metrics */
+/** Get transcription metrics; the browser zone defines "today" when the timezone setting is "auto" */
 export function getMetrics(): Promise<Metrics> {
-	return get<Metrics>("/api/metrics");
+	return get<Metrics>("/api/metrics", { tz: getBrowserTimezone() });
 }
 
 /** Get storage usage info */

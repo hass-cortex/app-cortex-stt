@@ -260,7 +260,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | GET         | `/api/eval/models/{model_id}`        | One model across every run                                                    |
 | GET         | `/api/system`                        | System info                                                                   |
 | GET         | `/api/storage`                       | Storage info                                                                  |
-| GET         | `/api/metrics`                       | Aggregate metrics                                                             |
+| GET         | `/api/metrics`                       | Aggregate metrics ("today" = display-timezone day; `?tz=` for auto)           |
 | POST        | `/api/discovery/announce`            | Send Supervisor `/discovery` announce (manual re-trigger)                     |
 | GET         | `/health`                            | Health check (no auth)                                                        |
 

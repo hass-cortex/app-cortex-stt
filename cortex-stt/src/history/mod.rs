@@ -29,7 +29,7 @@ use crate::db::database::Database;
 use crate::error::AsrError;
 use crate::retention::{RetentionCandidate, RetentionPolicy, select_to_delete};
 
-pub use analytics::MetricsSnapshot;
+pub use analytics::{MetricsSnapshot, display_timezone, start_of_day};
 pub use store::{
     CreateRecord, HistoryFacets, ListRecordsFilter, RecordSegment, TranscriptionRecord,
     TranscriptionSource,

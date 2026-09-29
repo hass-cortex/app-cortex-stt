@@ -5,6 +5,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use rusqlite::{params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
@@ -135,6 +136,9 @@ pub struct ListRecordsFilter {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
+
+/// The shape SQLite's `datetime('now')` writes into the `timestamp` column (UTC).
+const COLUMN_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Coerce a caller's timestamp into the shape the `timestamp` column
 /// stores (`YYYY-MM-DD HH:MM:SS`).
@@ -631,7 +635,9 @@ pub(super) async fn list_audio_rows(
 /// [`MetricsSnapshot`](crate::history::analytics::MetricsSnapshot).
 pub(super) async fn metrics_snapshot(
     db: &Arc<Database>,
+    today_start: DateTime<Utc>,
 ) -> Result<super::analytics::MetricsSnapshot, AsrError> {
+    let today_start = today_start.format(COLUMN_TIMESTAMP_FORMAT).to_string();
     db.connection()
         .call(move |conn| {
             conn.query_row(
@@ -639,16 +645,16 @@ pub(super) async fn metrics_snapshot(
                     COUNT(*) FILTER (WHERE has_error = 0),
                     COUNT(*) FILTER (WHERE has_error = 0 AND source = ?1),
                     COUNT(*) FILTER (WHERE has_error = 0
-                        AND timestamp >= datetime('now', 'start of day')),
+                        AND timestamp >= ?2),
                     COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0), 0),
                     COALESCE(SUM(audio_duration_ms) FILTER (WHERE has_error = 0
-                        AND timestamp >= datetime('now', 'start of day')), 0),
+                        AND timestamp >= ?2), 0),
                     COALESCE(AVG(inference_ms) FILTER (WHERE has_error = 0), 0.0),
                     COUNT(*) FILTER (WHERE has_error = 1),
                     COUNT(*) FILTER (WHERE has_error = 1
-                        AND timestamp >= datetime('now', 'start of day'))
+                        AND timestamp >= ?2)
                  FROM records",
-                params![TranscriptionSource::HttpApi.as_str()],
+                params![TranscriptionSource::HttpApi.as_str(), today_start],
                 |row| {
                     Ok(super::analytics::MetricsSnapshot {
                         total_transcriptions: row.get::<_, i64>(0)? as usize,

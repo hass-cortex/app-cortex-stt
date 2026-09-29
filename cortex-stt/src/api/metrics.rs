@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::routing::get;
-use serde::Serialize;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AsrError;
+use crate::history::{display_timezone, start_of_day};
 use crate::state::AppState;
 
 /// Aggregate metrics about the service.
@@ -26,11 +28,26 @@ pub struct Metrics {
     pub uptime_secs: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct MetricsQuery {
+    /// The viewer's browser timezone; used only when the setting is "auto".
+    tz: Option<String>,
+}
+
 /// Thin shell: the history aggregate comes pre-assembled from
 /// [`History::metrics_snapshot`](crate::history::History); this handler
 /// only joins in the non-history counters and maps to the wire DTO.
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Metrics>, AsrError> {
-    let snapshot = state.history.metrics_snapshot().await?;
+/// "Today" is the calendar day in the display timezone.
+async fn get_metrics(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<MetricsQuery>,
+) -> Result<Json<Metrics>, AsrError> {
+    let settings = state.db.load_settings().await?;
+    let tz = display_timezone(&settings.timezone, q.tz.as_deref());
+    let snapshot = state
+        .history
+        .metrics_snapshot(start_of_day(Utc::now(), tz))
+        .await?;
 
     let loaded_models = state.engine_manager.loaded_count().await;
     let total_models = state.catalog.list_models().await.len();

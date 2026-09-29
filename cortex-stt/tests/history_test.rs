@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use chrono::{Duration, Utc};
+
 use cortex_stt::db::database::Database;
 use cortex_stt::history::{CreateRecord, History, ListRecordsFilter, TranscriptionSource};
 use cortex_stt::retention::RetentionPolicy;
@@ -294,7 +296,10 @@ async fn database_init_creates_tables() {
     // Sanity check that the schema migrations ran — an empty metrics
     // snapshot is the simplest probe.
     let (history, _tmp) = setup().await;
-    let snapshot = history.metrics_snapshot().await.unwrap();
+    let snapshot = history
+        .metrics_snapshot(Utc::now() - Duration::hours(1))
+        .await
+        .unwrap();
     assert_eq!(snapshot.total_transcriptions, 0);
     assert_eq!(snapshot.error_count, 0);
 }
@@ -316,7 +321,10 @@ async fn metrics_snapshot_aggregates_by_source_and_error() {
     err.error_message = Some("boom".into());
     history.create(err, None).await.unwrap();
 
-    let s = history.metrics_snapshot().await.unwrap();
+    let s = history
+        .metrics_snapshot(Utc::now() - Duration::hours(1))
+        .await
+        .unwrap();
     assert_eq!(s.total_transcriptions, 3);
     assert_eq!(s.http_transcriptions, 2);
     assert_eq!(s.today_transcriptions, 3);

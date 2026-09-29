@@ -47,6 +47,7 @@ transcribe-cpp = { version = "=0.2.4", default-features = false, optional = true
 # borrows its Session; both must live in the bridge across feed calls).
 ouroboros = { version = "0.18", optional = true }
 ferrous-opencc = "0.4"
+chrono-tz = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
