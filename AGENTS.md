@@ -16,7 +16,7 @@ and rootfs.
 - **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a _Transcription history record_? _Drop audio_ vs _Delete record_? _Retention candidate_? _Evaluation sample_ vs _Pending capture_?
 - **Contributor guide**: [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — fork → branch → PR flow.
 - **Release runbook**: workspace-level [`docs/release/`](../docs/release/README.md) — pipeline diagram, beta/stable cuts, troubleshooting.
-- **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). Standalone Docker / LXC / systemd packaging was removed before 0.1.0; the HA app is the only supported distribution form.
+- **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). The HA app is the only supported distribution form — there is no standalone Docker / LXC / systemd packaging.
 
 ## Repository Layout
 
@@ -24,6 +24,7 @@ and rootfs.
 .
 ├── .github/workflows/         CI + release pipeline
 │   ├── app-ci.yaml            hassio-addons app-ci (HA addon shell lint)
+│   ├── catalog-drift.yml      weekly: upstream catalog drift → review PR (never auto-merges)
 │   ├── ci.yml                 Rust + Bun checks (fmt/clippy/test/deny + lint/typecheck/build)
 │   ├── deploy.yaml            release-triggered: app-deploy → GHCR + dispatch
 │   └── release.yml            release-triggered: cross-compile binaries + GitHub Release
@@ -70,6 +71,7 @@ src/
 ├── eval/             model evaluation (samples + runs + results + judgements)
 │   ├── mod.rs        Eval facade; the four invariants live here
 │   ├── runner.rs     EvalRunner: model-major execution, explicit unload, renders like production
+│   ├── compare.rs    whether an output says what the reference says (the one scoring rule for grid, summary and run list)
 │   ├── memory.rs     /proc resident-set probe (does this model fit?)
 │   └── store.rs      private SQL + the eval_* tables
 ├── history/          transcription history records (DB row + paired WAV audio)
@@ -84,6 +86,7 @@ src/
 │   ├── router.rs     build_router: the SHIPPED route + middleware stack (auth, CORS, access log); main serves it, tests exercise it
 │   ├── auth.rs       Bearer token middleware (also `?api_key=` for SSE/WS)
 │   ├── error.rs      ApiError DTO + IntoResponse glue (thin)
+│   ├── range.rs      byte-range responses for the audio endpoints (media scrubbing)
 │   ├── transcribe.rs HTTP shell: decode audio + dispatch to Transcriber (sync/async)
 │   ├── stream.rs     WebSocket streaming endpoint (ADR 0001 wire protocol)
 │   ├── models.rs     model CRUD + download progress (catalog + downloads)
@@ -109,8 +112,9 @@ src/
 │   ├── catalog.rs          ModelCatalog: list / get / resolve (Catalog|Custom) / delete / scan custom *.gguf
 │   ├── download_manager.rs DownloadManager facade: start / cancel_download + queue + slots + completion tail
 │   ├── download.rs         async download pipeline (HTTP + SHA-256; single-file GGUF)
+│   ├── fingerprint.rs      `<file>.sha256` sidecars: verified hash per installed file → `update_available`
 │   ├── progress.rs         ProgressBoard: shared download-progress snapshots (manager writes, catalog reads)
-│   ├── install.rs          ModelInstaller: Install (quant switch + register + notify) / Uninstall
+│   ├── install.rs          ModelInstaller: Install (quant switch + unload + register + notify) / Uninstall
 │   ├── maintenance.rs      startup-once model-dir cleanup (legacy .bin/ONNX/.part artifacts)
 │   ├── storage.rs          disk usage helpers (layout is flat: `{model_dir}/{filename}.gguf`)
 │   └── types.rs            model type definitions (ModelInfo, DownloadPhase, …)
@@ -217,6 +221,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | GET         | `/api/models/{id}/download/progress` | Download progress (SSE)                                                       |
 | DELETE      | `/api/models/{id}`                   | Delete downloaded model                                                       |
 | GET         | `/api/engine`                        | Engine status                                                                 |
+| GET         | `/api/engine/live`                   | Load-state changes (SSE; empty payload, refetch models + engine)              |
 | POST        | `/api/engine/load`                   | Load model into memory                                                        |
 | POST        | `/api/engine/unload`                 | Unload model                                                                  |
 | PUT         | `/api/engine/default`                | Set default model                                                             |
@@ -225,6 +230,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | POST        | `/api/keys`                          | Create API key                                                                |
 | DELETE      | `/api/keys/{id}`                     | Revoke key                                                                    |
 | GET         | `/api/history`                       | List transcription history                                                    |
+| GET         | `/api/history/facets`                | Distinct model ids + capture devices (filter dropdowns)                       |
 | GET         | `/api/history/live`                  | Live history (SSE)                                                            |
 | POST        | `/api/history/cleanup`               | Force retention sweep using current settings                                  |
 | GET         | `/api/history/{id}`                  | Single record                                                                 |
@@ -233,6 +239,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | POST        | `/api/history/delete`                | Delete the listed records (`{ids}`)                                           |
 | DELETE      | `/api/history`                       | Delete all                                                                    |
 | GET         | `/api/eval/overview`                 | Latest run summarised + sample-set composition                                |
+| GET         | `/api/eval/composition`              | Sample-set composition alone                                                  |
 | GET         | `/api/eval/samples`                  | List evaluation samples                                                       |
 | DELETE      | `/api/eval/samples/{id}`             | Delete a sample (and its audio)                                               |
 | POST        | `/api/eval/samples/delete`           | Delete the listed samples (`{ids}`)                                           |
@@ -329,12 +336,13 @@ The payload is advisory — the HA listener re-fetches `/api/models` and
 reconciles the full set, so it self-heals on a missed/duplicate event.
 
 **Critical invariant** — `ModelCatalog::list_models` must report a
-`DownloadPhase::Completed` model whose file exists as `Downloaded`
-(`catalog.rs`), NOT `Downloading`. The event fires on download-complete
+model whose file exists as `Downloaded` (`catalog.rs`) whatever its
+download phase, NOT `Downloading`. The event fires on download-complete
 while the `Completed` progress entry still lingers (cleared ~later by
-`remove_progress`); without this, HA's immediate reconcile would see
-`Downloading`, filter the model out, and never add its entities. Any new
-path that fires the event depends on this. Guarded end-to-end by
+`remove_progress`), and a **Model update** downloads while the old file
+keeps serving (`updating: true`); either way HA's reconcile would
+otherwise see `Downloading`, filter the model out, and drop or never add
+its entities. Any new path that fires the event depends on this. Guarded end-to-end by
 `completion_tail_reports_downloaded_to_catalog_before_progress_clears`
 (`download_manager.rs`), which spans the completion tail and the catalog
 view together.
@@ -370,7 +378,7 @@ pipeline:
 1. **`release.yml`** builds the x86_64 binary and the web bundle and
    creates a GitHub Release. Tags containing `-` (e.g. `0.1.4-beta.1`)
    are auto-marked prerelease.
-2. **`deploy.yaml`** (using `hassio-addons/workflows/app-deploy.yaml@v2.0.6`)
+2. **`deploy.yaml`** (using `hassio-addons/workflows/app-deploy.yaml`, SHA-pinned in the workflow)
    builds the image, pushes
    `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>`, and dispatches
    `repository_dispatch` to one or both catalogs:
