@@ -26,7 +26,7 @@ export function StorageCard() {
 	const modelsPercent = total > 0 ? (data.models_bytes / total) * 100 : 0;
 
 	const rows = [
-		{ label: "Models", bytes: data.models_bytes, swatch: "bg-accent" },
+		{ label: "Models", bytes: data.models_bytes, swatch: "bg-data" },
 		{ label: "Audio", bytes: data.audio_bytes, swatch: "border border-warning" },
 		{ label: "Database", bytes: data.database_bytes, swatch: "bg-surface-3" },
 	];
@@ -42,7 +42,7 @@ export function StorageCard() {
 				}
 			/>
 			<div className="mt-3 flex h-1.5 gap-0.5">
-				<div className="bg-accent rounded-[3px]" style={{ width: `${modelsPercent}%` }} />
+				<div className="bg-data rounded-[3px]" style={{ width: `${modelsPercent}%` }} />
 				<div className="flex-1 bg-surface-3 rounded-[3px]" />
 			</div>
 			<div className="mt-3 space-y-[7px]">

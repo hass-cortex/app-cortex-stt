@@ -50,10 +50,10 @@ export function ThroughputChart({ buckets, height = 132 }: ThroughputChartProps)
 								{...barProps(index)}
 							>
 								{activeIndex === index && (
-									<div className="absolute inset-y-0 left-1/2 w-px bg-accent-ink/60" />
+									<div className="absolute inset-y-0 left-1/2 w-px bg-data-ink/60" />
 								)}
 								<div
-									className="relative w-full rounded-[4px] bg-accent transition-[height] duration-300"
+									className="relative w-full rounded-[4px] bg-data transition-[height] duration-300"
 									style={{ height: `${(bucket.count / max) * 100}%` }}
 								/>
 							</button>
