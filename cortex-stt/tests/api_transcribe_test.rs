@@ -348,14 +348,14 @@ async fn run_ws_protocol(
     let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
 
     let start = format!(r#"{{"type":"start","model":"{model}"}}"#);
-    ws.send(WsMessage::Text(start)).await.unwrap();
+    ws.send(WsMessage::text(start)).await.unwrap();
 
     for frame in frames {
-        ws.send(WsMessage::Binary(frame.clone())).await.unwrap();
+        ws.send(WsMessage::binary(frame.clone())).await.unwrap();
     }
 
     if finalize {
-        ws.send(WsMessage::Text(r#"{"type":"finalize"}"#.to_string()))
+        ws.send(WsMessage::text(r#"{"type":"finalize"}"#))
             .await
             .unwrap();
     }
