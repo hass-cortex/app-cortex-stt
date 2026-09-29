@@ -84,9 +84,11 @@ repos:
         pass_filenames: false
 
       # Requires: cargo install --locked cargo-deny
+      # Unset GIT_DIR: in a worktree it is absolute, and the advisory-db
+      # update would fetch into this repo and reset HEAD to FETCH_HEAD.
       - id: cargo-deny
         name: cargo deny check
-        entry: bash -c 'cd cortex-stt && cargo deny check'
+        entry: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash -c 'cd cortex-stt && cargo deny check'
         language: system
         stages: [pre-push]
         files: ^cortex-stt/(Cargo\.(toml|lock)|deny\.toml)$

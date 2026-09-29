@@ -4,14 +4,7 @@
 [advisories]
 version = 2
 yanked = "warn"
-ignore = [
-    # RUSTSEC-2025-0141: bincode 2.0.1, transitive via `ferrous-opencc`, whose team
-    # stopped development by choice. An "unmaintained" advisory, not a
-    # vulnerability, and it is not ours to upgrade — dropping it means dropping
-    # the script conversion the language subtags render with. Revisit if
-    # ferrous-opencc moves off bincode or an advisory with teeth lands on it.
-    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained by choice; transitive via ferrous-opencc" },
-]
+ignore = []
 
 [licenses]
 version = 2
