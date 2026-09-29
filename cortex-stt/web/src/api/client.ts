@@ -147,9 +147,31 @@ export async function postBinary<T>(
 	return handleResponse<T>(response);
 }
 
+/** One EventSource per URL, shared by every subscriber to it. Browsers
+ *  allow six HTTP/1.1 connections per origin (HA ingress included); one
+ *  EventSource per hook call filled them, and a click's fetch queued
+ *  behind the streams until one closed. */
+interface SharedStream {
+	source: EventSource;
+	refs: number;
+	/** Last payload per event type, replayed to late subscribers: a stream
+	 *  that sends its current state on connect has already sent it. */
+	last: Map<string, unknown>;
+}
+
+const streams = new Map<string, SharedStream>();
+
+function openStream(url: string): SharedStream {
+	const existing = streams.get(url);
+	if (existing && existing.source.readyState !== EventSource.CLOSED) return existing;
+	const stream: SharedStream = { source: new EventSource(url), refs: 0, last: new Map() };
+	streams.set(url, stream);
+	return stream;
+}
+
 /** Subscribe to SSE stream. Returns a cleanup function.
- *  When `eventName` is provided, listens for named events via `addEventListener`;
- *  otherwise listens for unnamed events via `onmessage`. */
+ *  When `eventName` is provided, listens for that named event; otherwise
+ *  for unnamed events. */
 export function subscribeSSE(
 	path: string,
 	onMessage: (data: unknown) => void,
@@ -161,28 +183,43 @@ export function subscribeSSE(
 	const url = key
 		? `${base}${base.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(key)}`
 		: base;
-	const eventSource = new EventSource(url);
+	const stream = openStream(url);
+	stream.refs++;
+	const type = eventName ?? "message";
 
 	const handler = (event: MessageEvent) => {
+		let data: unknown;
 		try {
-			const data = JSON.parse(event.data);
-			onMessage(data);
+			data = JSON.parse(event.data);
 		} catch {
-			// Ignore unparseable messages
+			return; // Ignore unparseable messages
 		}
+		stream.last.set(type, data);
+		onMessage(data);
 	};
+	const errorHandler = (event: Event) => onError?.(event);
 
-	if (eventName) {
-		eventSource.addEventListener(eventName, handler);
-	} else {
-		eventSource.onmessage = handler;
+	stream.source.addEventListener(type, handler as EventListener);
+	stream.source.addEventListener("error", errorHandler);
+	let closed = false;
+	if (stream.last.has(type)) {
+		const replay = stream.last.get(type);
+		queueMicrotask(() => {
+			if (!closed) onMessage(replay);
+		});
 	}
 
-	eventSource.onerror = (event) => {
-		onError?.(event);
+	return () => {
+		if (closed) return;
+		closed = true;
+		stream.source.removeEventListener(type, handler as EventListener);
+		stream.source.removeEventListener("error", errorHandler);
+		stream.refs--;
+		if (stream.refs === 0) {
+			stream.source.close();
+			if (streams.get(url) === stream) streams.delete(url);
+		}
 	};
-
-	return () => eventSource.close();
 }
 
 /** Build audio URL for playback (with auth query param if needed) */

@@ -107,6 +107,10 @@ export interface ModelInfo {
 	status: ModelStatus;
 	disk_usage_bytes: number;
 	is_loaded: boolean;
+	/** Upstream republished the installed file; re-downloading the installed quant updates it. */
+	update_available: boolean;
+	/** A download is replacing the installed file, which stays in service until it verifies. */
+	updating: boolean;
 }
 
 export interface DownloadProgress {

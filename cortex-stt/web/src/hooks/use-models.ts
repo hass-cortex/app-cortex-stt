@@ -23,7 +23,9 @@ export function useModels() {
 		queryFn: listModels,
 		refetchInterval: (query) => {
 			const data = query.state.data;
-			return data?.some((m) => m.status === "downloading" || m.status === "queued") ? 2000 : false;
+			return data?.some((m) => m.status === "downloading" || m.status === "queued" || m.updating)
+				? 2000
+				: false;
 		},
 	});
 }

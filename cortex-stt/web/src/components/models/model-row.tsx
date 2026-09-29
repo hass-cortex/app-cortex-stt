@@ -1,4 +1,4 @@
-import { Download, FlaskConical, Info, Play, Power, Trash2, X } from "lucide-react";
+import { Download, FlaskConical, Info, Play, Power, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import type { ModelInfo } from "@/api/types";
@@ -46,6 +46,10 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 	const runDownload = useMutationToast(downloadMutation, {
 		success: `Downloading ${model.name}…`,
 		error: "Download failed",
+	});
+	const runUpdate = useMutationToast(downloadMutation, {
+		success: `Updating ${model.name}…`,
+		error: "Update failed",
 	});
 	const runCancel = useMutationToast(cancelMutation, {
 		success: `${model.name} removed from the queue`,
@@ -127,6 +131,27 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 					)}
 					{isDefault && <Badge variant="accent">default</Badge>}
 					{model.status === "error" && <Badge variant="error">error</Badge>}
+					{model.update_available && !model.updating && (
+						<button
+							type="button"
+							aria-label={`Update ${model.name}`}
+							disabled={downloadMutation.isPending}
+							onClick={async () => {
+								const ok = await confirm({
+									title: `Update ${model.name}?`,
+									body: `Upstream republished the ${model.downloaded_quant ?? ""} file. Updating downloads it again (${formatMB(model.size_mb)}); the installed file keeps serving until the new one is verified.`,
+									confirmLabel: "Update model",
+								});
+								if (ok)
+									runUpdate({ modelId: model.id, quant: model.downloaded_quant ?? undefined });
+							}}
+							className="num shrink-0 inline-flex items-center gap-1 px-[7px] py-0.5 rounded-[4px] text-[10.5px] whitespace-nowrap bg-accent-wash text-accent-ink hover:brightness-95 cursor-pointer disabled:opacity-60"
+						>
+							<RefreshCw size={10} strokeWidth={2} />
+							update
+						</button>
+					)}
+					{model.updating && <Badge variant="info">updating</Badge>}
 				</div>
 
 				<div className="flex items-center gap-3 pl-[21px] lg:pl-0 lg:contents">
@@ -240,14 +265,16 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 									</Link>
 								</div>
 
-								<div className="flex justify-end w-6 lg:w-7">{!loaded && <DeleteButton />}</div>
+								<div className="flex justify-end w-6 lg:w-7">
+									{!loaded && !model.updating && <DeleteButton />}
+								</div>
 							</>
 						)}
 					</div>
 				</div>
 			</div>
 
-			{isDownloading && (
+			{(isDownloading || model.updating) && (
 				<div className="mt-2 pl-6">
 					<DownloadProgressBar modelId={model.id} />
 				</div>

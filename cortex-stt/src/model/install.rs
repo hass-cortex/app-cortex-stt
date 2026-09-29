@@ -2,9 +2,9 @@
 //! model set (see CONTEXT.md).
 //!
 //! An **Install** is the transition "download reached Completed → model
-//! usable": remove any other quant (one quant per model), refresh the
-//! engine factory registration, announce the change to HA (live model
-//! sync). It runs on the download task before its slot is released —
+//! usable": remove any other quant (one quant per model), unload the
+//! engine built from the previous file, refresh the engine factory
+//! registration, announce the change to HA (live model sync). It runs on the download task before its slot is released —
 //! while the active entry still blocks a same-model re-download — and
 //! only for Completed, never Failed or Cancelled. Best-effort: a failed
 //! step logs and continues.
@@ -22,6 +22,7 @@ use crate::engine::manager::EngineManager;
 use crate::engine::register::register_downloaded_models;
 use crate::error::AsrError;
 use crate::model::catalog::{ModelCatalog, ResolvedModel, stale_quant_files};
+use crate::model::fingerprint;
 use crate::supervisor::notify_models_changed;
 
 /// Owner of the Install / Uninstall operations. Wired into
@@ -78,10 +79,11 @@ impl ModelInstaller {
     ///
     /// File deletion keeps the status-gated rules in
     /// [`ModelCatalog::delete_model`] (refuses in-flight downloads);
-    /// those errors propagate to the caller.
+    /// those errors propagate to the caller. It runs first, so a refused
+    /// Uninstall leaves the model loaded.
     pub async fn uninstall(&self, model_id: &str) -> Result<(), AsrError> {
-        self.engine_manager.unload(model_id).await;
         self.catalog.delete_model(model_id).await?;
+        self.engine_manager.unload(model_id).await;
 
         // Fire-and-forget so the caller (DELETE handler) returns
         // immediately rather than blocking on the outbound POST.
@@ -94,18 +96,18 @@ impl ModelInstaller {
 
     /// One quant per model: drop any other quant of `model_id` now that
     /// `new_filename` is verified on disk, and unload so the next acquire
-    /// uses the new file. The old quant is only ever removed AFTER a
+    /// uses the new file — whether it replaced another quant or the same
+    /// file (an update). The old quant is only ever removed AFTER a
     /// successful download — a failed download must never destroy a
     /// working model.
     async fn switch_quant(&self, model_id: &str, new_filename: &str) {
         let Ok(ResolvedModel::Catalog(model)) = self.catalog.resolve(model_id) else {
             return; // Custom model: single file, no quants, nothing to switch.
         };
-        let mut removed_old = false;
         for old in stale_quant_files(&self.model_dir, model, new_filename) {
             match tokio::fs::remove_file(&old).await {
                 Ok(()) => {
-                    removed_old = true;
+                    fingerprint::remove(&old).await;
                     info!(model_id = %model_id, path = %old.display(),
                         "removed previous quant after successful download");
                 }
@@ -113,8 +115,6 @@ impl ModelInstaller {
                     error = %e, "failed to remove previous quant"),
             }
         }
-        if removed_old {
-            self.engine_manager.unload(model_id).await;
-        }
+        self.engine_manager.unload(model_id).await;
     }
 }

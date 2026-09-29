@@ -113,6 +113,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
+    // Fingerprint models installed before fingerprints existed, so
+    // upstream republishes show as updates. Background: hashes GBs once.
+    {
+        let model_dir = model_dir.clone();
+        tokio::spawn(async move { cortex_stt::model::fingerprint::backfill(&model_dir).await });
+    }
+
     // Pre-load default model if the resolved config asks (CLI flag OR DB).
     if effective.preload {
         tracing::info!(model = %default_model, "Pre-loading default model");
