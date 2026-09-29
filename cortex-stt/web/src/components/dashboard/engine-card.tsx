@@ -70,7 +70,7 @@ export function EngineCard() {
 						</span>
 					</div>
 					<div className="mt-[7px] flex h-1.5 gap-0.5">
-						<div className="bg-accent rounded-[3px]" style={{ width: `${ramPercent}%` }} />
+						<div className="bg-data rounded-[3px]" style={{ width: `${ramPercent}%` }} />
 						<div className="flex-1 bg-surface-3 rounded-[3px]" />
 					</div>
 				</div>

@@ -427,7 +427,7 @@ function CoverageBar({ composition }: { composition?: SampleSetComposition }) {
 				{devices.map((d, i) => (
 					<div
 						key={d.capture_device}
-						className={i % 2 === 0 ? "bg-accent" : "bg-info"}
+						className={i % 2 === 0 ? "bg-data" : "bg-info"}
 						style={{ width: `${(d.count / composition.total) * 100}%` }}
 					/>
 				))}

@@ -30,11 +30,7 @@ export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
 						: `Error: ${progress.error}`;
 
 	const variant =
-		progress.status === "failed"
-			? "error"
-			: progress.status === "completed"
-				? "success"
-				: "warning";
+		progress.status === "failed" ? "error" : progress.status === "completed" ? "success" : "data";
 
 	return (
 		<div className="space-y-1.5">

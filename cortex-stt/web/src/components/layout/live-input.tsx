@@ -40,7 +40,7 @@ export function LiveInput() {
 							// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length meter; the index is the position
 							key={i}
 							className={`w-[3px] rounded-[1.5px] ${
-								on ? (quiet ? "bg-warning" : "bg-accent") : "bg-border"
+								on ? (quiet ? "bg-warning" : "bg-data") : "bg-border"
 							}`}
 							style={{ height }}
 						/>

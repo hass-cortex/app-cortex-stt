@@ -6,7 +6,9 @@
 	/* Dark (default). Neutral grays so the surfaces sit beside Home
 	   Assistant's own; the red is the only hue. The accent is the brand
 	   mark's Ruby Crimson lifted to #e11d48 so it clears contrast on this
-	   ground; the mark itself stays #be123c at every size. Muted and faint
+	   ground; the mark itself stays #be123c at every size. Red is for the
+	   brand and for actions only: quantities and progress are --data, so
+	   --error stays the one red that means something went wrong. Muted and faint
 	   text hold at least 3:1 on a card (5.0 and 3.7). */
 	--surface-0: #111111;
 	--surface-1: #1a1a1a;
@@ -30,6 +32,8 @@
 	--error: #f87171;
 	--error-wash: #331717;
 	--info: #89dceb;
+	--data: #4d8fe8;
+	--data-ink: #8ab8f5;
 	--chart-grid: #242424;
 	--chart-axis: #333333;
 	--brand: #be123c;
@@ -58,6 +62,8 @@
 	--error: #b91c1c;
 	--error-wash: #fdf1f1;
 	--info: #0e7490;
+	--data: #2f6fd1;
+	--data-ink: #1d4ed8;
 	--chart-grid: #efefef;
 	--chart-axis: #d9d9d9;
 	--brand: #be123c;
@@ -86,6 +92,8 @@
 	--color-error: var(--error);
 	--color-error-wash: var(--error-wash);
 	--color-info: var(--info);
+	--color-data: var(--data);
+	--color-data-ink: var(--data-ink);
 	--color-chart-grid: var(--chart-grid);
 	--color-chart-axis: var(--chart-axis);
 	--color-brand: var(--brand);

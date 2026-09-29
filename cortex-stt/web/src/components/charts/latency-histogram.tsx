@@ -62,10 +62,10 @@ export function LatencyHistogram({ summary, height = 96 }: LatencyHistogramProps
 							{...barProps(index)}
 						>
 							{activeIndex === index && (
-								<div className="absolute inset-y-0 left-1/2 w-px bg-accent-ink/60" />
+								<div className="absolute inset-y-0 left-1/2 w-px bg-data-ink/60" />
 							)}
 							<div
-								className="w-full rounded-[4px] bg-accent"
+								className="w-full rounded-[4px] bg-data"
 								style={{ height: `${Math.max(bin.count === 0 ? 0 : 3, (bin.count / max) * 100)}%` }}
 							/>
 						</button>

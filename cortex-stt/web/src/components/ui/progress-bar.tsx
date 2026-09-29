@@ -2,7 +2,7 @@ interface ProgressBarProps {
 	/** 0 to 100 */
 	value: number;
 	/** Color variant */
-	variant?: "accent" | "success" | "warning" | "error";
+	variant?: "data" | "success" | "warning" | "error";
 	/** Height */
 	size?: "sm" | "md";
 	/** Show percentage label */
@@ -11,7 +11,7 @@ interface ProgressBarProps {
 }
 
 const variantBg: Record<string, string> = {
-	accent: "bg-accent",
+	data: "bg-data",
 	success: "bg-success",
 	warning: "bg-warning",
 	error: "bg-error",
@@ -19,7 +19,7 @@ const variantBg: Record<string, string> = {
 
 export function ProgressBar({
 	value,
-	variant = "accent",
+	variant = "data",
 	size = "md",
 	showLabel = false,
 	className = "",
