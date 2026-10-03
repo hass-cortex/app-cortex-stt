@@ -4,7 +4,7 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/cortex-stt"
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -13,16 +13,15 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 30
-    groups:
-      # Minor/patch bumps only — majors get their own PR for manual review
-      rust-deps:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    # Major bumps only; minor and patch releases are not worth a PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
 
   - package-ecosystem: "bun"
     directory: "/cortex-stt/web"
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -30,10 +29,10 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 30
-    groups:
-      web-deps:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    # Major bumps only; minor and patch releases are not worth a PR.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
