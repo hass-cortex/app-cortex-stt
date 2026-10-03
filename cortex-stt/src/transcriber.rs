@@ -61,7 +61,7 @@ pub struct TranscribeResponse {
     /// Word-level timings; present only when requested and supported.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub words: Vec<SegmentResponse>,
-    /// Output hit a model decode ceiling; `text` is a valid prefix.
+    /// Decode stopped early (a model ceiling or a repetition loop); `text` is a valid prefix.
     pub truncated: bool,
     pub model: String,
     pub duration_ms: u64,

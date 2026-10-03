@@ -196,7 +196,7 @@ fn resolve_language(requested: Option<&str>, declared: &[String]) -> Option<Stri
 /// This file is the only binding to the crate, so a dependency bump
 /// lands here anyway; `the_pinned_version_matches_cargo_toml` fails the
 /// build if the two ever disagree.
-pub const TRANSCRIBE_CPP_VERSION: &str = "0.2.4";
+pub const TRANSCRIBE_CPP_VERSION: &str = "0.3.0";
 
 fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -> AsrError {
     use transcribe_cpp::Error as E;
@@ -212,6 +212,31 @@ fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -
             model_id: model_id.to_string(),
             detail: other.to_string(),
         },
+    }
+}
+
+/// Map a one-shot run's result. A decode stopped early — at the generation
+/// budget, or because the output began repeating — still carries a valid
+/// prefix, so it is a truncated transcript, not a failure.
+fn run_outcome(
+    model_id: &str,
+    max_audio_ms: i64,
+    result: Result<Transcript, transcribe_cpp::Error>,
+) -> Result<TranscriptionResult, AsrError> {
+    use transcribe_cpp::Error as E;
+    match result {
+        Ok(t) => Ok(convert_transcript(t, false)),
+        Err(
+            E::OutputTruncated {
+                partial: Some(partial),
+                ..
+            }
+            | E::OutputRepetition {
+                partial: Some(partial),
+                ..
+            },
+        ) => Ok(convert_transcript(*partial, true)),
+        Err(e) => Err(map_engine_err(model_id, max_audio_ms, e)),
     }
 }
 
@@ -261,15 +286,7 @@ impl SpeechEngine for TranscribeBridge {
         let run = self.build_run_options(options);
         let (model_id, max_audio_ms) = (self.model_id.clone(), self.caps.max_audio_ms);
         let session = self.ensure_session()?;
-        match session.run(samples, &run) {
-            Ok(t) => Ok(convert_transcript(t, false)),
-            // Decode hit the generation budget: surface the valid prefix.
-            Err(transcribe_cpp::Error::OutputTruncated {
-                partial: Some(partial),
-                ..
-            }) => Ok(convert_transcript(*partial, true)),
-            Err(e) => Err(map_engine_err(&model_id, max_audio_ms, e)),
-        }
+        run_outcome(&model_id, max_audio_ms, session.run(samples, &run))
     }
 
     fn stream_begin(&mut self, options: &TranscribeOptions) -> Result<(), AsrError> {
@@ -417,6 +434,61 @@ mod tests {
     #[test]
     fn no_hint_stays_no_hint() {
         assert_eq!(resolve_language(None, &declared(&["en-US"])), None);
+    }
+}
+
+#[cfg(test)]
+mod run_outcome_tests {
+    use super::*;
+    use transcribe_cpp::Error as E;
+
+    fn transcript(text: &str) -> Box<Transcript> {
+        Box::new(Transcript {
+            text: text.to_string(),
+            ..Transcript::default()
+        })
+    }
+
+    fn outcome(result: Result<Transcript, E>) -> Result<TranscriptionResult, AsrError> {
+        run_outcome("m", 30_000, result)
+    }
+
+    #[test]
+    fn a_finished_run_is_not_truncated() {
+        let r = outcome(Ok(*transcript("hello"))).unwrap();
+        assert_eq!((r.text.as_str(), r.truncated), ("hello", false));
+    }
+
+    #[test]
+    fn a_budget_stop_returns_its_prefix() {
+        let r = outcome(Err(E::OutputTruncated {
+            message: String::new(),
+            partial: Some(transcript("hello")),
+        }))
+        .unwrap();
+        assert_eq!((r.text.as_str(), r.truncated), ("hello", true));
+    }
+
+    /// The repetition guard keeps one copy of the loop; that is the
+    /// transcript, not an inference failure.
+    #[test]
+    fn a_repetition_stop_returns_its_prefix() {
+        let r = outcome(Err(E::OutputRepetition {
+            message: String::new(),
+            partial: Some(transcript("turn on the light")),
+        }))
+        .unwrap();
+        assert_eq!((r.text.as_str(), r.truncated), ("turn on the light", true));
+    }
+
+    #[test]
+    fn a_stop_without_a_prefix_is_a_failure() {
+        let err = outcome(Err(E::OutputRepetition {
+            message: "loop".to_string(),
+            partial: None,
+        }))
+        .unwrap_err();
+        assert!(matches!(err, AsrError::InferenceFailed { .. }));
     }
 }
 

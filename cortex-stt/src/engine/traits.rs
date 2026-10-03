@@ -15,7 +15,7 @@ pub struct TranscriptionResult {
     pub segments: Vec<TranscriptionSegment>,
     /// Word-level timings; populated only when requested and supported.
     pub words: Vec<TranscriptionSegment>,
-    /// Output hit a model decode ceiling; `text` is a valid prefix.
+    /// Decode stopped early (a model ceiling or a repetition loop); `text` is a valid prefix.
     pub truncated: bool,
 }
 
