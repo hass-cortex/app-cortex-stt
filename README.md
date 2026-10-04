@@ -23,7 +23,8 @@ Home Assistant app providing multi-model speech-to-text — Whisper, Parakeet, S
 
 ## Screenshots
 
-**Dashboard** — throughput, latency and real-time factor measured on this
+**Dashboard** — today's transcriptions and errors, counted from local
+midnight, plus throughput, latency and real-time factor measured on this
 machine over the last 24 hours.
 
 ![Dashboard](images/dashboard.png)
@@ -39,7 +40,7 @@ measured from this deployment's own history.
 ![Models](images/models.png)
 
 **History** — every transcription, with its audio, waveform and timings;
-select rows to delete a batch of them.
+select rows to add them to the evaluation set or delete them as a batch.
 
 ![History](images/history.png)
 
