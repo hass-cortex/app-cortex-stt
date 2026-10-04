@@ -18,11 +18,11 @@ export function PlayButton({ src }: { src: string }) {
 		const audio = ref.current;
 		if (!audio) return;
 		const stop = () => setPlaying(false);
-		audio.addEventListener("ended", stop);
-		audio.addEventListener("pause", stop);
+		// `emptied`: a new `src` stops playback without firing `pause`.
+		const events = ["ended", "pause", "emptied"] as const;
+		for (const e of events) audio.addEventListener(e, stop);
 		return () => {
-			audio.removeEventListener("ended", stop);
-			audio.removeEventListener("pause", stop);
+			for (const e of events) audio.removeEventListener(e, stop);
 		};
 	}, []);
 

@@ -171,6 +171,12 @@ export function ClipPlayer({
 				}}
 				onSeeked={readPosition}
 				onLoadedMetadata={readPosition}
+				// A new `src` stops playback without firing `pause`; `emptied` is
+				// the only signal that the previous clip is gone.
+				onEmptied={() => {
+					setPlaying(false);
+					setPlayed(0);
+				}}
 			/>
 		</div>
 	);

@@ -1,5 +1,5 @@
 import { Mic, SkipForward } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { evalAudioUrl } from "@/api/client";
 import type { PendingCapture } from "@/api/types";
 import { ClipPlayer } from "@/components/audio/clip-player";
@@ -27,9 +27,11 @@ export function Labeller() {
 	const current: PendingCapture | undefined = pending[0];
 
 	// A fresh capture gets a fresh field — never the previous one's text.
-	useEffect(() => {
+	const [shownId, setShownId] = useState(current?.id);
+	if (current?.id !== shownId) {
+		setShownId(current?.id);
 		setReference("");
-	}, []);
+	}
 
 	const runPromote = useMutationToast(promote, {
 		success: "Sample added",
@@ -51,8 +53,6 @@ export function Labeller() {
 			/>
 		);
 	}
-
-	const done = () => setReference("");
 
 	return (
 		<Card>
@@ -90,20 +90,14 @@ export function Labeller() {
 						variant="ghost"
 						icon={<SkipForward size={14} />}
 						loading={discard.isPending}
-						onClick={() => {
-							runDiscard(current.id);
-							done();
-						}}
+						onClick={() => runDiscard(current.id)}
 					>
 						Skip
 					</Button>
 					<Button
 						disabled={!reference.trim()}
 						loading={promote.isPending}
-						onClick={() => {
-							runPromote({ id: current.id, reference });
-							done();
-						}}
+						onClick={() => runPromote({ id: current.id, reference })}
 					>
 						Confirm and next
 					</Button>
