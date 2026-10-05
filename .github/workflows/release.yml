@@ -31,8 +31,9 @@ jobs:
         with:
           enable-cache: false
 
-      # A stale pin ships a model nobody can install, so a tag fails here
-      # rather than at the user's download. Deliberately not in ci.yml:
+      # A release ships upstream's latest files: pins are commits and keep
+      # installing, but a stale snapshot would freeze old ones into this
+      # version for good. Deliberately not in ci.yml:
       # this depends on upstream and would fail pull requests for reasons
       # unrelated to their changes.
       - name: Re-sync and compare
