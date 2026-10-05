@@ -111,6 +111,8 @@ export interface ModelInfo {
 	update_available: boolean;
 	/** A download is replacing the installed file, which stays in service until it verifies. */
 	updating: boolean;
+	/** Why the last download failed; kept until a retry or a dismiss. */
+	download_error: string | null;
 }
 
 export interface DownloadProgress {

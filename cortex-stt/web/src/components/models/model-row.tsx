@@ -279,6 +279,22 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 					<DownloadProgressBar modelId={model.id} />
 				</div>
 			)}
+
+			{model.download_error && !isDownloading && !isQueued && !model.updating && (
+				<div className="mt-2 pl-6 flex items-start gap-1.5 text-xs text-error">
+					<span className="min-w-0 break-words">
+						{onDisk ? "Update failed" : "Download failed"}: {model.download_error}
+					</span>
+					<button
+						type="button"
+						aria-label="Dismiss download error"
+						onClick={() => cancelMutation.mutate(model.id)}
+						className="shrink-0 p-0.5 text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+					>
+						<X size={12} />
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
