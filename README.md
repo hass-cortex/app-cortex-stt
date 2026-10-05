@@ -90,7 +90,3 @@ Issues and pull requests are welcome.
 
 - [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) — the single GGUF/ggml runtime powering every model family.
 - [handy](https://github.com/cjpais/handy) — the desktop dictation app whose runtime + model catalog this project is built on.
-
-## License
-
-MIT — see [LICENSE.md](LICENSE.md).
