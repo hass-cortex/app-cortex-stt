@@ -2,8 +2,9 @@
 name: Catalog drift
 
 # Surfaces upstream catalog drift as a reviewable PR. Never auto-merges:
-# the vendored SHA-256 pins stay authoritative, and the review is what
-# keeps them so.
+# the vendored pins (a commit + SHA-256 per file) stay authoritative, and
+# the review is what keeps them so. Drift is never urgent — a pinned
+# commit keeps serving its files after upstream moves on.
 
 # yamllint disable-line rule:truthy
 on:
@@ -55,9 +56,8 @@ jobs:
           git add cortex-stt/src/model/catalog.json
           git commit -m "chore(catalog): re-sync vendored snapshot
 
-          Upstream re-uploaded one or more model files, so the pinned
-          SHA-256 digests no longer match. Left unmerged, those models
-          fail their download verification and cannot be installed.
+          Upstream published new model files or models. The current pins
+          keep installing; this moves them to upstream's latest commit.
 
           Review the diff, then merge. Opened automatically."
           git push --force origin "$BRANCH"
@@ -68,7 +68,7 @@ jobs:
             gh pr create \
               --base main --head "$BRANCH" \
               --title "chore(catalog): re-sync vendored snapshot" \
-              --body "Upstream changed one or more model files. The vendored catalog pins a SHA-256 per file, so until this merges those models fail verification and cannot be installed.
+              --body "Upstream published new model files or models. Each model is pinned to a Hugging Face commit, so the current snapshot keeps installing; merging moves the pins to upstream's latest.
 
           Before merging: check the diff for models **removed** upstream (they disappear from the app's catalog) and run \`cargo test --no-default-features\` for the catalog consistency tests.
 

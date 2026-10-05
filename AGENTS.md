@@ -138,7 +138,7 @@ src/
 - **`retention::select_to_delete(candidates, policy)` is pure** — data-in / ids-out, no I/O. **`History::run_retention_sweep(record_policy, audio_policy)` is the single composer** of the gather → `select_to_delete` → apply flow (both policies, one best-effort error rule, returns a `SweepOutcome`); the hourly sweep in `cleanup.rs` and the manual `POST /api/history/cleanup` endpoint both call it rather than re-wiring the ingredients.
 - **`transcriber::Transcriber` is the only composer** of `acquire → infer → save_to_history`. The HTTP handlers (sync / async), the WebSocket handler, and `asr-cli` are thin shells over `transcribe()` and `open_stream()` (the CLI wires an in-memory DB so history rows are discarded); a `StreamSession` holds a pool slot from open to finalize/drop and writes an aborted row when dropped mid-session.
 - **`job::JobStore` owns the async-job lifecycle**: `complete`/`fail` transition only a still-`Processing` job and `cancel` marks a running job `Cancelled` — _terminal is terminal_, so a cancel that lands mid-inference is not clobbered by the worker's later completion. Handlers call these intent transitions; there is no blind status setter.
-- **`model::ModelCatalog` is the single assembly point for model state**: registry + disk scan + live download status (via the shared `ProgressBoard`) + engine load state (via `EngineManager`) — `list_models`/`get_model` return the complete state, so no caller re-joins it. `DownloadManager` is the download facade: `start(model, quant)` and `cancel_download` own path resolution, slot claiming/compensation, and the completion tail (`complete`: Install → slot release → next-launch → delayed progress clear); the `ModelInstaller` is injected at construction.
+- **`model::ModelCatalog` is the single assembly point for model state**: registry + disk scan + live download status (via the shared `ProgressBoard`) + engine load state (via `EngineManager`) — `list_models`/`get_model` return the complete state, so no caller re-joins it. `DownloadManager` is the download facade: `start(model, quant)` and `cancel_download` own path resolution, slot claiming/compensation, and the completion tail (`complete`: Install → slot release → next-launch → delayed clear of a Completed entry; a Failed entry stays, surfacing as `download_error` until a retry or a dismiss via `cancel_download`); the `ModelInstaller` is injected at construction.
 - **`state::AppState::assemble` is the single assembly point of the service object graph** (`ProgressBoard → ModelCatalog → History → Transcriber → ModelInstaller → DownloadManager → Eval → EvalRunner`): `main.rs` and the test harness (`tests/test_helpers.rs`) both call it, so adding a dependency is a one-place change. `api::build_router` is the analogous seam for the route + middleware stack — `tests/api_router_test.rs` exercises the shipped router including auth. `asr-cli` deliberately wires a documented subset (no installer, throwaway history).
 - **`History::metrics_snapshot` owns the metrics aggregate** — one SQL pass computes every history-derived figure; `api/metrics.rs` is a shell that joins in the engine/catalog/key counts. Storage figures likewise come from their owners (`History::audio_disk_usage_bytes`, `Database::disk_usage_bytes`) — handlers never re-derive another module's disk layout.
 - **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (CONTEXT.md). Install (quant switch → engine re-registration → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled (the cancel-flag guard). Uninstall (unload → delete files → HA notify) backs `DELETE /api/models/{id}`.
@@ -356,12 +356,15 @@ models/quants:
 
 ```bash
 cd cortex-stt
-uv run scripts/sync-catalog.py            # fetch Handy main + HF sha256
+uv run scripts/sync-catalog.py            # fetch Handy main, pin each model to an HF commit
 # or pin a source: --source /path/to/catalog.json
 ```
 
-The script rewrites `src/model/catalog.json` (with per-file sha256
-resolved from Hugging Face LFS metadata). Review the diff, run
+The script rewrites `src/model/catalog.json`: every URL is
+`resolve/<commit>/<file>`, and its sha256 and size come from that same
+commit, so a release keeps installing after upstream re-uploads a file
+(ADR 0003). A model moves to a newer commit only when one of its files
+changed. Review the diff, run
 `cargo test --no-default-features` (catalog consistency tests), and
 commit. Models that are not anonymously downloadable (gated repos) are
 skipped with a warning.
@@ -399,10 +402,9 @@ maintainer runbook (cutting beta then stable, troubleshooting).
 
 ### Release tags
 
-**Re-sync the catalog before every tag.** The vendored snapshot pins a
-SHA-256 per model file; when upstream re-uploads one, that model becomes
-un-installable for everyone on the release and the failure reads as a
-corrupt download rather than a stale pin.
+**Re-sync the catalog before every tag** so the release ships the newest
+upstream files. A skipped re-sync is not a breakage — every pin is a
+commit, which keeps serving its files.
 
 ```bash
 uv run scripts/sync-catalog.py

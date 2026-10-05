@@ -75,8 +75,8 @@ use crate::model::types::{DownloadPhase, DownloadProgress};
 /// Maximum number of concurrent model downloads.
 const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 
-/// How long a terminal (Completed/Failed) progress entry lingers so SSE
-/// clients can observe it before it is cleared.
+/// How long a Completed progress entry lingers so SSE clients can observe
+/// it before it is cleared. A Failed entry is kept (see `complete`).
 const PROGRESS_CLEAR_DELAY: Duration = Duration::from_secs(2);
 
 /// A pending download request waiting in the queue.
@@ -344,9 +344,12 @@ impl DownloadManager {
     ///    (Completed progress + file on disk), so the HA reconcile
     ///    triggered by the Install's announce sees the model.
     /// 3. Release the slot and launch the next queued download.
-    /// 4. After an SSE grace window, clear the terminal progress — unless
-    ///    a same-model re-download admitted in that window owns the
+    /// 4. On `Completed`, after an SSE grace window, clear the progress —
+    ///    unless a same-model re-download admitted in that window owns the
     ///    model_id-keyed entry now (it shows a non-terminal status).
+    ///    A `Failed` entry stays until the model is downloaded again or the
+    ///    failure is dismissed (`cancel_download`), so the reason outlives
+    ///    the download that produced it.
     pub(crate) async fn complete(self: &Arc<Self>, dest_path: &Path, terminal: DownloadProgress) {
         let model_id = terminal.model_id.clone();
         let completed = matches!(terminal.status, DownloadPhase::Completed);
@@ -362,6 +365,9 @@ impl DownloadManager {
 
         self.finish_and_launch_next(&model_id).await;
 
+        if !completed {
+            return;
+        }
         tokio::time::sleep(self.progress_clear_delay).await;
         if self
             .get_progress(&model_id)
@@ -773,10 +779,10 @@ mod tests {
     }
 
     /// The completion tail, exercised directly (previously reachable only
-    /// through a real HTTP download): a Failed terminal must release the
-    /// slot and clear its progress entry after the grace window.
+    /// through a real HTTP download): either terminal releases the slot; a
+    /// Completed entry clears after the grace window, a Failed one stays.
     #[tokio::test]
-    async fn complete_releases_slot_and_clears_terminal_progress() {
+    async fn complete_releases_slot_and_keeps_only_a_failure() {
         let tmp = tempfile::tempdir().unwrap();
         let downloads = DownloadManager::with_clear_delay(
             tmp.path().to_path_buf(),
@@ -793,13 +799,30 @@ mod tests {
                 terminal("active-0", DownloadPhase::Failed),
             )
             .await;
+        downloads
+            .complete(
+                &tmp.path().join("active-1.bin"),
+                terminal("active-1", DownloadPhase::Completed),
+            )
+            .await;
 
-        // Slot freed: a fresh claim succeeds.
+        // Slots freed: fresh claims succeed.
         assert!(claimed(
             downloads.try_claim_slot(request(tmp.path(), "new-1")).await
         ));
-        // Terminal progress cleared after the grace window (complete()
-        // awaited it).
+        assert!(claimed(
+            downloads.try_claim_slot(request(tmp.path(), "new-2")).await
+        ));
+        // complete() awaited the grace window: the success is gone, the
+        // failure is still there to be read.
+        assert!(downloads.get_progress("active-1").await.is_none());
+        assert_eq!(
+            downloads.get_progress("active-0").await.map(|p| p.status),
+            Some(DownloadPhase::Failed)
+        );
+
+        // Dismissing it is a cancel of the finished download.
+        downloads.cancel_download("active-0").await.unwrap();
         assert!(downloads.get_progress("active-0").await.is_none());
     }
 

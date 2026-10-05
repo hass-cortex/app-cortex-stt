@@ -81,12 +81,17 @@ impl ModelCatalog {
     /// List all models — catalog entries plus custom GGUFs found on
     /// disk. The reported [`ModelStatus`] reflects live state: in-flight
     /// downloads surface as `Queued` / `Downloading`, models present on
-    /// disk as `Downloaded`, otherwise `Available`.
+    /// disk as `Downloaded`, a failed download of a model not on disk as
+    /// `Error`, otherwise `Available`. A failure carries its reason in
+    /// `download_error` either way.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
         let mut models = Vec::new();
 
         for model in catalog_models() {
-            let phase = self.progress.get(&model.id).await.map(|p| p.status);
+            let (phase, download_error) = match self.progress.get(&model.id).await {
+                Some(p) => (Some(p.status), p.error),
+                None => (None, None),
+            };
             let info = match downloaded_quant(&self.model_dir, model) {
                 // A file on disk stays in service while a download runs for
                 // the model (an update or a quant switch): it is replaced
@@ -102,15 +107,19 @@ impl ModelCatalog {
                     );
                     info.updating = phase.is_some_and(|p| !p.is_terminal());
                     info.update_available = fingerprint::update_available(&path, &q.sha256);
+                    info.download_error = download_error;
                     info
                 }
                 None => {
                     let status = match phase {
                         Some(DownloadPhase::Queued) => ModelStatus::Queued,
+                        Some(DownloadPhase::Failed) => ModelStatus::Error,
                         Some(_) => ModelStatus::Downloading,
                         None => ModelStatus::Available,
                     };
-                    ModelInfo::from_catalog(model, status, None, 0)
+                    let mut info = ModelInfo::from_catalog(model, status, None, 0);
+                    info.download_error = download_error;
+                    info
                 }
             };
             models.push(info);
@@ -388,10 +397,38 @@ mod tests {
             Err(AsrError::DownloadInProgress { .. })
         ));
 
-        progress.set(progress_at(DownloadPhase::Failed)).await;
+        progress.set(failed("checksum mismatch")).await;
         let tiny = catalog.get_model("whisper-tiny").await.unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert!(!tiny.updating);
+        assert_eq!(tiny.download_error.as_deref(), Some("checksum mismatch"));
+    }
+
+    fn failed(reason: &str) -> crate::model::types::DownloadProgress {
+        crate::model::types::DownloadProgress {
+            error: Some(reason.to_string()),
+            ..progress_at(DownloadPhase::Failed)
+        }
+    }
+
+    /// A failed first download must not read as "never tried": the row
+    /// reports `Error` with the reason until a retry or a dismiss.
+    #[tokio::test]
+    async fn failed_download_reports_error_with_its_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        let progress = ProgressBoard::new();
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
+
+        progress.set(failed("checksum mismatch")).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Error);
+        assert_eq!(tiny.download_error.as_deref(), Some("checksum mismatch"));
+
+        progress.remove("whisper-tiny").await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Available);
+        assert_eq!(tiny.download_error, None);
     }
 
     #[tokio::test]

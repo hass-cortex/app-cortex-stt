@@ -58,6 +58,9 @@ pub struct ModelInfo {
     /// A download is replacing the installed file, which stays in service
     /// until the new one verifies.
     pub updating: bool,
+    /// Why the last download of this model failed. Kept until the model is
+    /// downloaded again or the failure is dismissed.
+    pub download_error: Option<String>,
 }
 
 fn to_mb(bytes: u64) -> u64 {
@@ -103,6 +106,7 @@ impl ModelInfo {
             is_loaded: false,
             update_available: false,
             updating: false,
+            download_error: None,
         }
     }
 
@@ -134,6 +138,7 @@ impl ModelInfo {
             is_loaded: false,
             update_available: false,
             updating: false,
+            download_error: None,
         }
     }
 }
