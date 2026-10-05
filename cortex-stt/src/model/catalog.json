@@ -1,6 +1,6 @@
 {
   "catalog_version": 2,
-  "generated_at": "2026-09-28T12:47:33Z",
+  "generated_at": "2026-10-05T13:28:52Z",
   "source": "cjpais/Handy catalog.json",
   "models": [
     {
@@ -189,42 +189,42 @@
           "quant": "Q4_K_M",
           "filename": "canary-180m-flash-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-Q4_K_M.gguf",
-          "sha256": "c8ae5758d7d4dc59c48d816474a33544e362ca52c635f96ee0b4b95e1b48f90c",
+          "sha256": "0bcbac1d05674625393ac6be663a04d34341e39ea14cd172d4cd35d958343da8",
           "size_bytes": 139223744
         },
         {
           "quant": "Q5_K_M",
           "filename": "canary-180m-flash-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-Q5_K_M.gguf",
-          "sha256": "a87992d84aea5329fa5d70f2eb440d3ae4fe47bd774875374ec381472d348299",
+          "sha256": "73c4861a43fe848cc7a64c179c08da04e985efac03f3e4684a3f5e94a1bb33fe",
           "size_bytes": 158704320
         },
         {
           "quant": "Q6_K",
           "filename": "canary-180m-flash-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-Q6_K.gguf",
-          "sha256": "be28948a5f6d93d59d0edc1f9580936ea30b23296130da02b719aee9f3a59e96",
+          "sha256": "c0c6733fb8b268b1774b11778904fad8325334a2d3ab57cb7cd7ecf4b1fb01e0",
           "size_bytes": 176291520
         },
         {
           "quant": "Q8_0",
           "filename": "canary-180m-flash-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-Q8_0.gguf",
-          "sha256": "e13c7f5d0952b056a027cfffec13e3a3a134d1608babed24f983568f141e297c",
+          "sha256": "f942ab746040b531a29ab78ca3afc8dc9564efd8e4c942b5541e53644be9c408",
           "size_bytes": 218447552
         },
         {
           "quant": "F16",
           "filename": "canary-180m-flash-F16.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-F16.gguf",
-          "sha256": "8042593b341836ac711a617cd483bb2ab7fe05eae14ace27b2488d8ce90ab017",
+          "sha256": "ae293ae01819e3279c0e7ea8fb3e814e60ecb0380d68debd11d51e93da328871",
           "size_bytes": 381632192
         },
         {
           "quant": "F32",
           "filename": "canary-180m-flash-F32.gguf",
           "url": "https://huggingface.co/handy-computer/canary-180m-flash-gguf/resolve/main/canary-180m-flash-F32.gguf",
-          "sha256": "f42fce02dc5279545cd540f0e5d51e36b9335b69e11fd98de6e08cc1250fd7ad",
+          "sha256": "244ea53ee99e4763579143f7b0f8d001a42af8300aa1f7b4cbf44520a1314266",
           "size_bytes": 756498112
         }
       ],
@@ -934,42 +934,42 @@
           "quant": "Q4_K_M",
           "filename": "canary-1b-flash-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-Q4_K_M.gguf",
-          "sha256": "2521a615a2b04ab11900d894e1f5c5a70405d85aa74be0806b569b9cc311a707",
+          "sha256": "ba671f83391f22e81bb62b5d3a941d38afef7c14e56cbf24fbb455ca7de81f7a",
           "size_bytes": 677141280
         },
         {
           "quant": "Q5_K_M",
           "filename": "canary-1b-flash-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-Q5_K_M.gguf",
-          "sha256": "7eed3cac92f255a4adbd518c58663d3fbf65984d2619189e593f2d374b05c601",
+          "sha256": "17f438ba2708841d526c1c26bf8b493ee98a01c4405d9a8afeeb47cd713680a9",
           "size_bytes": 769563424
         },
         {
           "quant": "Q6_K",
           "filename": "canary-1b-flash-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-Q6_K.gguf",
-          "sha256": "3faeb99e16c719047df92fbdcc501ab5cd00edfac83a5e6e7cd69b470d650730",
+          "sha256": "f49f6589a7375845a4ba80d490b94479185b9a7fabcd782abfb507d9d78c2fbf",
           "size_bytes": 857603872
         },
         {
           "quant": "Q8_0",
           "filename": "canary-1b-flash-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-Q8_0.gguf",
-          "sha256": "9b99e0881d883467e0a03ceb0968dba888c9f8921b73355143ad8b67931e08ce",
+          "sha256": "b23202a996d716c8d90c2c0da708ef72c9d340eda0e90c9e4a4436064de980ea",
           "size_bytes": 1048131360
         },
         {
           "quant": "F16",
           "filename": "canary-1b-flash-F16.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-F16.gguf",
-          "sha256": "e87e172694fe6d808fa8844961fb7bc77a4a22063936227c62ac76b6fdbf3dcd",
+          "sha256": "2bab1f9907a93a355b530516d787b680838600b9dcb38401c37e3492f988f925",
           "size_bytes": 1785657120
         },
         {
           "quant": "F32",
           "filename": "canary-1b-flash-F32.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-flash-gguf/resolve/main/canary-1b-flash-F32.gguf",
-          "sha256": "888c24f7d67c3c60d00003bf6a1e3123822afbc47927b7ca931d0b4aaf45305b",
+          "sha256": "95983af8aa241b261ae6f59cc2a1d26a214ba2299250517be305c7a8357ea3fb",
           "size_bytes": 3560372000
         }
       ],
@@ -1095,42 +1095,42 @@
           "quant": "Q4_K_M",
           "filename": "canary-1b-Q4_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-Q4_K_M.gguf",
-          "sha256": "ded40db7f9d25e992bf35a0c3c3743e1a7c85d0c30bdbbabd46bca932a47353d",
+          "sha256": "06b173162888d442d50e7ac0f909242c1f05d80004fc33ad3f99a69a09d14616",
           "size_bytes": 729686848
         },
         {
           "quant": "Q5_K_M",
           "filename": "canary-1b-Q5_K_M.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-Q5_K_M.gguf",
-          "sha256": "1139f01aad4ed4208d2c0532cfc25939cbc26cea1e160084c83f40d5b6eaed35",
+          "sha256": "3851e643f3ce996ab4f8b06233c95ad48499c16d48386b8187170465ce69a5c0",
           "size_bytes": 837694272
         },
         {
           "quant": "Q6_K",
           "filename": "canary-1b-Q6_K.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-Q6_K.gguf",
-          "sha256": "ac3a38b09f78e7cfc5ecfcf75b6dd5ca7c77c17669c9c5d6a5f1fb3917b75c73",
+          "sha256": "2dc99af1a0436c28def9f348fa645e5b6106e6c838ce05d735142509e9f09b90",
           "size_bytes": 934167616
         },
         {
           "quant": "Q8_0",
           "filename": "canary-1b-Q8_0.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-Q8_0.gguf",
-          "sha256": "0b5d28516bcde9402d5eba34fc4a79c95b84b27954f05e5f8993d67df2857b62",
+          "sha256": "e43f56067a2683a27147c852a26fc352a6791c240535ed6b6813adc9246186ca",
           "size_bytes": 1162740288
         },
         {
           "quant": "F16",
           "filename": "canary-1b-F16.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-F16.gguf",
-          "sha256": "f40216c503fe14d98b384c31ab18e705fb9c004cb8e6c9976962aae2a369e5ea",
+          "sha256": "f1c45494b21f6fe46af263be635337c5d7d6560ba4627e7b3505e4897ddc0bd1",
           "size_bytes": 2047537728
         },
         {
           "quant": "F32",
           "filename": "canary-1b-F32.gguf",
           "url": "https://huggingface.co/handy-computer/canary-1b-gguf/resolve/main/canary-1b-F32.gguf",
-          "sha256": "b3ec64ca239c1266f83dc8d15ebf6d4b09b2b5aa72a972d3dea1a4c2f3e1fa37",
+          "sha256": "34072fa012f9c037012a95fbb8cfd20d23d9c6c75be21d221f59eb3b13b7d91c",
           "size_bytes": 4086100544
         }
       ],
