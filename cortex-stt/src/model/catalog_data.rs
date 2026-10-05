@@ -115,6 +115,22 @@ mod tests {
             for q in &m.quants {
                 assert_eq!(q.sha256.len(), 64, "{} {} bad sha256", m.id, q.quant);
                 assert!(q.url.starts_with("https://huggingface.co/"));
+                assert!(q.url.ends_with(&format!("/{}", q.filename)));
+                // A branch URL serves whatever upstream uploads next, which
+                // the pinned sha256 then rejects; only a commit stays put.
+                let revision = q
+                    .url
+                    .split("/resolve/")
+                    .nth(1)
+                    .and_then(|r| r.split('/').next());
+                assert!(
+                    revision
+                        .is_some_and(|r| r.len() == 40 && r.bytes().all(|b| b.is_ascii_hexdigit())),
+                    "{} {} is not pinned to a commit: {}",
+                    m.id,
+                    q.quant,
+                    q.url
+                );
             }
         }
     }
