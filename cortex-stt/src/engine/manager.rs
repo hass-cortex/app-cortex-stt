@@ -346,7 +346,17 @@ impl EngineManager {
     }
 
     /// Unload a specific model, freeing its pool resources and load lock.
+    ///
+    /// Waits out an in-flight load of the same model first: that load
+    /// holds the factory and file it started from and inserts its pool
+    /// when done, so unloading before it lands would leave the replaced
+    /// weights serving after an update.
     pub async fn unload(&self, model_id: &str) -> bool {
+        let load_lock = self.load_locks.read().await.get(model_id).cloned();
+        let _guard = match &load_lock {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let present = {
             let mut pools = self.pools.write().await;
             let mut locks = self.load_locks.write().await;

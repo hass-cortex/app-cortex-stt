@@ -162,12 +162,15 @@ impl EvalRunner {
         // and the OOM killer took the addon down mid-run — losing 20
         // samples of work and two partial downloads with it. Both
         // activities were within budget alone; together they were not.
+        // An installed model's update counts too: it reports Downloaded.
         let busy: Vec<String> = self
             .catalog
             .list_models()
             .await
             .into_iter()
-            .filter(|m| matches!(m.status, ModelStatus::Downloading | ModelStatus::Queued))
+            .filter(|m| {
+                m.updating || matches!(m.status, ModelStatus::Downloading | ModelStatus::Queued)
+            })
             .map(|m| m.id)
             .collect();
         if !busy.is_empty() {

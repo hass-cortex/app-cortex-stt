@@ -176,9 +176,10 @@ impl ModelCatalog {
         }
     }
 
-    /// Delete a model's files from disk. Refuses to delete models that
-    /// are currently downloading; succeeds for `Downloaded`, `Custom`,
-    /// or `Error` statuses.
+    /// Delete a model's files from disk. Refuses models with a download
+    /// queued or running (`DownloadInProgress`) and models with nothing on
+    /// disk, including an `Error` row (`ModelFileNotFound`; dismiss that
+    /// via the download cancel).
     pub async fn delete_model(&self, id: &str) -> Result<(), AsrError> {
         let model = self
             .get_model(id)
@@ -193,8 +194,8 @@ impl ModelCatalog {
                     model_id: id.to_string(),
                 });
             }
-            ModelStatus::Downloaded | ModelStatus::Custom | ModelStatus::Error => {}
-            ModelStatus::Available => {
+            ModelStatus::Downloaded | ModelStatus::Custom => {}
+            ModelStatus::Available | ModelStatus::Error => {
                 return Err(AsrError::ModelFileNotFound {
                     path: self.model_dir.join(id),
                 });

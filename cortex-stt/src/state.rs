@@ -82,6 +82,7 @@ impl AppState {
             engine_manager.clone(),
             catalog.clone(),
             db.clone(),
+            progress.clone(),
         );
         let downloads = DownloadManager::new(model_dir, progress, Some(installer.clone()));
         // Evaluation owns its own audio store, decoupled from history's

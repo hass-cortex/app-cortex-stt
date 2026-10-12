@@ -13,7 +13,7 @@ use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{CatalogModel, catalog_models};
 use cortex_stt::model::download_manager::DownloadManager;
 use cortex_stt::model::install::ModelInstaller;
-use cortex_stt::model::types::{DownloadPhase, DownloadProgress};
+use cortex_stt::model::types::{DownloadPhase, DownloadProgress, ModelStatus};
 
 fn mock_factory() -> SharedEngineFactory {
     FakeEngine::new().named("mock").with_text("hello").factory()
@@ -31,6 +31,7 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     model_dir: std::path::PathBuf,
     engine_manager: Arc<EngineManager>,
+    catalog: Arc<ModelCatalog>,
     downloads: Arc<DownloadManager>,
     installer: Arc<ModelInstaller>,
 }
@@ -42,12 +43,19 @@ async fn fixture() -> Fixture {
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let progress = cortex_stt::model::progress::ProgressBoard::new();
     let catalog = ModelCatalog::new(model_dir.clone(), progress.clone(), engine_manager.clone());
-    let installer = ModelInstaller::new(model_dir.clone(), engine_manager.clone(), catalog, db);
+    let installer = ModelInstaller::new(
+        model_dir.clone(),
+        engine_manager.clone(),
+        catalog.clone(),
+        db,
+        progress.clone(),
+    );
     let downloads = DownloadManager::new(model_dir.clone(), progress, Some(installer.clone()));
     Fixture {
         _tmp: tmp,
         model_dir,
         engine_manager,
+        catalog,
         downloads,
         installer,
     }
@@ -183,6 +191,33 @@ async fn a_refused_uninstall_leaves_an_updating_model_loaded() {
     assert!(matches!(err, AsrError::DownloadInProgress { .. }));
     assert!(f.engine_manager.loaded_models().await.contains(&model.id));
     assert!(f.model_dir.join(&model.quants[0].filename).exists());
+}
+
+/// A failed update leaves the installed model with a kept failure. Once
+/// the model is uninstalled, that failure must not turn its row into an
+/// `error` for a download nobody is retrying.
+#[tokio::test]
+async fn uninstall_drops_a_kept_update_failure() {
+    let f = fixture().await;
+    let model = multi_quant_model();
+    std::fs::write(f.model_dir.join(&model.quants[0].filename), b"installed").unwrap();
+    f.downloads
+        .set_progress(DownloadProgress {
+            model_id: model.id.clone(),
+            status: DownloadPhase::Failed,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: Some("SHA-256 mismatch".into()),
+        })
+        .await;
+
+    f.installer.uninstall(&model.id).await.unwrap();
+
+    let row = f.catalog.get_model(&model.id).await.unwrap();
+    assert_eq!(row.status, ModelStatus::Available);
+    assert_eq!(row.download_error, None);
 }
 
 // NOTE: the old `download_manager_install_hook_is_wired_once` test is gone —

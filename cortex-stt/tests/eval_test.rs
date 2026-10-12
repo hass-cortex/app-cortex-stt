@@ -1154,6 +1154,54 @@ async fn a_run_refuses_to_start_while_a_download_is_in_flight() {
     );
 }
 
+/// An update of an installed model is a download too, though the model
+/// reports `downloaded` (with `updating`) throughout.
+#[tokio::test]
+async fn a_run_refuses_to_start_while_an_installed_model_updates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engines = EngineManager::new(EngineManagerConfig::default());
+    engines.register("model-a", factory("a", "ok")).await;
+    let state = test_helpers::test_state_with(engines, tmp.path()).await;
+    let p = state
+        .eval
+        .capture(&wav_bytes(1.0), None, None, None)
+        .await
+        .unwrap();
+    state.eval.promote(&p.id, "ok", None).await.unwrap();
+
+    let tiny = cortex_stt::model::catalog_data::find_model("whisper-tiny").unwrap();
+    std::fs::write(
+        tmp.path().join(&tiny.default_quant_file().filename),
+        b"installed",
+    )
+    .unwrap();
+    state
+        .downloads
+        .set_progress(cortex_stt::model::types::DownloadProgress {
+            model_id: "whisper-tiny".into(),
+            status: cortex_stt::model::types::DownloadPhase::Queued,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        })
+        .await;
+
+    let blocked = state
+        .eval_runner
+        .start(RunRequest {
+            model_ids: vec!["model-a".into()],
+            language: None,
+            sample_ids: None,
+        })
+        .await;
+    assert!(
+        matches!(blocked, Err(AsrError::EvalBlockedByDownload { .. })),
+        "got {blocked:?}"
+    );
+}
+
 /// Poll until the run leaves `Running`, then summarise it.
 async fn await_run(
     state: &Arc<cortex_stt::state::AppState>,

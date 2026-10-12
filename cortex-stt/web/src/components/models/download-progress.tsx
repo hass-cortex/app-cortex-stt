@@ -48,7 +48,11 @@ export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
 							)}
 						</>
 					)}
-					{(progress.status === "downloading" || progress.status === "verifying") && (
+					{/* Queued too: a queued update keeps its row "downloaded", so this
+					    bar is its only cancel. */}
+					{(progress.status === "queued" ||
+						progress.status === "downloading" ||
+						progress.status === "verifying") && (
 						<button
 							type="button"
 							onClick={() => cancelMutation.mutate(modelId)}

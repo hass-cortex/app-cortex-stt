@@ -2,7 +2,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 use tokio::fs;
@@ -13,7 +12,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::error::AsrError;
-use crate::model::download_manager::{DownloadManager, QueuedDownloadRequest};
+use crate::model::download_manager::{CancelToken, DownloadManager, QueuedDownloadRequest};
 use crate::model::fingerprint;
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
@@ -85,8 +84,8 @@ pub(crate) fn part_path(dest_path: &Path) -> PathBuf {
 /// shared state itself (which avoids racing a same-model re-download).
 /// Checked at the chunk boundary and before the verify / install phases
 /// so a cancel issued between phases is honoured, not just mid-stream.
-fn is_cancelled(cancel_flag: &AtomicBool, model_id: &str) -> bool {
-    let cancelled = cancel_flag.load(Ordering::Relaxed);
+fn is_cancelled(cancel_flag: &CancelToken, model_id: &str) -> bool {
+    let cancelled = cancel_flag.is_cancelled();
     if cancelled {
         info!(model_id = %model_id, "download cancelled, stopping");
     }
@@ -178,7 +177,7 @@ pub async fn download_model(
     // already cancelled (a queued request cancelled in the window before its
     // promoted task ran), in which case cancel() owns the state and we must
     // not resurrect a "Downloading" entry it just cleared.
-    if !cancel_flag.load(Ordering::Relaxed) {
+    if !cancel_flag.is_cancelled() {
         downloads.set_progress(initial_progress.clone()).await;
     }
 
@@ -199,13 +198,14 @@ pub async fn download_model(
 
         // The cancel flag is the single authority that cancel() owns this
         // download's teardown (slot, progress, and .part). If it is set —
-        // whether the task ended Cancelled, errored because cancel deleted
-        // the .part mid-verify, or even completed in the instant
-        // before observing it — this task must touch NO shared state: the
-        // model_id-keyed entry/progress may already belong to a same-model
-        // re-download, and the completion tail here would free its slot or
-        // clobber its progress. cancel() does it all.
-        if cancel_flag.load(Ordering::Relaxed) {
+        // whether the task ended Cancelled or errored because cancel
+        // deleted the .part mid-verify — this task must touch NO shared
+        // state: the model_id-keyed entry/progress may already belong to a
+        // same-model re-download, and the completion tail here would free
+        // its slot or clobber its progress. cancel() does it all. A task
+        // that committed is never cancelled, so a renamed file always
+        // reaches the tail.
+        if cancel_flag.is_cancelled() {
             return;
         }
 
@@ -279,7 +279,7 @@ async fn download_task(
     dest_path: &Path,
     expected_sha256: &str,
     model_id: &str,
-    cancel_flag: &AtomicBool,
+    cancel_flag: &CancelToken,
     downloads: &Arc<DownloadManager>,
     config: &DownloadConfig,
     tx: &watch::Sender<DownloadProgress>,
@@ -481,9 +481,11 @@ async fn download_task(
         info!(model_id = %model_id, "SHA-256 verified");
     }
 
-    // Last chance to honour a cancel before we install the model
-    // (rename to the final destination).
-    if is_cancelled(cancel_flag, model_id) {
+    // Commit to installing: from here a cancel is a no-op and the
+    // completion tail owns the end, so a renamed file always gets its
+    // Install.
+    if !cancel_flag.commit() {
+        info!(model_id = %model_id, "download cancelled, stopping");
         return Ok(DownloadOutcome::Cancelled);
     }
 

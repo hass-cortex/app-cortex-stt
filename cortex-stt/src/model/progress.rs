@@ -7,8 +7,9 @@
 //! needs the catalog).
 //!
 //! Note this is deliberately NOT the slot-accounting truth — that is the
-//! manager's queue (`active.len()`). Progress entries linger briefly
-//! after completion so SSE clients can observe the terminal state.
+//! manager's queue (`active.len()`). A Completed entry lingers briefly so
+//! SSE clients can observe it; a Failed one stays until a retry, a
+//! dismiss, an Uninstall or a restart (this board is in memory only).
 //!
 //! [`DownloadManager`]: crate::model::download_manager::DownloadManager
 //! [`ModelCatalog`]: crate::model::catalog::ModelCatalog

@@ -180,6 +180,40 @@ async fn load_state_changes_notify_live_subscribers() {
     );
 }
 
+/// An Install replaces a model's file and factory, then unloads it. A cold
+/// load already in flight was built from the old factory; if it landed
+/// after the unload, the replaced weights would keep serving.
+#[tokio::test]
+async fn unload_during_cold_load_drops_the_pool_that_load_builds() {
+    let manager = EngineManager::new(EngineManagerConfig::default());
+    let old: SharedEngineFactory = Arc::new(|| {
+        std::thread::sleep(Duration::from_millis(200));
+        FakeEngine::new().with_text("old").factory()()
+    });
+    manager.register("model-a", old).await;
+
+    let loading = {
+        let m = manager.clone();
+        tokio::spawn(async move { drop(m.acquire("model-a").await.unwrap()) })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    manager
+        .register("model-a", FakeEngine::new().with_text("new").factory())
+        .await;
+    manager.unload("model-a").await;
+    loading.await.unwrap();
+
+    let mut guard = manager.acquire("model-a").await.unwrap();
+    let result = guard
+        .transcribe(&[0.0; 16000], &TranscribeOptions::default())
+        .unwrap();
+    assert_eq!(
+        result.text, "new",
+        "the pre-update load must not survive the unload"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Model-swap ordering — what the process's resident set sees
 // ---------------------------------------------------------------------------

@@ -2,15 +2,15 @@
 //! model set (see CONTEXT.md).
 //!
 //! An **Install** is the transition "download reached Completed → model
-//! usable": remove any other quant (one quant per model), unload the
-//! engine built from the previous file, refresh the engine factory
-//! registration, announce the change to HA (live model sync). It runs on the download task before its slot is released —
+//! usable": remove any other quant (one quant per model), refresh the
+//! engine factory registration, unload the engine built from the previous
+//! file, announce the change to HA (live model sync). It runs on the download task before its slot is released —
 //! while the active entry still blocks a same-model re-download — and
 //! only for Completed, never Failed or Cancelled. Best-effort: a failed
 //! step logs and continues.
 //!
-//! An **Uninstall** is the mirror: unload the Loaded model, delete its
-//! files, announce to HA.
+//! An **Uninstall** is the mirror: delete the model's files, unload it,
+//! drop a kept download failure, announce to HA.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +23,8 @@ use crate::engine::register::register_downloaded_models;
 use crate::error::AsrError;
 use crate::model::catalog::{ModelCatalog, ResolvedModel, stale_quant_files};
 use crate::model::fingerprint;
+use crate::model::progress::ProgressBoard;
+use crate::model::types::DownloadPhase;
 use crate::supervisor::notify_models_changed;
 
 /// Owner of the Install / Uninstall operations. Wired into
@@ -33,6 +35,7 @@ pub struct ModelInstaller {
     engine_manager: Arc<EngineManager>,
     catalog: Arc<ModelCatalog>,
     db: Arc<Database>,
+    progress: Arc<ProgressBoard>,
 }
 
 impl ModelInstaller {
@@ -41,12 +44,14 @@ impl ModelInstaller {
         engine_manager: Arc<EngineManager>,
         catalog: Arc<ModelCatalog>,
         db: Arc<Database>,
+        progress: Arc<ProgressBoard>,
     ) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
             engine_manager,
             catalog,
             db,
+            progress,
         })
     }
 
@@ -57,10 +62,11 @@ impl ModelInstaller {
     /// file is already verified on disk; nothing upstream can act on a
     /// partial install).
     pub async fn install(&self, model_id: &str, new_filename: &str) {
-        self.switch_quant(model_id, new_filename).await;
+        self.remove_other_quants(model_id, new_filename).await;
 
         // Refresh engine factory registration so the model is usable
-        // without restarting the addon.
+        // without restarting the addon. Before the unload, so the next
+        // acquire builds from the new file.
         let backend_overrides = self
             .db
             .load_settings()
@@ -70,12 +76,13 @@ impl ModelInstaller {
             .unwrap_or_default();
         register_downloaded_models(&self.engine_manager, &self.model_dir, &backend_overrides).await;
         info!(model = %model_id, "Engine factory registered after download");
+        self.engine_manager.unload(model_id).await;
 
         // Announce so HA can add the model's entities without a reload.
         notify_models_changed("model_added", model_id).await;
     }
 
-    /// Uninstall a model: unload, delete its files, announce to HA.
+    /// Uninstall a model: delete its files, unload, announce to HA.
     ///
     /// File deletion keeps the status-gated rules in
     /// [`ModelCatalog::delete_model`] (refuses in-flight downloads);
@@ -84,6 +91,16 @@ impl ModelInstaller {
     pub async fn uninstall(&self, model_id: &str) -> Result<(), AsrError> {
         self.catalog.delete_model(model_id).await?;
         self.engine_manager.unload(model_id).await;
+        // A failed update of the model is moot once the model is gone;
+        // kept, it would turn the row into `error`.
+        if self
+            .progress
+            .get(model_id)
+            .await
+            .is_some_and(|p| p.status == DownloadPhase::Failed)
+        {
+            self.progress.remove(model_id).await;
+        }
 
         // Fire-and-forget so the caller (DELETE handler) returns
         // immediately rather than blocking on the outbound POST.
@@ -95,12 +112,10 @@ impl ModelInstaller {
     }
 
     /// One quant per model: drop any other quant of `model_id` now that
-    /// `new_filename` is verified on disk, and unload so the next acquire
-    /// uses the new file — whether it replaced another quant or the same
-    /// file (an update). The old quant is only ever removed AFTER a
-    /// successful download — a failed download must never destroy a
-    /// working model.
-    async fn switch_quant(&self, model_id: &str, new_filename: &str) {
+    /// `new_filename` is verified on disk. The old quant is only ever
+    /// removed AFTER a successful download — a failed download must never
+    /// destroy a working model.
+    async fn remove_other_quants(&self, model_id: &str, new_filename: &str) {
         let Ok(ResolvedModel::Catalog(model)) = self.catalog.resolve(model_id) else {
             return; // Custom model: single file, no quants, nothing to switch.
         };
@@ -115,6 +130,5 @@ impl ModelInstaller {
                     error = %e, "failed to remove previous quant"),
             }
         }
-        self.engine_manager.unload(model_id).await;
     }
 }

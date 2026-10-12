@@ -55,7 +55,7 @@ Any `.gguf` file placed in the model directory by hand and picked up by a rescan
 The model used when a transcription request omits `model=`. Configured via `/api/engine/default`.
 
 **Install**:
-The transition "download reached Completed → model usable": remove any other quant (one quant per model), unload the model so the next acquire reads the new file, refresh the engine factory registration, announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
+The transition "download reached Completed → model usable": remove any other quant (one quant per model), refresh the engine factory registration, unload the model so the next acquire reads the new file (waiting out a load already in flight, which would otherwise land the old weights), announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Once the task commits to it (just before the new file moves into place), a cancel no longer applies. Best-effort: a failed step logs and continues.
 _Avoid_: "register" alone (the engine-factory step is one part of an Install), "post-download hook", "completion watch" (the old polling mechanism)
 
 **Fingerprint**:
@@ -66,7 +66,7 @@ A re-download of the installed quant after upstream republished the file under t
 _Avoid_: "upgrade" (the quant does not change)
 
 **Uninstall**:
-The mirror operation: unload the Loaded model, delete its files, announce to HA. Deleting files is one step of an Uninstall, not the whole of it.
+The mirror operation: delete the model's files, unload it, drop a kept download failure, announce to HA. Deleting files is one step of an Uninstall, not the whole of it.
 _Avoid_: "delete model" when the whole operation is meant
 
 ### History + retention

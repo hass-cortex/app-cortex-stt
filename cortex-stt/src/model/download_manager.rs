@@ -21,10 +21,12 @@
 //!
 //! ## Cancellation
 //!
-//! Each download carries a shared [`AtomicBool`] cancel flag, recorded in
-//! its `active` entry at claim time and also held by the running task —
-//! so a cancel can reach a download even before its task has spawned, and
-//! there is no window in which one is unstoppable.
+//! Each download carries a shared [`CancelToken`], recorded in its
+//! `active` entry at claim time and also held by the running task — so a
+//! cancel can reach a download even before its task has spawned. The
+//! token's one exception is deliberate: once the task commits to
+//! installing (just before the rename), a cancel is a no-op and the
+//! download finishes like any other.
 //!
 //! [`cancel`](DownloadManager::cancel) owns the ENTIRE teardown; the task
 //! only reads the flag and stops, touching no shared state (so a stalled
@@ -59,7 +61,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -79,6 +81,42 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 /// it before it is cleared. A Failed entry is kept (see `complete`).
 const PROGRESS_CLEAR_DELAY: Duration = Duration::from_secs(2);
 
+/// Decides who owns a download's end, shared by its task and
+/// [`DownloadManager::cancel`]. A cancel wins until the task commits to
+/// installing (just before the rename into place); after that a cancel is
+/// a no-op and the completion tail runs as for any finished download, so
+/// no interleaving leaves a renamed file without its Install.
+#[derive(Debug, Default)]
+pub struct CancelToken(AtomicU8);
+
+const RUNNING: u8 = 0;
+const CANCELLED: u8 = 1;
+const COMMITTED: u8 = 2;
+
+impl CancelToken {
+    /// Ask the download to stop. `false` once the task has committed.
+    pub fn cancel(&self) -> bool {
+        match self
+            .0
+            .compare_exchange(RUNNING, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => true,
+            Err(state) => state == CANCELLED,
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire) == CANCELLED
+    }
+
+    /// Claim the install for the task. `false` if a cancel got there first.
+    pub fn commit(&self) -> bool {
+        self.0
+            .compare_exchange(RUNNING, COMMITTED, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
+
 /// A pending download request waiting in the queue.
 pub struct QueuedDownloadRequest {
     pub model_id: String,
@@ -89,7 +127,7 @@ pub struct QueuedDownloadRequest {
     /// stop cooperatively at its next chunk boundary. Recorded in the
     /// `active` map at claim time so a cancel can reach the download even
     /// before its task has spawned.
-    pub cancel_flag: Arc<AtomicBool>,
+    pub cancel_flag: Arc<CancelToken>,
 }
 
 impl QueuedDownloadRequest {
@@ -100,7 +138,7 @@ impl QueuedDownloadRequest {
             url,
             dest_path,
             sha256,
-            cancel_flag: Arc::new(AtomicBool::new(false)),
+            cancel_flag: Arc::new(CancelToken::default()),
         }
     }
 }
@@ -109,7 +147,7 @@ impl QueuedDownloadRequest {
 /// flag and where its file lands (so `cancel` can remove the `.part`
 /// without re-deriving it from registry metadata).
 struct ActiveDownload {
-    cancel_flag: Arc<AtomicBool>,
+    cancel_flag: Arc<CancelToken>,
     dest_path: PathBuf,
 }
 
@@ -346,7 +384,7 @@ impl DownloadManager {
     /// 3. Release the slot and launch the next queued download.
     /// 4. On `Completed`, after an SSE grace window, clear the progress —
     ///    unless a same-model re-download admitted in that window owns the
-    ///    model_id-keyed entry now (it shows a non-terminal status).
+    ///    model_id-keyed entry now (it shows anything but `Completed`).
     ///    A `Failed` entry stays until the model is downloaded again or the
     ///    failure is dismissed (`cancel_download`), so the reason outlives
     ///    the download that produced it.
@@ -369,10 +407,12 @@ impl DownloadManager {
             return;
         }
         tokio::time::sleep(self.progress_clear_delay).await;
+        // Only this download's own Completed: a re-download admitted in the
+        // window may have published a live entry or its own kept failure.
         if self
             .get_progress(&model_id)
             .await
-            .is_some_and(|p| p.status.is_terminal())
+            .is_some_and(|p| p.status == DownloadPhase::Completed)
         {
             self.remove_progress(&model_id).await;
         }
@@ -394,7 +434,9 @@ impl DownloadManager {
         self.progress.remove(model_id).await;
     }
 
-    /// Whether a model is currently being downloaded or queued.
+    /// Whether the model has any progress entry: queued, in flight, or a
+    /// terminal one still on the board (a lingering Completed or a kept
+    /// Failed).
     pub async fn is_downloading(&self, model_id: &str) -> bool {
         self.progress.contains(model_id).await
     }
@@ -445,7 +487,12 @@ impl DownloadManager {
 
             match q.active.get(model_id) {
                 Some(entry) => {
-                    entry.cancel_flag.store(true, Ordering::Relaxed);
+                    if !entry.cancel_flag.cancel() {
+                        // The task already committed to installing: it owns
+                        // the rest, as for a download that finished.
+                        info!(model_id = %model_id, "cancel arrived after install commit; ignored");
+                        return Ok(None);
+                    }
                     entry.dest_path.clone()
                 }
                 None => {
@@ -624,11 +671,11 @@ mod tests {
         // The same Arc the running download task would hold.
         let flag = Arc::clone(&req.cancel_flag);
         assert!(claimed(downloads.try_claim_slot(req).await));
-        assert!(!flag.load(Ordering::Relaxed));
+        assert!(!flag.is_cancelled());
 
         assert!(downloads.cancel("m").await.unwrap().is_none());
         assert!(
-            flag.load(Ordering::Relaxed),
+            flag.is_cancelled(),
             "cancel must set the shared flag so the task stops cooperatively"
         );
     }
@@ -867,6 +914,73 @@ mod tests {
             ),
             "the re-download's live progress must survive the delayed clear"
         );
+    }
+
+    /// A same-model re-download admitted in the grace window can fail
+    /// fast; the delayed clear of the earlier success must not erase that
+    /// kept failure.
+    #[tokio::test]
+    async fn complete_does_not_clear_a_redownloads_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let downloads = DownloadManager::with_clear_delay(
+            tmp.path().to_path_buf(),
+            ProgressBoard::new(),
+            None,
+            Duration::from_millis(50),
+        );
+        assert!(claimed(
+            downloads.try_claim_slot(request(tmp.path(), "m")).await
+        ));
+
+        let tail = {
+            let downloads = downloads.clone();
+            let dest = tmp.path().join("m.bin");
+            tokio::spawn(async move {
+                downloads
+                    .complete(&dest, terminal("m", DownloadPhase::Completed))
+                    .await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        downloads
+            .set_progress(terminal("m", DownloadPhase::Failed))
+            .await;
+
+        tail.await.unwrap();
+        assert_eq!(
+            downloads.get_progress("m").await.map(|p| p.status),
+            Some(DownloadPhase::Failed)
+        );
+    }
+
+    /// A cancel that lands after the task committed to installing would
+    /// otherwise strand the renamed file without its Install. It must
+    /// leave the download alone: the task keeps its slot and its tail.
+    #[tokio::test]
+    async fn cancel_after_install_commit_leaves_the_download_to_finish() {
+        let tmp = tempfile::tempdir().unwrap();
+        let downloads = manager(tmp.path());
+        let req = request(tmp.path(), "m");
+        let token = Arc::clone(&req.cancel_flag);
+        assert!(claimed(downloads.try_claim_slot(req).await));
+
+        assert!(token.commit());
+        downloads.cancel_download("m").await.unwrap();
+
+        assert!(!token.is_cancelled());
+        assert!(matches!(
+            downloads.try_claim_slot(request(tmp.path(), "m")).await,
+            ClaimOutcome::AlreadyActive
+        ));
+    }
+
+    /// And the converse: a task cannot commit once cancelled.
+    #[test]
+    fn a_cancelled_download_cannot_commit() {
+        let token = CancelToken::default();
+        assert!(token.cancel());
+        assert!(!token.commit());
+        assert!(token.is_cancelled());
     }
 
     #[tokio::test]
