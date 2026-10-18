@@ -300,6 +300,51 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
 // Pending captures
 // ---------------------------------------------------------------------------
 
+/// Upgrade only identities whose precision was recorded at execution time.
+/// Never consult installed files or legacy aliases for historical evidence.
+pub(crate) async fn migrate_variant_ids(db: &Database) -> Result<(), AsrError> {
+    db.connection()
+        .call(|conn| {
+            let tx = conn.transaction()?;
+            let rows = {
+                let mut stmt = tx.prepare(
+                    "SELECT run_id, model_id, quant FROM eval_run_models WHERE quant IS NOT NULL",
+                )?;
+                stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+            for (run, base, quant) in rows {
+                let Some(model) = crate::model::catalog_data::find_model(&base) else {
+                    continue;
+                };
+                if model.quant(&quant).is_none() {
+                    continue;
+                }
+                let variant = crate::model::identity::variant_id(&base, &quant);
+                // No REPLACE/IGNORE: a conflicting cell must roll back the
+                // whole migration, never silently discard historical evidence.
+                tx.execute(
+                    "UPDATE eval_results SET model_id = ?1 WHERE run_id = ?2 AND model_id = ?3",
+                    params![variant, run, base],
+                )?;
+                tx.execute(
+                    "UPDATE eval_run_models SET model_id = ?1 WHERE run_id = ?2 AND model_id = ?3",
+                    params![variant, run, base],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)
+}
+
 pub(super) async fn insert_pending(db: &Arc<Database>, p: PendingCapture) -> Result<(), AsrError> {
     db.connection()
         .call(move |conn| {
@@ -1183,4 +1228,50 @@ pub(super) async fn list_judgements(db: &Arc<Database>) -> Result<Vec<Judgement>
         })
         .await
         .map_err(map_db_err)
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn migration_uses_only_recorded_valid_quants_and_preserves_evidence() {
+        let db = Database::open_in_memory().await.unwrap();
+        migrate(&db).await.unwrap();
+        let model = &crate::model::catalog_data::catalog_models()[0];
+        let base = model.id.clone();
+        let quant = model.default_quant.clone();
+        db.connection().call(move |conn| {
+            for (run, id, q) in [
+                ("known", base.as_str(), Some(quant.as_str())),
+                ("missing", base.as_str(), None),
+                ("invalid", base.as_str(), Some("not-a-quant")),
+                ("custom", "custom", Some(quant.as_str())),
+            ] {
+                conn.execute("INSERT INTO eval_run_models (run_id, model_id, quant) VALUES (?1, ?2, ?3)", params![run, id, q])?;
+                conn.execute("INSERT INTO eval_results (id, run_id, sample_id, model_id, text) VALUES (?1, ?1, 'sample', ?2, 'output')", params![run, id])?;
+            }
+            conn.execute("INSERT INTO eval_judgements (sample_id, output_text, correct) VALUES ('sample', 'output', 1)", [])?;
+            Ok::<_, rusqlite::Error>(())
+        }).await.unwrap();
+        migrate_variant_ids(&db).await.unwrap();
+        migrate_variant_ids(&db).await.unwrap();
+        db.connection().call(move |conn| {
+            let mut stmt = conn.prepare("SELECT m.run_id, m.model_id, r.model_id FROM eval_run_models m JOIN eval_results r ON m.run_id = r.run_id")?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(rows.len(), 4);
+            for (run, id, result_id) in rows {
+                let expected = match run.as_str() {
+                    "known" => crate::model::identity::variant_id(&model.id, &model.default_quant),
+                    "custom" => "custom".into(),
+                    _ => model.id.clone(),
+                };
+                assert_eq!(id, expected);
+                assert_eq!(result_id, expected);
+            }
+            let count: i64 = conn.query_row("SELECT count(*) FROM eval_judgements WHERE correct = 1", [], |r| r.get(0))?;
+            assert_eq!(count, 1);
+            Ok::<_, rusqlite::Error>(())
+        }).await.unwrap();
+    }
 }

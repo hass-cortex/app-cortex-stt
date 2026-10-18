@@ -51,7 +51,7 @@ function Section({
 }: {
 	title: string;
 	note?: string;
-	models: ModelInfo[];
+	models: ModelInfo[][];
 	measured: Map<string, ModelLatency>;
 	defaultModel?: string | null;
 }) {
@@ -67,14 +67,39 @@ function Section({
 			</div>
 			<TableHead />
 			<div className="flex flex-col gap-px">
-				{models.map((model) => (
-					<ModelRow
-						key={model.id}
-						model={model}
-						measured={measured.get(model.id)}
-						isDefault={model.id === defaultModel}
-					/>
-				))}
+				{models.map((group) => {
+					const first = group[0];
+					if (!first) return null;
+					const rows = group.map((model) => (
+						<ModelRow
+							key={model.id}
+							model={model}
+							measured={measured.get(model.id)}
+							isDefault={model.id === defaultModel}
+						/>
+					));
+					if (first.catalog_id === null) return rows;
+					const suffix = first.quant ? ` · ${first.quant}` : "";
+					const name =
+						suffix && first.name.endsWith(suffix)
+							? first.name.slice(0, -suffix.length)
+							: first.name;
+					return (
+						<details
+							key={first.catalog_id}
+							className="border border-border-soft rounded-lg"
+							open={group.some((m) => isOnDisk(m.status) || isInProgress(m.status) || m.updating)}
+						>
+							<summary className="px-3.5 py-2.5 text-[12.5px] text-text-primary cursor-pointer hover:bg-surface-2">
+								{name}
+								<span className="ml-2 num text-[11px] text-text-muted">
+									{group.length} quants · {group.filter((m) => isOnDisk(m.status)).length} on disk
+								</span>
+							</summary>
+							{rows}
+						</details>
+					);
+				})}
 			</div>
 		</div>
 	);
@@ -132,21 +157,37 @@ export function ModelList() {
 	}
 
 	const needle = search.toLowerCase();
-	const filtered = (models ?? []).filter((m) => {
-		if (needle && !m.name.toLowerCase().includes(needle) && !m.id.toLowerCase().includes(needle)) {
+	// Filter and partition whole parents, never hide sibling quants or split
+	// one model across installation sections. Custom IDs use a separate key space.
+	const groups = new Map<string, ModelInfo[]>();
+	for (const model of models ?? []) {
+		const key = model.catalog_id === null ? `custom:${model.id}` : `catalog:${model.catalog_id}`;
+		const group = groups.get(key) ?? [];
+		group.push(model);
+		groups.set(key, group);
+	}
+	const filtered = [...groups.values()].filter((group) => {
+		if (installedOnly && !group.some((m) => isOnDisk(m.status) || isInProgress(m.status)))
 			return false;
-		}
-		if (familyFilter && m.family !== familyFilter) return false;
-		if (languageFilter && !m.languages.includes(languageFilter)) return false;
-		if (installedOnly && !isOnDisk(m.status) && !isInProgress(m.status)) return false;
-		return true;
+		return group.some(
+			(m) =>
+				(!needle ||
+					[m.name, m.id, m.family, ...m.languages].some((v) => v.toLowerCase().includes(needle))) &&
+				(!familyFilter || m.family === familyFilter) &&
+				(!languageFilter || m.languages.includes(languageFilter)),
+		);
 	});
-
-	const inProgress = filtered.filter((m) => isInProgress(m.status));
+	const active = (group: ModelInfo[]) => group.some((m) => isInProgress(m.status) || m.updating);
+	const installed = (group: ModelInfo[]) => group.some((m) => isOnDisk(m.status));
+	const inProgress = filtered.filter(active);
 	const onDisk = filtered
-		.filter((m) => isOnDisk(m.status) && !isInProgress(m.status))
-		.sort((a, b) => Number(b.is_loaded) - Number(a.is_loaded) || a.name.localeCompare(b.name));
-	const catalog = filtered.filter((m) => !isOnDisk(m.status) && !isInProgress(m.status));
+		.filter((g) => installed(g) && !active(g))
+		.sort(
+			(a, b) =>
+				Number(b.some((m) => m.is_loaded)) - Number(a.some((m) => m.is_loaded)) ||
+				(a[0]?.name ?? "").localeCompare(b[0]?.name ?? ""),
+		);
+	const catalog = filtered.filter((g) => !installed(g) && !active(g));
 
 	return (
 		<div className="flex flex-col gap-5">
@@ -193,7 +234,12 @@ export function ModelList() {
 				/>
 			) : (
 				<>
-					<Section title="Downloading" models={inProgress} measured={byModel} />
+					<Section
+						title="Downloading"
+						models={inProgress}
+						measured={byModel}
+						defaultModel={settings?.default_model}
+					/>
 					<Section
 						title="On disk"
 						note="p50 measured from your own history, last 7 days — never from the catalog"

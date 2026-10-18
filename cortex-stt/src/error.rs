@@ -82,11 +82,14 @@ pub enum AsrError {
     #[error("an evaluation run is already in progress")]
     EvalRunInProgress,
 
+    #[error("model {model_id} is reserved by an active evaluation run")]
+    EvalModelInUse { model_id: String },
+
     #[error("evaluation run {run_id} is not the one in flight")]
     EvalRunNotRunning { run_id: String },
 
     #[error(
-        "a model download is in flight ({model_ids}); evaluation measures memory and cannot share the machine with one"
+        "an evaluation candidate is downloading or updating ({model_ids}); wait for it to finish"
     )]
     EvalBlockedByDownload { model_ids: String },
 
@@ -159,6 +162,7 @@ impl AsrError {
             | Self::JobNotComplete { .. }
             | Self::EvalSampleExists { .. }
             | Self::EvalRunInProgress
+            | Self::EvalModelInUse { .. }
             | Self::EvalRunNotRunning { .. }
             | Self::EvalBlockedByDownload { .. } => StatusCode::CONFLICT,
             // 410
@@ -208,6 +212,7 @@ impl AsrError {
             Self::EvalSampleNotFound { .. } => "EVAL_SAMPLE_NOT_FOUND",
             Self::EvalRunNotFound { .. } => "EVAL_RUN_NOT_FOUND",
             Self::EvalRunInProgress => "EVAL_RUN_IN_PROGRESS",
+            Self::EvalModelInUse { .. } => "EVAL_MODEL_IN_USE",
             Self::EvalRunNotRunning { .. } => "EVAL_RUN_NOT_RUNNING",
             Self::EvalBlockedByDownload { .. } => "EVAL_BLOCKED_BY_DOWNLOAD",
             Self::InputTooLong { .. } => "INPUT_TOO_LONG",
@@ -246,6 +251,7 @@ impl AsrError {
             Self::ModelNotFound { model_id }
             | Self::EnginePanic { model_id }
             | Self::ModelNotLoaded { model_id }
+            | Self::EvalModelInUse { model_id }
             | Self::DownloadInProgress { model_id } => Some(model_id.clone()),
             Self::InferenceFailed { model_id, .. }
             | Self::InferenceTimeout { model_id, .. }

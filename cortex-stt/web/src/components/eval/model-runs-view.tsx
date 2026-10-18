@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useModelRuns } from "@/hooks/use-eval";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { formatDuration, formatRelativeTime } from "@/lib/format";
 
 interface ModelRunsViewProps {
@@ -21,6 +22,7 @@ interface ModelRunsViewProps {
  * belongs to the filter bar, so this view has no control of its own.
  */
 export function ModelRunsView({ modelId, onOpenRun }: ModelRunsViewProps) {
+	const modelLabel = useModelLabel();
 	const { data: entries = [], isLoading } = useModelRuns(modelId);
 
 	if (isLoading) return null;
@@ -28,11 +30,11 @@ export function ModelRunsView({ modelId, onOpenRun }: ModelRunsViewProps) {
 	if (entries.length === 0) {
 		return (
 			<Card>
-				<CardHeader title={modelId} />
+				<CardHeader title={modelLabel(modelId)} />
 				<EmptyState
 					icon={<FlaskConical size={28} />}
 					title="Never evaluated"
-					description={`${modelId} has not been in a run yet. Start one and include it as a candidate.`}
+					description={`${modelLabel(modelId)} has not been in a run yet. Start one and include it as a candidate.`}
 				/>
 			</Card>
 		);
@@ -40,7 +42,7 @@ export function ModelRunsView({ modelId, onOpenRun }: ModelRunsViewProps) {
 
 	return (
 		<Card>
-			<CardHeader title={modelId} description={`${entries.length} run(s)`} />
+			<CardHeader title={modelLabel(modelId)} description={`${entries.length} run(s)`} />
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[640px] text-sm">
 					<thead>
@@ -68,6 +70,9 @@ export function ModelRunsView({ modelId, onOpenRun }: ModelRunsViewProps) {
 								</td>
 								<td className="py-2 pr-4 font-mono text-xs text-text-secondary">
 									{e.run.app_version} / tc {e.run.engine_version}
+									<span className="block text-text-muted">
+										quant: {e.summary.quant ?? "unknown"}
+									</span>
 									<span className="block text-text-muted">hint: {e.run.language ?? "none"}</span>
 								</td>
 								<td className="py-2 pr-4 font-mono tabular-nums">

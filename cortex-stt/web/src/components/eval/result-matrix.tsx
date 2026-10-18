@@ -7,6 +7,7 @@ import { ResultGrid } from "@/components/eval/result-grid";
 import { Hint } from "@/components/ui/hint";
 import { Segmented } from "@/components/ui/segmented";
 import { useJudge } from "@/hooks/use-eval";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { diffCharacters, withoutTrailingPunctuation } from "@/lib/transcript";
 import { verdictOf } from "@/lib/verdict";
 
@@ -42,6 +43,7 @@ export function ResultMatrix({
 	onSelectSample,
 	filterNotice,
 }: ResultMatrixProps) {
+	const modelLabel = useModelLabel();
 	// Two readings of one table: what each model heard, and who failed
 	// where. Neither is a summary of the other, so it is a switch rather
 	// than a detail level.
@@ -115,7 +117,7 @@ export function ResultMatrix({
 										key={m}
 										className="py-2 pr-4 text-xs font-medium uppercase tracking-wider text-text-muted whitespace-nowrap"
 									>
-										{m}
+										{modelLabel(m)}
 									</th>
 								))}
 							</tr>

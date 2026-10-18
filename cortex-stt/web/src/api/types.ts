@@ -89,6 +89,8 @@ export interface QuantSummary {
 
 export interface ModelInfo {
 	id: string;
+	catalog_id: string | null;
+	quant: string | null;
 	name: string;
 	description: string;
 	family: ModelFamily;

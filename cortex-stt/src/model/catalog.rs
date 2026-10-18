@@ -2,6 +2,7 @@
 //! models. Combines the vendored catalog, on-disk scanning for custom
 //! GGUFs, and live download status from [`DownloadManager`].
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
 use crate::model::catalog_data::{CatalogModel, QuantFile, catalog_models, find_model};
 use crate::model::fingerprint;
+use crate::model::identity::{find_variant, variant_id};
 use crate::model::progress::ProgressBoard;
 use crate::model::storage::dir_size;
 use crate::model::types::{DownloadPhase, ModelInfo, ModelStatus};
@@ -24,41 +26,33 @@ pub struct ModelCatalog {
     model_dir: PathBuf,
     progress: Arc<ProgressBoard>,
     engines: Arc<EngineManager>,
+    /// Serializes evaluation reservations with update/delete admission.
+    pub(crate) lifecycle: tokio::sync::Mutex<()>,
+    evaluation_models: std::sync::Mutex<HashSet<String>>,
+}
+
+/// Releases candidate reservations even if execution fails or is aborted.
+pub(crate) struct EvaluationModels(Arc<ModelCatalog>);
+
+impl Drop for EvaluationModels {
+    fn drop(&mut self) {
+        self.0
+            .evaluation_models
+            .lock()
+            .expect("evaluation lock poisoned")
+            .clear();
+    }
 }
 
 /// A model id resolved to its identity class — the single notion of
 /// "valid model id". Callers branch on the class instead of memorizing
-/// which lookup accepts custom models (downloads and quant switches are
+/// which lookup accepts custom models (downloads and updates are
 /// catalog-only; load/default accept both).
 pub enum ResolvedModel {
     /// Vendored catalog entry (downloadable; quant rules apply).
-    Catalog(&'static CatalogModel),
+    Catalog(&'static CatalogModel, &'static QuantFile),
     /// Hand-dropped GGUF on disk; no download lifecycle, no quants.
     Custom(PathBuf),
-}
-
-/// The quant of `model` present on disk, if any (one quant per model).
-pub fn downloaded_quant<'a>(model_dir: &Path, model: &'a CatalogModel) -> Option<&'a QuantFile> {
-    model
-        .quants
-        .iter()
-        .find(|q| model_dir.join(&q.filename).is_file())
-}
-
-/// On-disk files of `model`'s other quants — everything that must go to
-/// uphold "one quant per model" once `keep_filename` is the installed one.
-pub fn stale_quant_files(
-    model_dir: &Path,
-    model: &CatalogModel,
-    keep_filename: &str,
-) -> Vec<PathBuf> {
-    model
-        .quants
-        .iter()
-        .filter(|q| q.filename != keep_filename)
-        .map(|q| model_dir.join(&q.filename))
-        .filter(|p| p.is_file())
-        .collect()
 }
 
 impl ModelCatalog {
@@ -71,7 +65,36 @@ impl ModelCatalog {
             model_dir,
             progress,
             engines,
+            lifecycle: tokio::sync::Mutex::new(()),
+            evaluation_models: std::sync::Mutex::new(HashSet::new()),
         })
+    }
+
+    pub fn canonical_id(&self, id: &str) -> String {
+        self.engines.canonical_id(id)
+    }
+
+    pub(crate) fn ensure_mutable(&self, id: &str) -> Result<(), AsrError> {
+        if self
+            .evaluation_models
+            .lock()
+            .expect("evaluation lock poisoned")
+            .contains(id)
+        {
+            return Err(AsrError::EvalModelInUse {
+                model_id: id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Caller holds lifecycle and the evaluation run permit.
+    pub(crate) fn reserve_evaluation(self: &Arc<Self>, ids: &[String]) -> EvaluationModels {
+        *self
+            .evaluation_models
+            .lock()
+            .expect("evaluation lock poisoned") = ids.iter().cloned().collect();
+        EvaluationModels(self.clone())
     }
 
     pub fn model_dir(&self) -> &Path {
@@ -88,41 +111,51 @@ impl ModelCatalog {
         let mut models = Vec::new();
 
         for model in catalog_models() {
-            let (phase, download_error) = match self.progress.get(&model.id).await {
-                Some(p) => (Some(p.status), p.error),
-                None => (None, None),
-            };
-            let info = match downloaded_quant(&self.model_dir, model) {
-                // A file on disk stays in service while a download runs for
-                // the model (an update or a quant switch): it is replaced
-                // only once the new file verifies. Reporting it Downloaded
-                // throughout keeps the HA reconcile from dropping it.
-                Some(q) => {
-                    let path = self.model_dir.join(&q.filename);
-                    let mut info = ModelInfo::from_catalog(
-                        model,
-                        ModelStatus::Downloaded,
-                        Some(q.quant.clone()),
-                        dir_size(&path),
-                    );
-                    info.updating = phase.is_some_and(|p| !p.is_terminal());
-                    info.update_available = fingerprint::update_available(&path, &q.sha256);
-                    info.download_error = download_error;
-                    info
+            for q in &model.quants {
+                // Some upstream entries repeat a quant name; it is one identity.
+                if models
+                    .iter()
+                    .any(|m: &ModelInfo| m.id == variant_id(&model.id, &q.quant))
+                {
+                    continue;
                 }
-                None => {
-                    let status = match phase {
-                        Some(DownloadPhase::Queued) => ModelStatus::Queued,
-                        Some(DownloadPhase::Failed) => ModelStatus::Error,
-                        Some(_) => ModelStatus::Downloading,
-                        None => ModelStatus::Available,
-                    };
-                    let mut info = ModelInfo::from_catalog(model, status, None, 0);
-                    info.download_error = download_error;
-                    info
-                }
-            };
-            models.push(info);
+                let id = variant_id(&model.id, &q.quant);
+                let (phase, download_error) = match self.progress.get(&id).await {
+                    Some(p) => (Some(p.status), p.error),
+                    None => (None, None),
+                };
+                let path = self.model_dir.join(&q.filename);
+                let info = match path.is_file() {
+                    // A file on disk stays in service while a download runs for
+                    // this quant (an update): it is replaced
+                    // only once the new file verifies. Reporting it Downloaded
+                    // throughout keeps the HA reconcile from dropping it.
+                    true => {
+                        let mut info = ModelInfo::from_catalog(
+                            model,
+                            q,
+                            ModelStatus::Downloaded,
+                            dir_size(&path),
+                        );
+                        info.updating = phase.is_some_and(|p| !p.is_terminal());
+                        info.update_available = fingerprint::update_available(&path, &q.sha256);
+                        info.download_error = download_error;
+                        info
+                    }
+                    false => {
+                        let status = match phase {
+                            Some(DownloadPhase::Queued) => ModelStatus::Queued,
+                            Some(DownloadPhase::Failed) => ModelStatus::Error,
+                            Some(_) => ModelStatus::Downloading,
+                            None => ModelStatus::Available,
+                        };
+                        let mut info = ModelInfo::from_catalog(model, q, status, 0);
+                        info.download_error = download_error;
+                        info
+                    }
+                };
+                models.push(info);
+            }
         }
 
         for info in self.scan_custom_models() {
@@ -141,6 +174,7 @@ impl ModelCatalog {
 
     /// Look up a single model by ID.
     pub async fn get_model(&self, id: &str) -> Option<ModelInfo> {
+        let id = self.canonical_id(id);
         self.list_models().await.into_iter().find(|m| m.id == id)
     }
 
@@ -148,10 +182,17 @@ impl ModelCatalog {
     /// id is neither a catalog entry nor a custom GGUF on disk. A single
     /// stat instead of the full `list_models` directory scan.
     pub fn resolve(&self, id: &str) -> Result<ResolvedModel, AsrError> {
-        if let Some(model) = find_model(id) {
-            return Ok(ResolvedModel::Catalog(model));
+        let canonical = self.canonical_id(id);
+        if let Some((model, quant)) = find_variant(&canonical) {
+            return Ok(ResolvedModel::Catalog(model, quant));
         }
-        let custom = self.model_dir.join(format!("{id}.gguf"));
+        // IDs are a single file stem, never a path.
+        if canonical.contains('/') || canonical.contains('\\') || find_model(&canonical).is_some() {
+            return Err(AsrError::ModelNotFound {
+                model_id: id.to_string(),
+            });
+        }
+        let custom = self.model_dir.join(format!("{canonical}.gguf"));
         if custom.is_file() {
             return Ok(ResolvedModel::Custom(custom));
         }
@@ -169,8 +210,9 @@ impl ModelCatalog {
     /// or custom `<id>.gguf`).
     pub fn model_path(&self, id: &str) -> Option<PathBuf> {
         match self.resolve(id).ok()? {
-            ResolvedModel::Catalog(model) => {
-                downloaded_quant(&self.model_dir, model).map(|q| self.model_dir.join(&q.filename))
+            ResolvedModel::Catalog(_, quant) => {
+                let path = self.model_dir.join(&quant.filename);
+                path.is_file().then_some(path)
             }
             ResolvedModel::Custom(path) => Some(path),
         }
@@ -178,8 +220,12 @@ impl ModelCatalog {
 
     /// Delete a model's files from disk. Refuses to delete models that
     /// are currently downloading; succeeds for `Downloaded`, `Custom`,
-    /// or `Error` statuses.
-    pub async fn delete_model(&self, id: &str) -> Result<(), AsrError> {
+    /// or `Error` statuses. The installer holds lifecycle across deletion
+    /// and engine removal, so a new download cannot interleave.
+    pub(crate) async fn delete_model(&self, id: &str) -> Result<(), AsrError> {
+        let canonical = self.canonical_id(id);
+        let id = canonical.as_str();
+        self.ensure_mutable(id)?;
         let model = self
             .get_model(id)
             .await
@@ -251,10 +297,20 @@ mod tests {
     use super::*;
     use crate::model::catalog_data::find_model;
 
+    fn engines() -> Arc<EngineManager> {
+        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        engines.set_aliases(
+            catalog_models()
+                .iter()
+                .map(|m| (m.id.clone(), variant_id(&m.id, &m.default_quant)))
+                .collect(),
+        );
+        engines
+    }
+
     fn make_catalog(model_dir: PathBuf) -> Arc<ModelCatalog> {
         let progress = ProgressBoard::new();
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        ModelCatalog::new(model_dir, progress, engines)
+        ModelCatalog::new(model_dir, progress, engines())
     }
 
     /// The default-quant filename of a known catalog model.
@@ -273,8 +329,8 @@ mod tests {
         let models = catalog.list_models().await;
 
         assert!(!models.is_empty());
-        assert!(models.iter().any(|m| m.id == "whisper-tiny"));
-        assert!(models.iter().any(|m| m.id == "Breeze-ASR-25"));
+        assert!(models.iter().any(|m| m.id == "whisper-tiny@Q8_0"));
+        assert!(models.iter().any(|m| m.id == "Breeze-ASR-25@Q5_K_M"));
     }
 
     #[tokio::test]
@@ -284,7 +340,7 @@ mod tests {
 
         let catalog = make_catalog(tmp.path().to_path_buf());
         let models = catalog.list_models().await;
-        let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
+        let tiny = models.iter().find(|m| m.id == "whisper-tiny@Q8_0").unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert!(tiny.disk_usage_bytes > 0);
         assert_eq!(
@@ -306,7 +362,7 @@ mod tests {
         let progress = ProgressBoard::new();
         progress
             .set(crate::model::types::DownloadProgress {
-                model_id: "whisper-tiny".to_string(),
+                model_id: "whisper-tiny@Q8_0".to_string(),
                 status: DownloadPhase::Completed,
                 downloaded_bytes: 4,
                 total_bytes: 4,
@@ -316,17 +372,16 @@ mod tests {
             })
             .await;
 
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress, engines);
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress, engines());
         let models = catalog.list_models().await;
-        let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
+        let tiny = models.iter().find(|m| m.id == "whisper-tiny@Q8_0").unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert!(tiny.disk_usage_bytes > 0);
     }
 
     fn progress_at(phase: DownloadPhase) -> crate::model::types::DownloadProgress {
         crate::model::types::DownloadProgress {
-            model_id: "whisper-tiny".to_string(),
+            model_id: "whisper-tiny@Q8_0".to_string(),
             status: phase,
             downloaded_bytes: 0,
             total_bytes: 4,
@@ -386,8 +441,7 @@ mod tests {
 
         let progress = ProgressBoard::new();
         progress.set(progress_at(DownloadPhase::Downloading)).await;
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines());
 
         let tiny = catalog.get_model("whisper-tiny").await.unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
@@ -417,15 +471,14 @@ mod tests {
     async fn failed_download_reports_error_with_its_reason() {
         let tmp = tempfile::tempdir().unwrap();
         let progress = ProgressBoard::new();
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines());
 
         progress.set(failed("checksum mismatch")).await;
         let tiny = catalog.get_model("whisper-tiny").await.unwrap();
         assert_eq!(tiny.status, ModelStatus::Error);
         assert_eq!(tiny.download_error.as_deref(), Some("checksum mismatch"));
 
-        progress.remove("whisper-tiny").await;
+        progress.remove("whisper-tiny@Q8_0").await;
         let tiny = catalog.get_model("whisper-tiny").await.unwrap();
         assert_eq!(tiny.status, ModelStatus::Available);
         assert_eq!(tiny.download_error, None);
@@ -453,7 +506,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
 
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
+        let engines = engines();
         engines
             .register("whisper-tiny", FakeEngine::new().factory())
             .await;
@@ -475,7 +528,7 @@ mod tests {
         // Catalog entry resolves even before download.
         assert!(matches!(
             catalog.resolve("whisper-tiny"),
-            Ok(ResolvedModel::Catalog(m)) if m.id == "whisper-tiny"
+            Ok(ResolvedModel::Catalog(m, _)) if m.id == "whisper-tiny"
         ));
         assert!(matches!(
             catalog.resolve("my-custom"),

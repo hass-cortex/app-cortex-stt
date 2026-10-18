@@ -166,6 +166,7 @@ impl Eval {
     pub async fn new(db: Arc<Database>, audio_dir: PathBuf) -> Result<Arc<Self>, AsrError> {
         tokio::fs::create_dir_all(&audio_dir).await?;
         store::migrate(&db).await?;
+        store::migrate_variant_ids(&db).await?;
         for run in store::list_runs(&db, 50).await? {
             if run.status == RunStatus::Running {
                 warn!(run_id = %run.id, "marking interrupted evaluation run as failed");

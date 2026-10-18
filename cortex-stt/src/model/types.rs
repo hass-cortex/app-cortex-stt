@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::catalog_data::{CatalogCapabilities, CatalogModel};
+use crate::model::catalog_data::{CatalogCapabilities, CatalogModel, QuantFile};
+use crate::model::identity::variant_id;
 
 /// High-level availability status of a model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,6 +33,8 @@ pub struct QuantSummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
     pub id: String,
+    pub catalog_id: Option<String>,
+    pub quant: Option<String>,
     pub name: String,
     pub description: String,
     pub family: String,
@@ -71,31 +74,26 @@ impl ModelInfo {
     /// Create a `ModelInfo` from a catalog entry and runtime status.
     pub fn from_catalog(
         model: &CatalogModel,
+        quant: &QuantFile,
         status: ModelStatus,
-        downloaded_quant: Option<String>,
         disk_usage_bytes: u64,
     ) -> Self {
-        let shown_quant = downloaded_quant
-            .as_deref()
-            .and_then(|q| model.quant(q))
-            .unwrap_or_else(|| model.default_quant_file());
+        let downloaded_quant = (status == ModelStatus::Downloaded).then(|| quant.quant.clone());
         Self {
-            id: model.id.clone(),
-            name: model.name.clone(),
+            id: variant_id(&model.id, &quant.quant),
+            catalog_id: Some(model.id.clone()),
+            quant: Some(quant.quant.clone()),
+            name: format!("{} · {}", model.name, quant.quant),
             description: model.description.clone(),
             family: model.family.clone(),
             languages: model.languages.clone(),
             capabilities: model.capabilities.clone(),
-            quants: model
-                .quants
-                .iter()
-                .map(|q| QuantSummary {
-                    quant: q.quant.clone(),
-                    size_mb: to_mb(q.size_bytes),
-                })
-                .collect(),
+            quants: vec![QuantSummary {
+                quant: quant.quant.clone(),
+                size_mb: to_mb(quant.size_bytes),
+            }],
             default_quant: model.default_quant.clone(),
-            size_mb: to_mb(shown_quant.size_bytes),
+            size_mb: to_mb(quant.size_bytes),
             downloaded_quant,
             recommended: model.recommended,
             recommended_rank: model.recommended_rank,
@@ -115,6 +113,8 @@ impl ModelInfo {
     pub fn custom(id: &str, disk_usage_bytes: u64) -> Self {
         Self {
             id: id.to_string(),
+            catalog_id: None,
+            quant: None,
             name: id.to_string(),
             description: "Custom GGUF model".to_string(),
             family: "custom".to_string(),

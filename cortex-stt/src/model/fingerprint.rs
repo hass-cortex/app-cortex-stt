@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-use crate::model::catalog::downloaded_quant;
 use crate::model::catalog_data::catalog_models;
 use crate::model::download::compute_sha256;
 
@@ -60,21 +59,20 @@ pub fn update_available(file: &Path, catalog_sha256: &str) -> bool {
 /// background; each file is hashed once and never again.
 pub async fn backfill(model_dir: &Path) {
     for model in catalog_models() {
-        let Some(quant) = downloaded_quant(model_dir, model) else {
-            continue;
-        };
-        let file = model_dir.join(&quant.filename);
-        if sidecar_path(&file).is_file() {
-            continue;
-        }
-        match compute_sha256(&file).await {
-            Ok(sha) => {
-                record(&file, &sha).await;
-                info!(model_id = %model.id, update_available = !sha.eq_ignore_ascii_case(&quant.sha256),
-                    "fingerprinted installed model");
+        for quant in &model.quants {
+            let file = model_dir.join(&quant.filename);
+            if !file.is_file() || sidecar_path(&file).is_file() {
+                continue;
             }
-            Err(e) => {
-                warn!(model_id = %model.id, error = %e, "failed to fingerprint installed model")
+            match compute_sha256(&file).await {
+                Ok(sha) => {
+                    record(&file, &sha).await;
+                    info!(model_id = %model.id, update_available = !sha.eq_ignore_ascii_case(&quant.sha256),
+                    "fingerprinted installed model");
+                }
+                Err(e) => {
+                    warn!(model_id = %model.id, error = %e, "failed to fingerprint installed model")
+                }
             }
         }
     }

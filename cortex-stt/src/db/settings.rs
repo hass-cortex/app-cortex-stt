@@ -5,6 +5,72 @@ use crate::error::AsrError;
 use crate::settings::Settings;
 
 impl Database {
+    /// Pin legacy catalog identities once and migrate only model references.
+    /// Kept separate from app settings so saving settings cannot erase pins.
+    pub(crate) async fn migrate_model_aliases(
+        &self,
+        candidates: std::collections::HashMap<String, String>,
+    ) -> Result<std::collections::HashMap<String, String>, AsrError> {
+        let _guard = self.settings_write_lock().lock().await;
+        self.connection()
+            .call(move |conn| {
+                use rusqlite::OptionalExtension;
+                let tx = conn.transaction()?;
+                let read = |key: &str| -> rusqlite::Result<Option<String>> {
+                    tx.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+                        .optional()
+                };
+                let json_error = |e| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+                let mut aliases: std::collections::HashMap<String, String> = read("model_variant_aliases")?
+                    .map(|json| serde_json::from_str(&json))
+                    .transpose().map_err(json_error)?.unwrap_or_default();
+                for (base, variant) in candidates {
+                    aliases.entry(base).or_insert(variant);
+                }
+                let stored = read("app_settings")?;
+                let legacy = read("default_model")?;
+                if stored.is_some() || legacy.is_some() {
+                    // Edit the JSON rather than round-tripping Settings: retain
+                    // every unrelated field, including fields from newer builds.
+                    let mut settings: serde_json::Value = match stored {
+                        Some(json) => serde_json::from_str(&json).map_err(json_error)?,
+                        None => serde_json::to_value(Settings::default()).map_err(json_error)?,
+                    };
+                    if !settings.is_object() {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    if let Some(old) = legacy {
+                        // An explicit blob value (especially a canonical ID)
+                        // takes precedence over the obsolete standalone key.
+                        if settings.get("default_model").is_none_or(|v| v.is_null()) {
+                            settings["default_model"] = old.into();
+                        }
+                    }
+                    if let Some(id) = settings.get("default_model").and_then(|v| v.as_str())
+                        && let Some(variant) = aliases.get(id)
+                    {
+                        settings["default_model"] = variant.clone().into();
+                    }
+                    if let Some(overrides) = settings.get_mut("backend_overrides").and_then(|v| v.as_object_mut()) {
+                        for (base, variant) in &aliases {
+                            if let Some(value) = overrides.remove(base) {
+                                overrides.entry(variant.clone()).or_insert(value);
+                            }
+                        }
+                    }
+                    tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_settings', ?1)",
+                        [serde_json::to_string(&settings).map_err(json_error)?])?;
+                    tx.execute("DELETE FROM settings WHERE key = 'default_model'", [])?;
+                }
+                tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('model_variant_aliases', ?1)",
+                    [serde_json::to_string(&aliases).map_err(json_error)?])?;
+                tx.commit()?;
+                Ok(aliases)
+            })
+            .await
+            .map_err(map_db_err)
+    }
+
     /// Load settings, returning defaults on a fresh install.
     pub async fn load_settings(&self) -> Result<Settings, AsrError> {
         Ok(self.load_stored_settings().await?.unwrap_or_default())
@@ -120,5 +186,93 @@ impl Database {
             })
             .await
             .map_err(map_db_err)
+    }
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn model_reference_migration_preserves_explicit_values_and_other_fields() {
+        let db = Database::open_in_memory().await.unwrap();
+        let original = serde_json::json!({
+            "default_model": "base",
+            "backend_overrides": {"base": "old", "base@q": "explicit", "custom": "custom-value"},
+            "future_setting": {"nested": 123}
+        });
+        db.connection()
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO settings VALUES ('app_settings', ?1)",
+                    [original.to_string()],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+        let aliases = HashMap::from([("base".into(), "base@q".into())]);
+        db.migrate_model_aliases(aliases.clone()).await.unwrap();
+        db.migrate_model_aliases(HashMap::from([("base".into(), "base@other".into())]))
+            .await
+            .unwrap();
+        let stored: String = db
+            .connection()
+            .call(|conn| {
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = 'app_settings'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
+            serde_json::json!({
+                "default_model": "base@q",
+                "backend_overrides": {"base@q": "explicit", "custom": "custom-value"},
+                "future_setting": {"nested": 123}
+            })
+        );
+        assert_eq!(
+            db.migrate_model_aliases(HashMap::new()).await.unwrap(),
+            aliases
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_default_migrates_but_does_not_replace_explicit_default() {
+        for explicit in [None, Some("base@explicit"), Some("custom")] {
+            let db = Database::open_in_memory().await.unwrap();
+            let value = serde_json::json!({"default_model": explicit}).to_string();
+            db.connection()
+                .call(move |conn| {
+                    conn.execute("INSERT INTO settings VALUES ('app_settings', ?1)", [value])?;
+                    conn.execute("INSERT INTO settings VALUES ('default_model', 'base')", [])?;
+                    Ok::<_, rusqlite::Error>(())
+                })
+                .await
+                .unwrap();
+            db.migrate_model_aliases(HashMap::from([("base".into(), "base@q".into())]))
+                .await
+                .unwrap();
+            let stored: String = db
+                .connection()
+                .call(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM settings WHERE key = 'app_settings'",
+                        [],
+                        |r| r.get(0),
+                    )
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&stored).unwrap()["default_model"],
+                explicit.unwrap_or("base@q")
+            );
+        }
     }
 }

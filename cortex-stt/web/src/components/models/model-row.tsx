@@ -1,5 +1,4 @@
 import { Download, FlaskConical, Info, Play, Power, RefreshCw, Trash2, X } from "lucide-react";
-import { useState } from "react";
 import { Link } from "react-router";
 import type { ModelInfo } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
@@ -23,18 +22,6 @@ interface ModelRowProps {
 }
 
 const cell = "num text-[11.5px] text-text-secondary";
-
-/** The download API keys on the quant NAME, so two catalog entries sharing
- *  one are not two choices — offering both duplicates a React key and
- *  cannot change what gets fetched. */
-function uniqueQuants(quants: ModelInfo["quants"]): ModelInfo["quants"] {
-	const seen = new Set<string>();
-	return quants.filter((q) => {
-		if (seen.has(q.quant)) return false;
-		seen.add(q.quant);
-		return true;
-	});
-}
 
 export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 	const downloadMutation = useDownloadModel();
@@ -69,7 +56,6 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 	});
 
 	const confirm = useConfirm();
-	const [quant, setQuant] = useState(model.default_quant);
 
 	const DeleteButton = () => (
 		<button
@@ -142,8 +128,7 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 									body: `Upstream republished the ${model.downloaded_quant ?? ""} file. Updating downloads it again (${formatMB(model.size_mb)}); the installed file keeps serving until the new one is verified.`,
 									confirmLabel: "Update model",
 								});
-								if (ok)
-									runUpdate({ modelId: model.id, quant: model.downloaded_quant ?? undefined });
+								if (ok) runUpdate({ modelId: model.id });
 							}}
 							className="num shrink-0 inline-flex items-center gap-1 px-[7px] py-0.5 rounded-[4px] text-[10.5px] whitespace-nowrap bg-accent-wash text-accent-ink hover:brightness-95 cursor-pointer disabled:opacity-60"
 						>
@@ -158,29 +143,10 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 					<span className={`${cell} w-24 hidden lg:block truncate`}>{model.family}</span>
 					<span className={`${cell} hidden sm:block lg:hidden truncate`}>{model.family}</span>
 
-					{onDisk ? (
-						<span className={`${cell} w-[62px] hidden lg:block`}>{model.downloaded_quant}</span>
-					) : (
-						<select
-							value={quant}
-							onChange={(e) => setQuant(e.target.value)}
-							disabled={uniqueQuants(model.quants).length <= 1}
-							className="num w-[62px] h-6 px-1.5 hidden lg:block bg-surface-3 border border-border rounded-[5px] text-[10.5px] text-text-secondary cursor-pointer"
-						>
-							{uniqueQuants(model.quants).map((q) => (
-								<option key={q.quant} value={q.quant}>
-									{q.quant}
-								</option>
-							))}
-						</select>
-					)}
+					<span className={`${cell} w-[62px] hidden lg:block`}>{model.quant ?? "—"}</span>
 
 					<span className={`${cell} lg:w-[62px] lg:text-right whitespace-nowrap min-w-0 truncate`}>
-						{formatMB(
-							onDisk
-								? model.size_mb
-								: (model.quants.find((q) => q.quant === quant)?.size_mb ?? model.size_mb),
-						)}
+						{formatMB(model.size_mb)}
 					</span>
 					<span className={`${cell} w-[42px] text-right hidden xl:block`}>
 						{model.languages.length}
@@ -212,7 +178,7 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 									size="sm"
 									variant="secondary"
 									icon={<Download size={13} strokeWidth={1.8} />}
-									onClick={() => runDownload({ modelId: model.id, quant })}
+									onClick={() => runDownload({ modelId: model.id })}
 									loading={downloadMutation.isPending}
 								>
 									Download

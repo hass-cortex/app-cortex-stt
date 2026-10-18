@@ -62,8 +62,9 @@ Click the Home Assistant My button below to open the app on your Home Assistant 
 ### 1. Download a model
 
 Open the **Cortex STT** panel from the sidebar → **Models** tab → pick a
-model (and optionally a quantization level — smaller = faster/less RAM,
-larger = more accurate) → **Download**. `SenseVoiceSmall` is a good
+model, expand its quantization levels, and click **Download** for each
+quant you want. Multiple quants can stay installed and serve requests
+independently. Smaller files usually use less RAM. `SenseVoiceSmall` is a good
 first choice. See the
 [transcribe.cpp model docs](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models)
 for per-model cards with sizes, supported languages, and use-case notes.
@@ -132,8 +133,19 @@ History with the capture device `web-transcribe`.
 **Models** — the installable catalog plus what is on disk. The `MEASURED
 p50` and `RUNS` columns come from this deployment's own history over the
 last seven days; a model that has never run here shows `—` rather than a
-borrowed score. Filter by family or language, pick a quantization when
-downloading, and load or unload a model without restarting the app.
+borrowed score. Filter by family or language, expand a model to manage
+each quant independently, and load or unload it without restarting the app.
+Evaluation lists installed quants separately as **Model name · Quant**.
+Downloads remain separate from evaluation, and candidates run sequentially.
+Updates and deletion of selected candidates are blocked until the run ends.
+
+**Upgrading from single-quant installations:** saved defaults and backend
+settings migrate to the installed quant. Old model IDs remain pinned aliases;
+deleting that quant makes requests fail until it is reinstalled, not switch
+to another quant. Existing evaluation results retain their recorded quant,
+or show **quant unknown** when none was recorded. Old transcription history
+is kept without guessing its quant. Home Assistant creates separate entities
+for the new quant IDs: reselect the STT entity in affected Assist pipelines.
 
 ![History](https://raw.githubusercontent.com/hass-cortex/app-cortex-stt/main/images/history.png)
 

@@ -92,6 +92,7 @@ impl Drop for LoadReservation {
 /// than [`EngineManagerConfig::idle_timeout`].
 pub struct EngineManager {
     config: RwLock<EngineManagerConfig>,
+    aliases: std::sync::RwLock<HashMap<String, String>>,
     factories: RwLock<HashMap<String, SharedEngineFactory>>,
     pools: RwLock<HashMap<String, LoadedModel>>,
     /// Per-model load coordination locks. The first request to load a
@@ -113,12 +114,26 @@ impl EngineManager {
         let (events, _) = broadcast::channel(16);
         Arc::new(Self {
             config: RwLock::new(config),
+            aliases: std::sync::RwLock::new(HashMap::new()),
             factories: RwLock::new(HashMap::new()),
             pools: RwLock::new(HashMap::new()),
             load_locks: RwLock::new(HashMap::new()),
             loading: Arc::new(StdMutex::new(HashSet::new())),
             events,
         })
+    }
+
+    pub fn set_aliases(&self, aliases: HashMap<String, String>) {
+        *self.aliases.write().expect("aliases lock poisoned") = aliases;
+    }
+
+    pub fn canonical_id(&self, id: &str) -> String {
+        self.aliases
+            .read()
+            .expect("aliases lock poisoned")
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| id.to_string())
     }
 
     /// Subscribe to "engine state changed" notifications. Each event is a
@@ -159,9 +174,16 @@ impl EngineManager {
     /// This does **not** load the model — it will be lazily loaded on
     /// the first [`acquire`](Self::acquire) call.
     pub async fn register(&self, model_id: impl Into<String>, factory: SharedEngineFactory) {
-        let model_id = model_id.into();
+        let model_id = self.canonical_id(&model_id.into());
         debug!(model_id = %model_id, "registering engine factory");
         self.factories.write().await.insert(model_id, factory);
+        self.notify_changed();
+    }
+
+    pub async fn unregister(&self, model_id: &str) {
+        let id = self.canonical_id(model_id);
+        self.factories.write().await.remove(&id);
+        self.unload(&id).await;
         self.notify_changed();
     }
 
@@ -180,6 +202,8 @@ impl EngineManager {
     /// callers attributing acquire latency (pool wait vs cold load) don't
     /// have to guess from wall-clock heuristics.
     pub async fn acquire_traced(&self, model_id: &str) -> Result<(PoolGuard, bool), AsrError> {
+        let canonical = self.canonical_id(model_id);
+        let model_id = canonical.as_str();
         let acquire_timeout = self.config.read().await.acquire_timeout;
 
         // Fast path: model already loaded.
@@ -347,6 +371,8 @@ impl EngineManager {
 
     /// Unload a specific model, freeing its pool resources and load lock.
     pub async fn unload(&self, model_id: &str) -> bool {
+        let canonical = self.canonical_id(model_id);
+        let model_id = canonical.as_str();
         let present = {
             let mut pools = self.pools.write().await;
             let mut locks = self.load_locks.write().await;
@@ -370,7 +396,10 @@ impl EngineManager {
 
     /// Returns whether a specific model is currently loaded.
     pub async fn is_loaded(&self, model_id: &str) -> bool {
-        self.pools.read().await.contains_key(model_id)
+        self.pools
+            .read()
+            .await
+            .contains_key(&self.canonical_id(model_id))
     }
 
     /// Returns the IDs of all currently loaded models.

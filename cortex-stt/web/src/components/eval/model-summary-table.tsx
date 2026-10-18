@@ -3,6 +3,7 @@ import type { ModelSummary, RunSummary } from "@/api/types";
 import { MemoryFigure } from "@/components/eval/memory-figure";
 import { Badge } from "@/components/ui/badge";
 import { SortHeader } from "@/components/ui/sort-header";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { type SortColumn, useTableSort } from "@/hooks/use-table-sort";
 import { formatDuration } from "@/lib/format";
 
@@ -40,6 +41,7 @@ const SORT_COLUMNS: Record<string, SortColumn<ModelSummary>> = {
  * would leave every measurement stranded on another screen.
  */
 export function ModelSummaryTable({ summary }: { summary: RunSummary }) {
+	const modelLabel = useModelLabel();
 	const { run, models } = summary;
 	const sort = useTableSort(models, SORT_COLUMNS);
 	const showChanged = models.some((m) => m.changed_from_previous !== null);
@@ -98,7 +100,12 @@ export function ModelSummaryTable({ summary }: { summary: RunSummary }) {
 					<tbody>
 						{sort.rows.map((m) => (
 							<tr key={m.model_id} className="border-t border-border">
-								<td className="py-2 pr-4 text-text-primary">{m.model_id}</td>
+								<td className="py-2 pr-4 text-text-primary">
+									{modelLabel(m.model_id)}
+									<span className="block text-xs text-text-muted">
+										Recorded quant: {m.quant ?? "unknown"}
+									</span>
+								</td>
 								<td className="py-2 pr-4 font-mono tabular-nums">{score(m)}</td>
 								<td className="py-2 pr-4 font-mono tabular-nums">
 									{m.median_rtf === null ? "—" : `${m.median_rtf.toFixed(2)}×`}
@@ -152,7 +159,7 @@ export function ModelSummaryTable({ summary }: { summary: RunSummary }) {
 						.filter((m) => m.failure_reason)
 						.map((m) => (
 							<li key={m.model_id}>
-								{m.model_id}: {m.failure_reason}
+								{modelLabel(m.model_id)}: {m.failure_reason}
 							</li>
 						))}
 				</ul>

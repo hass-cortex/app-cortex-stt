@@ -61,7 +61,10 @@ export function NewRunDialog({
 	const [sampleQuery, setSampleQuery] = useState("");
 
 	const installed = useMemo(
-		() => models.filter((m: ModelInfo) => m.status === "downloaded" || m.status === "custom"),
+		() =>
+			models.filter(
+				(m: ModelInfo) => !m.updating && (m.status === "downloaded" || m.status === "custom"),
+			),
 		[models],
 	);
 	// Declared languages match too: "zh" is how you reach the candidates
@@ -252,7 +255,7 @@ export function NewRunDialog({
 												{selected.has(m.id) ? "\u2611" : "\u2610"}
 											</span>
 											<span className="flex-1 min-w-0 truncate text-sm text-text-primary">
-												{m.id}
+												{m.name}
 											</span>
 											<span className="text-xs text-text-muted font-mono tabular-nums">
 												{m.size_mb}MB

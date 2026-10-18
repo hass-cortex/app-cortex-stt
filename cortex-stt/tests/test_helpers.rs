@@ -21,6 +21,18 @@ pub async fn test_state_full(
     model_dir: &Path,
     data_dir: &Path,
 ) -> Arc<AppState> {
+    // A registered fake engine stands in for an installed file as well
+    // as inference. Evaluation admits installed candidates only.
+    for id in engine_manager.registered_models().await {
+        if cortex_stt::model::catalog_data::find_model(&id).is_none()
+            && cortex_stt::model::identity::find_variant(&id).is_none()
+        {
+            let file = model_dir.join(format!("{id}.gguf"));
+            if !file.exists() {
+                std::fs::write(file, b"fake model").unwrap();
+            }
+        }
+    }
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     AppState::assemble(
         db,

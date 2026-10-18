@@ -22,6 +22,7 @@ use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{catalog_models, find_model};
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
 use cortex_stt::model::download_manager::{DownloadManager, QueuedDownloadRequest};
+use cortex_stt::model::identity::{find_variant, variant_id};
 use cortex_stt::model::progress::ProgressBoard;
 use cortex_stt::model::types::ModelStatus;
 use cortex_stt::settings::Settings;
@@ -105,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     std::fs::create_dir_all(&cli.model_dir)?;
 
     // No installer: the CLI drives downloads directly and has no engine
@@ -115,7 +116,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The CLI never keeps models loaded across commands; a default manager
     // satisfies the catalog's load-state source (is_loaded stays false).
     let engines = EngineManager::new(EngineManagerConfig::default());
+    // Like history, aliases are a snapshot for this one-shot command.
+    // Never write to the running service's database from this test tool.
+    let db = Database::open_in_memory().await?;
+    engines.set_aliases(cortex_stt::model::identity::migrate(&db, &cli.model_dir).await?);
     let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines);
+
+    match &mut cli.command {
+        Command::Transcribe { model_id, .. }
+        | Command::Stream { model_id, .. }
+        | Command::Test { model_id, .. }
+        | Command::Verify {
+            model_id: Some(model_id),
+        } => *model_id = catalog.canonical_id(model_id),
+        _ => {}
+    }
 
     match cli.command {
         Command::List => cmd_list(&catalog).await,
@@ -213,12 +228,21 @@ async fn cmd_download(
     catalog: &ModelCatalog,
     downloads: &Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let model = find_model(model_id).ok_or_else(|| format!("Model not in catalog: {model_id}"))?;
-    let quant_file = match quant {
-        Some(q) => model
-            .quant(q)
-            .ok_or_else(|| format!("Model {model_id} has no quant {q}"))?,
-        None => model.default_quant_file(),
+    let (model, quant_file) = match find_variant(model_id) {
+        Some((model, file)) => {
+            if quant.is_some_and(|q| q != file.quant) {
+                return Err("quant does not match the model variant ID".into());
+            }
+            (model, file)
+        }
+        None => {
+            let model =
+                find_model(model_id).ok_or_else(|| format!("Model not in catalog: {model_id}"))?;
+            let file = model
+                .quant(quant.unwrap_or(&model.default_quant))
+                .ok_or_else(|| format!("Model {model_id} has no requested quant"))?;
+            (model, file)
+        }
     };
 
     let dest_path = catalog.model_dir().join(&quant_file.filename);
@@ -240,7 +264,7 @@ async fn cmd_download(
 
     // One-shot CLI: the request's fresh cancel flag stays false.
     let request = QueuedDownloadRequest::new(
-        model_id.to_string(),
+        variant_id(&model.id, &quant_file.quant),
         quant_file.url.clone(),
         dest_path.clone(),
         quant_file.sha256.clone(),

@@ -330,6 +330,7 @@ async fn a_candidate_that_will_not_load_is_a_result_not_an_abort() {
     engines.register("good", factory("good", "打開大燈")).await;
     // "missing" is never registered — acquiring it fails like a model
     // that cannot fit in memory does.
+    std::fs::write(tmp.path().join("missing.gguf"), b"unloadable model").unwrap();
     let state = test_helpers::test_state_with(engines, tmp.path()).await;
 
     let p = state
@@ -1098,10 +1099,10 @@ async fn the_sample_list_reports_what_deleting_would_destroy() {
     assert_eq!((f.run_count, f.result_count), (0, 0), "free to delete");
 }
 
-/// A run measures resident memory, so it must not share the machine with
-/// a download. Both fit alone; together they took the addon down.
+/// Only a selected candidate's download blocks the run; unrelated quants
+/// remain independently manageable.
 #[tokio::test]
-async fn a_run_refuses_to_start_while_a_download_is_in_flight() {
+async fn a_run_refuses_a_downloading_candidate_but_allows_unrelated_downloads() {
     let tmp = tempfile::tempdir().unwrap();
     let engines = EngineManager::new(EngineManagerConfig::default());
     engines.register("model-a", factory("a", "ok")).await;
@@ -1130,7 +1131,7 @@ async fn a_run_refuses_to_start_while_a_download_is_in_flight() {
     state
         .downloads
         .set_progress(cortex_stt::model::types::DownloadProgress {
-            model_id: "whisper-tiny".into(),
+            model_id: "whisper-tiny@Q8_0".into(),
             status: cortex_stt::model::types::DownloadPhase::Downloading,
             downloaded_bytes: 1,
             total_bytes: 100,
@@ -1140,10 +1141,21 @@ async fn a_run_refuses_to_start_while_a_download_is_in_flight() {
         })
         .await;
 
-    let blocked = state
+    let unrelated = state
         .eval_runner
         .start(RunRequest {
             model_ids: vec!["model-a".into()],
+            language: None,
+            sample_ids: None,
+        })
+        .await
+        .unwrap();
+    await_run(&state, &unrelated).await;
+
+    let blocked = state
+        .eval_runner
+        .start(RunRequest {
+            model_ids: vec!["whisper-tiny@Q8_0".into()],
             language: None,
             sample_ids: None,
         })
@@ -1263,6 +1275,7 @@ async fn a_cancelled_run_stops_early_and_keeps_its_results() {
 #[tokio::test]
 async fn cancel_only_applies_to_the_run_in_flight() {
     let (state, _tmp) = test_helpers::test_state().await;
+    std::fs::write(_tmp.path().join("default.gguf"), b"unloadable model").unwrap();
     assert!(!state.eval_runner.cancel("no-such-run").await);
 
     let p = state
@@ -1341,4 +1354,177 @@ async fn a_run_closes_before_it_puts_the_working_set_back() {
         "the run never put the working set back: {:?}",
         state.engine_manager.loaded_models().await
     );
+}
+
+#[tokio::test]
+async fn sibling_quants_serve_and_evaluate_independently_and_pin_legacy_requests() {
+    use cortex_stt::model::catalog_data::find_model;
+    use cortex_stt::model::types::{DownloadPhase, DownloadProgress, ModelStatus};
+    use cortex_stt::transcriber::TranscribeRequest;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let model = find_model("whisper-tiny").unwrap();
+    for (quant, bytes) in [
+        ("Q4_K_M", b"small".as_slice()),
+        ("Q8_0", b"larger file"),
+        ("F16", b"other"),
+    ] {
+        std::fs::write(
+            tmp.path().join(&model.quant(quant).unwrap().filename),
+            bytes,
+        )
+        .unwrap();
+    }
+    let engines = EngineManager::new(EngineManagerConfig::default());
+    let state = test_helpers::test_state_with(engines.clone(), tmp.path()).await;
+    for (id, text) in [
+        ("whisper-tiny@Q4_K_M", "low precision"),
+        ("whisper-tiny@Q8_0", "high precision"),
+    ] {
+        engines
+            .register(
+                id,
+                FakeEngine::new()
+                    .with_text(text)
+                    .slow(Duration::from_millis(120))
+                    .factory(),
+            )
+            .await;
+    }
+    let low = "whisper-tiny@Q4_K_M";
+    let high = "whisper-tiny@Q8_0";
+    engines.acquire(high).await.unwrap();
+    state.installer.install(low).await;
+    assert!(
+        engines.is_loaded(high).await,
+        "installing a sibling must not unload it"
+    );
+    // Install registers real factories in an engine-enabled build; restore
+    // the inference seam before using these deliberately fake GGUFs.
+    for (id, text) in [(low, "low precision"), (high, "high precision")] {
+        engines
+            .register(
+                id,
+                FakeEngine::new()
+                    .with_text(text)
+                    .slow(Duration::from_millis(120))
+                    .factory(),
+            )
+            .await;
+    }
+    for id in [low, high] {
+        assert_eq!(
+            state.catalog.get_model(id).await.unwrap().status,
+            ModelStatus::Downloaded
+        );
+    }
+    let response = state
+        .transcriber
+        .transcribe(TranscribeRequest {
+            model: "whisper-tiny".into(),
+            samples: vec![0.0; 1600].into(),
+            duration_ms: 100,
+            options: Default::default(),
+            language: None,
+            source: TranscriptionSource::HttpApi,
+            api_key_id: None,
+            capture_device: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (response.model.as_str(), response.text.as_str()),
+        (low, "low precision")
+    );
+    let pending = state
+        .eval
+        .capture(&wav_bytes(0.1), None, None, None)
+        .await
+        .unwrap();
+    state
+        .eval
+        .promote(&pending.id, "low precision", None)
+        .await
+        .unwrap();
+
+    // An update keeps the file downloaded, but must still block selection.
+    state
+        .downloads
+        .set_progress(DownloadProgress {
+            model_id: high.into(),
+            status: DownloadPhase::Verifying,
+            downloaded_bytes: 10,
+            total_bytes: 10,
+            speed_bps: 0.0,
+            eta_secs: None,
+            error: None,
+        })
+        .await;
+    assert!(matches!(
+        state
+            .eval_runner
+            .start(RunRequest {
+                model_ids: vec![high.into()],
+                language: None,
+                sample_ids: None,
+            })
+            .await,
+        Err(AsrError::EvalBlockedByDownload { .. })
+    ));
+    state.downloads.remove_progress(high).await;
+
+    let run = state
+        .eval_runner
+        .start(RunRequest {
+            model_ids: vec![low.into(), high.into()],
+            language: None,
+            sample_ids: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        state.installer.uninstall(low).await,
+        Err(AsrError::EvalModelInUse { .. })
+    ));
+    assert!(matches!(
+        state.downloads.start(high, None).await,
+        Err(AsrError::EvalModelInUse { .. })
+    ));
+    state.installer.uninstall("whisper-tiny@F16").await.unwrap();
+    let summary = await_run(&state, &run).await;
+    assert_eq!(summary.run.status, RunStatus::Completed);
+    assert_eq!(summary.models.len(), 2);
+    let results = state
+        .eval
+        .list_results(&ResultFilter {
+            run_id: Some(run),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(
+        results
+            .iter()
+            .any(|r| r.result.model_id == low && r.result.text == "low precision")
+    );
+    assert!(
+        results
+            .iter()
+            .any(|r| r.result.model_id == high && r.result.text == "high precision")
+    );
+    // Wait for reservation release and working-set restoration.
+    loop {
+        match state.installer.uninstall(low).await {
+            Ok(()) => break,
+            Err(AsrError::EvalModelInUse { .. }) => {
+                tokio::time::sleep(Duration::from_millis(10)).await
+            }
+            Err(e) => panic!("uninstall failed after run: {e}"),
+        }
+    }
+    assert_eq!(state.catalog.canonical_id("whisper-tiny"), low);
+    assert!(engines.acquire("whisper-tiny").await.is_err());
+    assert!(engines.acquire(high).await.is_ok());
+    assert!(state.catalog.model_path(high).unwrap().is_file());
 }

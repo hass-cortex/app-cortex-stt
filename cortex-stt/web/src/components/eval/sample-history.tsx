@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { EvalResult, EvalSample } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { useEvalResults, useRuns } from "@/hooks/use-eval";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { verdictOf } from "@/lib/verdict";
 
 interface SampleHistoryProps {
@@ -19,6 +20,7 @@ interface SampleHistoryProps {
  * should not require reading every row.
  */
 export function SampleHistory({ sample }: SampleHistoryProps) {
+	const modelLabel = useModelLabel();
 	const { data: results = [] } = useEvalResults({ sample_id: sample.id, limit: 2000 });
 	const { data: runs = [] } = useRuns();
 
@@ -88,7 +90,7 @@ export function SampleHistory({ sample }: SampleHistoryProps) {
 						{byModel.map((m) => (
 							<tr key={m.model_id} className="border-t border-border">
 								<td className="py-1.5 pr-4 font-mono text-xs text-text-secondary whitespace-nowrap">
-									{m.model_id}
+									{modelLabel(m.model_id)}
 								</td>
 								<td className="py-1.5 pr-4">
 									<span className={m.correct ? "text-success" : "text-error"}>

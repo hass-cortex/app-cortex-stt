@@ -135,7 +135,14 @@ impl EvalRunner {
 
     /// Start a run in the background, returning its id once the row
     /// exists so the caller can subscribe to progress immediately.
-    pub async fn start(self: &Arc<Self>, req: RunRequest) -> Result<String, AsrError> {
+    pub async fn start(self: &Arc<Self>, mut req: RunRequest) -> Result<String, AsrError> {
+        let mut seen = std::collections::HashSet::new();
+        req.model_ids = req
+            .model_ids
+            .iter()
+            .map(|id| self.catalog.canonical_id(id))
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
         if req.model_ids.is_empty() {
             return Err(AsrError::ProtocolError {
                 detail: "an evaluation run needs at least one candidate model".into(),
@@ -156,19 +163,18 @@ impl EvalRunner {
             });
         }
 
-        // A run measures resident memory, so it cannot share the machine
-        // with a download. Measured 2026-08-21: a 3.28 GB download reached
-        // its SHA-256 verification while a 1.6 GB candidate was resident,
-        // and the OOM killer took the addon down mid-run — losing 20
-        // samples of work and two partial downloads with it. Both
-        // activities were within budget alone; together they were not.
-        let busy: Vec<String> = self
-            .catalog
-            .list_models()
-            .await
-            .into_iter()
-            .filter(|m| matches!(m.status, ModelStatus::Downloading | ModelStatus::Queued))
-            .map(|m| m.id)
+        // Serialize candidate reservation with update/delete admission.
+        // Unrelated quants remain independently manageable.
+        let lifecycle = self.catalog.lifecycle.lock().await;
+        let models = self.catalog.list_models().await;
+        let busy: Vec<String> = models
+            .iter()
+            .filter(|m| {
+                req.model_ids.contains(&m.id)
+                    && (m.updating
+                        || matches!(m.status, ModelStatus::Downloading | ModelStatus::Queued))
+            })
+            .map(|m| m.id.clone())
             .collect();
         if !busy.is_empty() {
             return Err(AsrError::EvalBlockedByDownload {
@@ -180,6 +186,17 @@ impl EvalRunner {
         let permit = slot
             .try_lock_owned()
             .map_err(|_| AsrError::EvalRunInProgress)?;
+        for id in &req.model_ids {
+            if !models.iter().any(|m| {
+                &m.id == id && matches!(m.status, ModelStatus::Downloaded | ModelStatus::Custom)
+            }) {
+                return Err(AsrError::ModelFileNotFound {
+                    path: self.catalog.model_dir().join(id),
+                });
+            }
+        }
+        let candidates = self.catalog.reserve_evaluation(&req.model_ids);
+        drop(lifecycle);
 
         let settings = self.db.load_settings().await?;
         let run_id = uuid::Uuid::new_v4().to_string();
@@ -243,6 +260,7 @@ impl EvalRunner {
             this.eval.notify_changed();
             this.restore_working_set(&id_for_task, &previously_loaded)
                 .await;
+            drop(candidates);
             drop(permit);
         });
 

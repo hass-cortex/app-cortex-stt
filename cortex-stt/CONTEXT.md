@@ -43,7 +43,7 @@ An entry in the vendored catalog (a converted snapshot of Handy's `catalog.json`
 _Avoid_: "built-in model" (pre-catalog term), "supported model"
 
 **Quant**:
-A precision variant of a catalog model, baked into its GGUF file (`Q4_K_M` … `F32`). Chosen at download time; at most one quant of a model exists on disk, so model identity never carries a quant dimension.
+A precision variant of a catalog model, baked into its GGUF file (`Q4_K_M` … `F32`). Multiple quants can stay installed. Each model-and-quant pair has its own stable `model-id@quant` identity, engine pool, and download lifecycle. Legacy model IDs are aliases pinned once to the installed quant, or to the catalog default if none is installed; they never silently switch quants.
 
 **Loaded model**:
 A catalog (or custom) model whose pool has been instantiated and is resident in memory.
@@ -55,7 +55,7 @@ Any `.gguf` file placed in the model directory by hand and picked up by a rescan
 The model used when a transcription request omits `model=`. Configured via `/api/engine/default`.
 
 **Install**:
-The transition "download reached Completed → model usable": remove any other quant (one quant per model), unload the model so the next acquire reads the new file, refresh the engine factory registration, announce the change to HA (live model sync). Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
+The transition "download reached Completed → model usable": unload only this quant so the next acquire reads its new file, refresh engine factory registration, announce the change to HA (live model sync). Other quants remain installed and loaded. Runs on the download task before its slot is released, and only for Completed — never Failed or Cancelled. Best-effort: a failed step logs and continues.
 _Avoid_: "register" alone (the engine-factory step is one part of an Install), "post-download hook", "completion watch" (the old polling mechanism)
 
 **Fingerprint**:
@@ -114,7 +114,7 @@ Audio copied into the evaluation store that has no Reference transcript yet. It 
 _Avoid_: "draft sample", "unlabelled sample" (both imply it already is one)
 
 **Candidate model**:
-An installed model included in an **Evaluation run**. Only the installed set is eligible: evaluation never downloads, because a "compare these" button must not start gigabytes of traffic and a string of Installs.
+An installed model-and-quant pair (or custom model) included in an **Evaluation run**. Only the installed set is eligible: evaluation never downloads. Selected candidates cannot be updated or deleted until the run ends; candidates already downloading or updating cannot enter a run. Unrelated quants remain manageable.
 
 **Evaluation run**:
 One execution of the sample set against a set of Candidate models, at one point in time and one software version. Runs model-major — load a candidate, run every sample, unload — so a candidate is measured alone.

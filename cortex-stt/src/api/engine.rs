@@ -57,12 +57,13 @@ async fn set_default_model(
     }
 
     // Persist to database.
-    state.db.set_default_model(&body.model_id).await?;
+    let id = state.catalog.canonical_id(&body.model_id);
+    state.db.set_default_model(&id).await?;
 
     Ok((
         StatusCode::OK,
         axum::Json(serde_json::json!({
-            "default_model": body.model_id,
+            "default_model": id,
         })),
     ))
 }

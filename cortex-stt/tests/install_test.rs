@@ -1,5 +1,5 @@
 //! Tests for [`cortex_stt::model::install::ModelInstaller`] — the Install /
-//! Uninstall operations (quant switch, engine registration refresh, HA
+//! Uninstall operations (independent quants, engine registration refresh, HA
 //! notify). HA notify is a no-op without `SUPERVISOR_TOKEN`, so these tests
 //! assert the file + engine side effects.
 
@@ -12,6 +12,7 @@ use cortex_stt::error::AsrError;
 use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{CatalogModel, catalog_models};
 use cortex_stt::model::download_manager::DownloadManager;
+use cortex_stt::model::identity::variant_id;
 use cortex_stt::model::install::ModelInstaller;
 use cortex_stt::model::types::{DownloadPhase, DownloadProgress};
 
@@ -54,7 +55,7 @@ async fn fixture() -> Fixture {
 }
 
 #[tokio::test]
-async fn install_switches_quant_removing_only_the_old_file() {
+async fn install_keeps_both_quant_files() {
     let f = fixture().await;
     let model = multi_quant_model();
     let old = &model.quants[0].filename;
@@ -62,14 +63,16 @@ async fn install_switches_quant_removing_only_the_old_file() {
     std::fs::write(f.model_dir.join(old), b"old-quant").unwrap();
     std::fs::write(f.model_dir.join(new), b"new-quant").unwrap();
 
-    f.installer.install(&model.id, new).await;
+    f.installer
+        .install(&variant_id(&model.id, &model.quants[1].quant))
+        .await;
 
-    assert!(!f.model_dir.join(old).exists(), "old quant must be removed");
+    assert!(f.model_dir.join(old).exists(), "sibling quant must survive");
     assert!(f.model_dir.join(new).exists(), "new quant must survive");
 }
 
 #[tokio::test]
-async fn install_quant_switch_unloads_the_stale_engine() {
+async fn install_does_not_unload_a_sibling_quant() {
     let f = fixture().await;
     let model = multi_quant_model();
     let old = &model.quants[0].filename;
@@ -77,16 +80,17 @@ async fn install_quant_switch_unloads_the_stale_engine() {
     std::fs::write(f.model_dir.join(old), b"old-quant").unwrap();
     std::fs::write(f.model_dir.join(new), b"new-quant").unwrap();
 
-    // Load the model (as if it had been serving the old quant).
-    f.engine_manager.register(&model.id, mock_factory()).await;
-    drop(f.engine_manager.acquire(&model.id).await.unwrap());
-    assert!(f.engine_manager.loaded_models().await.contains(&model.id));
+    let old_id = variant_id(&model.id, &model.quants[0].quant);
+    let new_id = variant_id(&model.id, &model.quants[1].quant);
+    f.engine_manager.register(&old_id, mock_factory()).await;
+    drop(f.engine_manager.acquire(&old_id).await.unwrap());
+    assert!(f.engine_manager.loaded_models().await.contains(&old_id));
 
-    f.installer.install(&model.id, new).await;
+    f.installer.install(&new_id).await;
 
     assert!(
-        !f.engine_manager.loaded_models().await.contains(&model.id),
-        "stale engine (old quant) must be unloaded"
+        f.engine_manager.loaded_models().await.contains(&old_id),
+        "the sibling quant must stay loaded"
     );
 }
 
@@ -95,17 +99,18 @@ async fn install_over_the_same_file_unloads_the_stale_engine() {
     let f = fixture().await;
     let model = multi_quant_model();
     let new = &model.quants[1].filename;
+    let id = variant_id(&model.id, &model.quants[1].quant);
     std::fs::write(f.model_dir.join(new), b"new-quant").unwrap();
 
-    f.engine_manager.register(&model.id, mock_factory()).await;
-    drop(f.engine_manager.acquire(&model.id).await.unwrap());
+    f.engine_manager.register(&id, mock_factory()).await;
+    drop(f.engine_manager.acquire(&id).await.unwrap());
 
-    f.installer.install(&model.id, new).await;
+    f.installer.install(&id).await;
 
     // An update: the download replaced the file the engine was built from.
     assert!(f.model_dir.join(new).exists());
     assert!(
-        !f.engine_manager.loaded_models().await.contains(&model.id),
+        !f.engine_manager.loaded_models().await.contains(&id),
         "engine built from the replaced file must be unloaded"
     );
 }
@@ -115,7 +120,7 @@ async fn install_of_custom_model_is_a_safe_noop_on_files() {
     let f = fixture().await;
     std::fs::write(f.model_dir.join("my-custom.gguf"), b"custom").unwrap();
 
-    f.installer.install("my-custom", "my-custom.gguf").await;
+    f.installer.install("my-custom").await;
 
     assert!(f.model_dir.join("my-custom.gguf").exists());
 }
@@ -142,9 +147,10 @@ async fn uninstall_removes_files_and_unloads() {
 async fn uninstall_refuses_a_downloading_model() {
     let f = fixture().await;
     let model = multi_quant_model();
+    let id = variant_id(&model.id, &model.quants[0].quant);
     f.downloads
         .set_progress(DownloadProgress {
-            model_id: model.id.clone(),
+            model_id: id.clone(),
             status: DownloadPhase::Downloading,
             downloaded_bytes: 0,
             total_bytes: 0,
@@ -154,7 +160,7 @@ async fn uninstall_refuses_a_downloading_model() {
         })
         .await;
 
-    let err = f.installer.uninstall(&model.id).await.unwrap_err();
+    let err = f.installer.uninstall(&id).await.unwrap_err();
     assert!(matches!(err, AsrError::DownloadInProgress { .. }));
 }
 
@@ -164,12 +170,13 @@ async fn uninstall_refuses_a_downloading_model() {
 async fn a_refused_uninstall_leaves_an_updating_model_loaded() {
     let f = fixture().await;
     let model = multi_quant_model();
+    let id = variant_id(&model.id, &model.quants[0].quant);
     std::fs::write(f.model_dir.join(&model.quants[0].filename), b"installed").unwrap();
-    f.engine_manager.register(&model.id, mock_factory()).await;
-    drop(f.engine_manager.acquire(&model.id).await.unwrap());
+    f.engine_manager.register(&id, mock_factory()).await;
+    drop(f.engine_manager.acquire(&id).await.unwrap());
     f.downloads
         .set_progress(DownloadProgress {
-            model_id: model.id.clone(),
+            model_id: id.clone(),
             status: DownloadPhase::Downloading,
             downloaded_bytes: 0,
             total_bytes: 0,
@@ -179,9 +186,9 @@ async fn a_refused_uninstall_leaves_an_updating_model_loaded() {
         })
         .await;
 
-    let err = f.installer.uninstall(&model.id).await.unwrap_err();
+    let err = f.installer.uninstall(&id).await.unwrap_err();
     assert!(matches!(err, AsrError::DownloadInProgress { .. }));
-    assert!(f.engine_manager.loaded_models().await.contains(&model.id));
+    assert!(f.engine_manager.loaded_models().await.contains(&id));
     assert!(f.model_dir.join(&model.quants[0].filename).exists());
 }
 

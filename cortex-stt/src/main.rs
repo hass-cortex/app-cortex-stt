@@ -52,6 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
 
+    let aliases = cortex_stt::model::identity::migrate(&db, &model_dir).await?;
+
     // Load stored settings once; reused below for the default model,
     // engine config, and preload flag.
     let db_settings = match db.load_stored_settings().await {
@@ -67,7 +69,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (see EffectiveConfig::resolve for the precedence matrix, incl. the
     // idle_timeout null-means-forever subtlety).
     let effective = cortex_stt::config::EffectiveConfig::resolve(&config, db_settings.as_ref());
-    let default_model = effective.default_model.clone();
+    let default_model = aliases
+        .get(&effective.default_model)
+        .cloned()
+        .unwrap_or_else(|| effective.default_model.clone());
     tracing::info!(
         default_model = %effective.default_model,
         pool_size = effective.pool_size,
@@ -97,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         idle_check_interval: Duration::from_secs(10),
     };
     let engine_manager = EngineManager::new(engine_config);
+    engine_manager.set_aliases(aliases);
 
     // Spawn background idle model watcher.
     engine_manager.spawn_idle_watcher().await;

@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { useAddRecordsToEval, useTakenOrigins } from "@/hooks/use-eval";
 import { useHistoryFacets, useHistoryList } from "@/hooks/use-history";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { describeCaptureOutcome, formatDuration } from "@/lib/format";
 
 /** Pre-0.4.0 recordings are Ogg Opus. The gate is the server's, but
@@ -28,6 +29,7 @@ interface ImportPickerProps {
  * be taken at all.
  */
 export function ImportPicker({ open, onClose }: ImportPickerProps) {
+	const modelLabel = useModelLabel();
 	const [model, setModel] = useState("");
 	const [device, setDevice] = useState("");
 	const [text, setText] = useState("");
@@ -94,7 +96,7 @@ export function ImportPicker({ open, onClose }: ImportPickerProps) {
 						value={model}
 						onChange={(e) => setModel(e.target.value)}
 						placeholder="All models"
-						options={(facets?.models ?? []).map((m) => ({ value: m, label: m }))}
+						options={(facets?.models ?? []).map((m) => ({ value: m, label: modelLabel(m) }))}
 					/>
 					<Select
 						value={device}

@@ -36,7 +36,7 @@ pub struct AppState {
     pub history: Arc<History>,
     /// Transcription pipeline (engine acquire → inference → save).
     pub transcriber: Arc<Transcriber>,
-    /// Install / Uninstall operations (quant switch, engine registration, HA notify).
+    /// Install / Uninstall operations (engine registration, HA notify).
     pub installer: Arc<ModelInstaller>,
     /// Evaluation samples, runs, results and judgements.
     pub eval: Arc<Eval>,
@@ -67,6 +67,9 @@ impl AppState {
         version: String,
         http_port: u16,
     ) -> Result<Arc<Self>, AsrError> {
+        let aliases = crate::model::identity::migrate(&db, &model_dir).await?;
+        engine_manager.set_aliases(aliases);
+        let startup_default_model = engine_manager.canonical_id(&startup_default_model);
         // Shared download-progress board (written by DownloadManager, read
         // by ModelCatalog) — keeps the construction graph acyclic.
         let progress = ProgressBoard::new();

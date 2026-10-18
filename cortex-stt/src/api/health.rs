@@ -28,7 +28,7 @@ async fn health_check(State(state): State<Arc<AppState>>) -> axum::Json<HealthRe
         .ok()
         .and_then(|s| s.default_model)
         .unwrap_or_else(|| state.startup_default_model.clone());
-    let status = if registered.contains(&default_model) {
+    let status = if registered.contains(&state.catalog.canonical_id(&default_model)) {
         "ok"
     } else {
         "starting"

@@ -3,6 +3,7 @@ import { evalAudioUrl } from "@/api/client";
 import type { EvalResult, EvalSample } from "@/api/types";
 import { PlayButton } from "@/components/eval/play-button";
 import { useDismiss } from "@/hooks/use-dismiss";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { verdictOf } from "@/lib/verdict";
 
 interface ResultGridProps {
@@ -78,6 +79,7 @@ interface Hover {
  * summary tables report; the shade says whether a person confirmed it.
  */
 export function ResultGrid({ samples, models, resultOf, onSelectSample }: ResultGridProps) {
+	const modelLabel = useModelLabel();
 	// A cell is 20px of colour; what it stands for has to arrive at once.
 	// The native `title` waits about a second, which is longer than the
 	// pointer spends crossing the row.
@@ -151,7 +153,7 @@ export function ResultGrid({ samples, models, resultOf, onSelectSample }: Result
 									{/* No height cap: the label sizes the header, because a
 									    clipped model id is not a model id. */}
 									<div className="num text-[10px] text-text-muted whitespace-nowrap [writing-mode:vertical-rl] rotate-180 mx-auto">
-										{model}
+										{modelLabel(model)}
 									</div>
 								</th>
 							))}
@@ -218,7 +220,7 @@ export function ResultGrid({ samples, models, resultOf, onSelectSample }: Result
 													if (!pinned) setHover(null);
 												}}
 												className={`block w-5 h-5 rounded-[2px] cursor-pointer ${markClass[mark]}`}
-												aria-label={`${model}: ${markLabel[mark]}`}
+												aria-label={`${modelLabel(model)}: ${markLabel[mark]}`}
 											/>
 										</td>
 									);
@@ -251,6 +253,7 @@ const CARD_GAP = 10;
 /** Beside the cell, never under the pointer: the card is read while the
  *  pointer is still on the square that opened it. */
 function HoverCard({ hover }: { hover: Hover }) {
+	const modelLabel = useModelLabel();
 	const { sample, model, mark, cell, rect, sampleScore, modelScore, models, samples } = hover;
 	const durationMs = sample.audio_duration_ms;
 
@@ -269,7 +272,7 @@ function HoverCard({ hover }: { hover: Hover }) {
 			style={{ width, left, top }}
 		>
 			<div className="flex items-baseline gap-2">
-				<span className="num text-[11px] text-text-primary truncate">{model}</span>
+				<span className="num text-[11px] text-text-primary truncate">{modelLabel(model)}</span>
 				<span className={`num ml-auto text-[10.5px] shrink-0 ${markTone[mark]}`}>
 					{markLabel[mark]}
 				</span>

@@ -68,6 +68,7 @@ use tracing::info;
 use crate::error::AsrError;
 use crate::model::catalog_data::find_model;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
+use crate::model::identity::{find_variant, variant_id};
 use crate::model::install::ModelInstaller;
 use crate::model::progress::ProgressBoard;
 use crate::model::types::{DownloadPhase, DownloadProgress};
@@ -215,21 +216,52 @@ impl DownloadManager {
         model_id: &str,
         quant: Option<&str>,
     ) -> Result<(), AsrError> {
-        let model = find_model(model_id).ok_or_else(|| AsrError::ModelNotFound {
-            model_id: model_id.to_string(),
-        })?;
-        let quant_name = quant.unwrap_or(&model.default_quant);
-        let quant = model
-            .quant(quant_name)
-            .ok_or_else(|| AsrError::ProtocolError {
-                detail: format!("model {model_id} has no quant {quant_name}"),
+        let _lifecycle = match &self.installer {
+            Some(installer) => Some(installer.catalog.lifecycle.lock().await),
+            None => None,
+        };
+        let canonical = self
+            .installer
+            .as_ref()
+            .map(|i| i.catalog.canonical_id(model_id))
+            .unwrap_or_else(|| model_id.to_string());
+        let (model, file) = if let Some(pair) = find_variant(&canonical) {
+            if let Some(quant) = quant
+                && quant != pair.1.quant
+            {
+                return Err(AsrError::ProtocolError {
+                    detail: "quant does not match the model variant ID".into(),
+                });
+            }
+            pair
+        } else {
+            if canonical != model_id {
+                return Err(AsrError::ModelNotFound {
+                    model_id: canonical,
+                });
+            }
+            let model = find_model(model_id).ok_or_else(|| AsrError::ModelNotFound {
+                model_id: model_id.to_string(),
             })?;
+            let quant_name = quant.unwrap_or(&model.default_quant);
+            let file = model
+                .quant(quant_name)
+                .ok_or_else(|| AsrError::ProtocolError {
+                    detail: format!("model {model_id} has no quant {quant_name}"),
+                })?;
+            (model, file)
+        };
+        let id = variant_id(&model.id, &file.quant);
+        let model_id = id.as_str();
+        if let Some(installer) = &self.installer {
+            installer.catalog.ensure_mutable(model_id)?;
+        }
 
         let request = QueuedDownloadRequest::new(
             model_id.to_string(),
-            quant.url.clone(),
-            self.model_dir.join(&quant.filename),
-            quant.sha256.clone(),
+            file.url.clone(),
+            self.model_dir.join(&file.filename),
+            file.sha256.clone(),
         );
 
         // Atomically claim a slot, queue, or reject a duplicate. The
@@ -339,7 +371,7 @@ impl DownloadManager {
     /// 1. Publish the terminal progress snapshot.
     /// 2. On `Completed`, run the Install BEFORE the slot is released:
     ///    the active entry still blocks a same-model re-download, so the
-    ///    quant switch can't interleave with a new download writing the
+    ///    Install can't interleave with a new download writing the
     ///    same files; `list_models` reports Downloaded throughout
     ///    (Completed progress + file on disk), so the HA reconcile
     ///    triggered by the Install's announce sees the model.
@@ -350,20 +382,21 @@ impl DownloadManager {
     ///    A `Failed` entry stays until the model is downloaded again or the
     ///    failure is dismissed (`cancel_download`), so the reason outlives
     ///    the download that produced it.
-    pub(crate) async fn complete(self: &Arc<Self>, dest_path: &Path, terminal: DownloadProgress) {
+    pub(crate) async fn complete(self: &Arc<Self>, terminal: DownloadProgress) {
+        let lifecycle = match &self.installer {
+            Some(installer) => Some(installer.catalog.lifecycle.lock().await),
+            None => None,
+        };
         let model_id = terminal.model_id.clone();
         let completed = matches!(terminal.status, DownloadPhase::Completed);
         self.set_progress(terminal).await;
 
         if completed && let Some(installer) = &self.installer {
-            let filename = dest_path
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            installer.install(&model_id, &filename).await;
+            installer.install(&model_id).await;
         }
 
         self.finish_and_launch_next(&model_id).await;
+        drop(lifecycle);
 
         if !completed {
             return;
@@ -484,7 +517,12 @@ impl DownloadManager {
     /// Cancel a download and launch whatever queued request its freed
     /// slot promoted. The public face of [`cancel`](Self::cancel).
     pub async fn cancel_download(self: &Arc<Self>, model_id: &str) -> Result<(), AsrError> {
-        let next = self.cancel(model_id).await?;
+        let id = self
+            .installer
+            .as_ref()
+            .map(|i| i.catalog.canonical_id(model_id))
+            .unwrap_or_else(|| model_id.to_string());
+        let next = self.cancel(&id).await?;
         self.launch(next);
         Ok(())
     }
@@ -735,16 +773,15 @@ mod tests {
 
         assert!(claimed(
             downloads
-                .try_claim_slot(request(tmp.path(), "whisper-tiny"))
+                .try_claim_slot(request(tmp.path(), "whisper-tiny@Q8_0"))
                 .await
         ));
 
         let tail = {
             let downloads = downloads.clone();
-            let dest = tmp.path().join(&filename);
             tokio::spawn(async move {
                 downloads
-                    .complete(&dest, terminal("whisper-tiny", DownloadPhase::Completed))
+                    .complete(terminal("whisper-tiny@Q8_0", DownloadPhase::Completed))
                     .await;
             })
         };
@@ -752,7 +789,7 @@ mod tests {
         // Wait until the Completed entry is published (inside the grace window).
         let mut lingering = None;
         for _ in 0..100 {
-            lingering = downloads.get_progress("whisper-tiny").await;
+            lingering = downloads.get_progress("whisper-tiny@Q8_0").await;
             if lingering
                 .as_ref()
                 .is_some_and(|p| p.status == DownloadPhase::Completed)
@@ -767,13 +804,13 @@ mod tests {
         );
 
         // The catalog must already say Downloaded, not Downloading.
-        let m = catalog.get_model("whisper-tiny").await.unwrap();
+        let m = catalog.get_model("whisper-tiny@Q8_0").await.unwrap();
         assert_eq!(m.status, ModelStatus::Downloaded);
 
         tail.await.unwrap();
         // After the clear, the file on disk keeps it Downloaded.
         assert_eq!(
-            catalog.get_model("whisper-tiny").await.unwrap().status,
+            catalog.get_model("whisper-tiny@Q8_0").await.unwrap().status,
             ModelStatus::Downloaded
         );
     }
@@ -794,16 +831,10 @@ mod tests {
         fill_slots(&downloads, tmp.path()).await;
 
         downloads
-            .complete(
-                &tmp.path().join("active-0.bin"),
-                terminal("active-0", DownloadPhase::Failed),
-            )
+            .complete(terminal("active-0", DownloadPhase::Failed))
             .await;
         downloads
-            .complete(
-                &tmp.path().join("active-1.bin"),
-                terminal("active-1", DownloadPhase::Completed),
-            )
+            .complete(terminal("active-1", DownloadPhase::Completed))
             .await;
 
         // Slots freed: fresh claims succeed.
@@ -845,10 +876,9 @@ mod tests {
 
         let tail = {
             let downloads = downloads.clone();
-            let dest = tmp.path().join("m.bin");
             tokio::spawn(async move {
                 downloads
-                    .complete(&dest, terminal("m", DownloadPhase::Completed))
+                    .complete(terminal("m", DownloadPhase::Completed))
                     .await;
             })
         };

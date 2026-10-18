@@ -2,6 +2,7 @@ import { ChevronRight, Trash2 } from "lucide-react";
 import type { EvalRunListEntry } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { formatRelativeTime } from "@/lib/format";
 
 interface RunTableProps {
@@ -23,6 +24,7 @@ interface RunTableProps {
  * format rather than ISO-8601, so they must not be parsed here.
  */
 export function RunTable({ runs, onOpen, onDelete, focusModel }: RunTableProps) {
+	const modelLabel = useModelLabel();
 	return (
 		<div className="overflow-x-auto">
 			<table className="w-full min-w-[760px] text-sm">
@@ -61,7 +63,9 @@ export function RunTable({ runs, onOpen, onDelete, focusModel }: RunTableProps) 
 								</button>
 							</td>
 							<td className="py-2 pr-4 font-mono text-xs text-text-secondary max-w-xs truncate">
-								{r.model_ids.length > 0 ? describeModels(r.model_ids, focusModel) : "none"}
+								{r.model_ids.length > 0
+									? describeModels(r.model_ids, modelLabel, focusModel)
+									: "none"}
 							</td>
 							<td className="py-2 pr-4 text-right font-mono tabular-nums text-xs">
 								{r.model_ids.length}
@@ -137,10 +141,14 @@ export function RunTable({ runs, onOpen, onDelete, focusModel }: RunTableProps) 
 
 /** Names beat a count for a short list; past three, the count carries
  *  more than a truncated string of ids would. */
-function describeModels(ids: string[], focus?: string | null): string {
+function describeModels(
+	ids: string[],
+	label: (id: string) => string,
+	focus?: string | null,
+): string {
 	// When narrowed to one model, lead with it: the row is being read to
 	// answer "what else ran alongside it", not "what is in this run".
-	const ordered = focus ? [focus, ...ids.filter((m) => m !== focus)] : ids;
+	const ordered = (focus ? [focus, ...ids.filter((m) => m !== focus)] : ids).map(label);
 	if (ordered.length <= 3) return ordered.join(", ");
 	return `${ordered.slice(0, 3).join(", ")} +${ordered.length - 3} more`;
 }

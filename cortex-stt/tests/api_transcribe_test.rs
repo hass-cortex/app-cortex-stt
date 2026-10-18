@@ -67,7 +67,7 @@ async fn create_test_state() -> (Arc<AppState>, tempfile::TempDir) {
     };
     let engine_manager = EngineManager::new(config);
     engine_manager
-        .register("whisper-small", mock_factory())
+        .register("whisper-small@Q8_0", mock_factory())
         .await;
     engine_manager
         .register("streaming-model", streaming_factory())
@@ -166,7 +166,7 @@ async fn test_sync_transcribe_wav() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["text"], "hello world");
-    assert_eq!(json["model"], "whisper-small");
+    assert_eq!(json["model"], "whisper-small@Q8_0");
     assert!(json["duration_ms"].is_number());
     assert!(json["inference_ms"].is_number());
     assert!(json["segments"].is_array());
@@ -202,7 +202,7 @@ async fn test_sync_transcribe_resamples_48khz() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["text"], "hello world");
-    assert_eq!(json["model"], "whisper-small");
+    assert_eq!(json["model"], "whisper-small@Q8_0");
     // Resampled from 48 kHz to 16 kHz: ~16000 samples => ~1000 ms
     let duration = json["duration_ms"].as_u64().unwrap();
     assert!(
@@ -261,7 +261,7 @@ async fn test_sync_transcribe_raw_pcm() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["text"], "hello world");
-    assert_eq!(json["model"], "whisper-small");
+    assert_eq!(json["model"], "whisper-small@Q8_0");
 
     let duration = json["duration_ms"].as_u64().unwrap();
     assert_eq!(duration, 1000, "16000 samples at 16kHz = 1000ms");
@@ -401,7 +401,7 @@ async fn test_ws_stream_buffered_fallback_final() {
     let final_event = events.last().unwrap();
     assert_eq!(final_event["type"], "final");
     assert_eq!(final_event["text"], "hello world");
-    assert_eq!(final_event["model"], "whisper-small");
+    assert_eq!(final_event["model"], "whisper-small@Q8_0");
 }
 
 #[tokio::test]

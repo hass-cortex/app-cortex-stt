@@ -163,7 +163,11 @@ impl Transcriber {
 
     /// Run the pipeline to completion. Used by the sync HTTP handler
     /// and (via spawned task) by the async-job handler.
-    pub async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResponse, AsrError> {
+    pub async fn transcribe(
+        &self,
+        mut req: TranscribeRequest,
+    ) -> Result<TranscribeResponse, AsrError> {
+        req.model = self.engine.canonical_id(&req.model);
         let settings = RequestSettings::load(&self.db).await;
         let started = Instant::now();
         tracing::info!(
@@ -230,9 +234,10 @@ impl Transcriber {
     /// [`StreamSession`] holds the pool slot until finalize/drop.
     pub async fn open_stream(
         self: &Arc<Self>,
-        meta: StreamMeta,
+        mut meta: StreamMeta,
         options: TranscribeOptions,
     ) -> Result<StreamSession, AsrError> {
+        meta.model = self.engine.canonical_id(&meta.model);
         let settings = RequestSettings::load(&self.db).await;
         let deadline = RequestDeadline::from_now(settings.timeout_secs);
         tracing::info!(

@@ -26,9 +26,9 @@ export function ModelsPage() {
 				<div>
 					<h1 className="text-[21px] font-semibold tracking-[-0.01em] text-text-primary">Models</h1>
 					<p className="text-[12.5px] text-text-secondary mt-1">
-						{installed} on disk
+						{installed} model variants on disk
 						{storage ? ` · ${formatBytes(storage.models_bytes)}` : ""} ·{" "}
-						{Math.max(0, total - installed)} more in the catalog
+						{Math.max(0, total - installed)} more variants in the catalog
 					</p>
 				</div>
 				<Button

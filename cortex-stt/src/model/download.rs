@@ -237,7 +237,7 @@ pub async fn download_model(
 
         // Install (on success) + slot release + next launch + delayed
         // progress clear — the manager owns the whole tail.
-        downloads.complete(&dest_path, terminal).await;
+        downloads.complete(terminal).await;
     });
 
     Ok(DownloadHandle { progress_rx: rx })

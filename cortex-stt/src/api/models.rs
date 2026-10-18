@@ -75,7 +75,7 @@ async fn download_progress(
     }
 
     let downloads = state.downloads.clone();
-    let id = model_id.clone();
+    let id = state.catalog.canonical_id(&model_id);
 
     let stream = async_stream::stream! {
         loop {

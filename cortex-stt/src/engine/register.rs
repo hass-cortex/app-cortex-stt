@@ -10,8 +10,8 @@ use tracing::info;
 
 use crate::engine::manager::EngineManager;
 use crate::engine::traits::BackendOverride;
-use crate::model::catalog::downloaded_quant;
 use crate::model::catalog_data::{catalog_models, find_by_filename};
+use crate::model::identity::variant_id;
 use crate::settings::Settings;
 
 /// Sync engine-relevant settings to the runtime.
@@ -63,25 +63,25 @@ pub async fn register_downloaded_models(
     let mut registered = 0u32;
 
     for model in catalog_models() {
-        let Some(q) = downloaded_quant(model_dir, model) else {
-            continue;
-        };
-        let model_path = model_dir.join(&q.filename);
-        let Some(factory) = create_factory(
-            &model.id,
-            model_path.clone(),
-            backend_overrides.get(&model.id),
-        ) else {
-            continue;
-        };
-        info!(
-            model_id = %model.id,
-            quant = %q.quant,
-            ?model_path,
-            "Registered engine"
-        );
-        engine_manager.register(&model.id, factory).await;
-        registered += 1;
+        for q in &model.quants {
+            let model_path = model_dir.join(&q.filename);
+            if !model_path.is_file() {
+                continue;
+            }
+            let id = variant_id(&model.id, &q.quant);
+            let Some(factory) = create_factory(&id, model_path.clone(), backend_overrides.get(&id))
+            else {
+                continue;
+            };
+            info!(
+                model_id = %model.id,
+                quant = %q.quant,
+                ?model_path,
+                "Registered engine"
+            );
+            engine_manager.register(id, factory).await;
+            registered += 1;
+        }
     }
 
     if let Ok(entries) = std::fs::read_dir(model_dir) {

@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useDeleteRun, useEvalResults, useRunSummary, useRuns, useSamples } from "@/hooks/use-eval";
+import { useModelLabel } from "@/hooks/use-model-label";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { formatRelativeTime } from "@/lib/format";
 
@@ -28,6 +29,7 @@ interface RunsTabProps {
 const NO_HINT = "(none)";
 
 export function RunsTab({ selectedRunId, onSelectRun, modelFilter, onModelFilter }: RunsTabProps) {
+	const modelLabel = useModelLabel();
 	const [text, setText] = useState("");
 	const { data: runs = [] } = useRuns(text);
 	// Facets come from the unsearched list, or the dropdowns would empty
@@ -84,7 +86,7 @@ export function RunsTab({ selectedRunId, onSelectRun, modelFilter, onModelFilter
 				<Select
 					options={[
 						{ value: "", label: "All models" },
-						...models.map((m) => ({ value: m, label: m })),
+						...models.map((m) => ({ value: m, label: modelLabel(m) })),
 					]}
 					value={modelFilter ?? ""}
 					onChange={(e) => onModelFilter(e.target.value || null)}
