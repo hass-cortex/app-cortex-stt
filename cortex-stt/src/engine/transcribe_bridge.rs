@@ -59,7 +59,12 @@ impl TranscribeBridge {
                 detail: format!("failed to load model: {e}"),
             })?;
 
-        let c = model.capabilities();
+        let c = model
+            .capabilities()
+            .map_err(|e| AsrError::InferenceFailed {
+                model_id: model_id.to_string(),
+                detail: format!("failed to read model capabilities: {e}"),
+            })?;
         let caps = EngineCapabilities {
             name: {
                 let variant = model.variant();
@@ -196,7 +201,7 @@ fn resolve_language(requested: Option<&str>, declared: &[String]) -> Option<Stri
 /// This file is the only binding to the crate, so a dependency bump
 /// lands here anyway; `the_pinned_version_matches_cargo_toml` fails the
 /// build if the two ever disagree.
-pub const TRANSCRIBE_CPP_VERSION: &str = "0.3.1";
+pub const TRANSCRIBE_CPP_VERSION: &str = "0.4.0";
 
 fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -> AsrError {
     use transcribe_cpp::Error as E;
