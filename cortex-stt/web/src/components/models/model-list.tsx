@@ -10,11 +10,10 @@ import { useMeasuredLatency } from "@/hooks/use-stats";
 import type { ModelLatency } from "@/lib/stats";
 import { ModelRow } from "./model-row";
 
-// The catalog's `recommended` flag is not shown. It is Handy's opinion
-// copied verbatim by the sync script, it cannot be checked here, and on a
-// Chinese deployment its top pick (parakeet-unified-en-0.6b) and its third
-// (canary-180m-flash) cannot transcribe the language at all. The language
-// filter is the honest way to narrow 49 candidates.
+// The catalog's `recommended` flag (Handy's `curated`) is not shown. It is
+// Handy's opinion, it cannot be checked here, and several curated models
+// (parakeet-unified-en-0.6b, canary-180m-flash) cannot transcribe Chinese
+// at all. The language filter is the honest way to narrow the catalog.
 
 function isOnDisk(status: string): boolean {
 	return status === "downloaded" || status === "custom";

@@ -30,7 +30,8 @@ jobs:
 
       - name: Re-sync catalog
         working-directory: cortex-stt
-        run: uv run scripts/sync-catalog.py
+        # The log's "Review before committing" list goes into the PR body.
+        run: uv run scripts/sync-catalog.py 2>&1 | tee "$RUNNER_TEMP/sync.log"
 
       # A PR opened with GITHUB_TOKEN does not trigger workflows, so this
       # one arrives with no checks — hence the body asking for cargo test.
@@ -57,20 +58,29 @@ jobs:
           git commit -m "chore(catalog): re-sync vendored snapshot
 
           Upstream published new model files or models. The current pins
-          keep installing; this moves them to upstream's latest commit.
+          keep installing; this moves them to the commits upstream pins.
 
           Review the diff, then merge. Opened automatically."
           git push --force origin "$BRANCH"
 
+          {
+            echo "Upstream published new model files or models. Each model is pinned to a Hugging Face commit, so the current snapshot keeps installing; merging moves the pins to the commits upstream pins (never back to older bytes)."
+            echo
+            echo "Before merging: run \`cargo test --no-default-features\` for the catalog consistency tests, and check the sync notes below — models removed or renamed upstream disappear from the app's catalog (a rename recreates the HA entity; list it in the release notes)."
+            echo
+            echo '```'
+            awk '/^(Skipped|Review before committing):/ { on = 1 } on' "$RUNNER_TEMP/sync.log"
+            echo '```'
+            echo
+            echo "Opened by the weekly \`Catalog drift\` workflow."
+          } > "$RUNNER_TEMP/body.md"
+
           if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
             echo "Existing PR updated."
           else
             gh pr create \
               --base main --head "$BRANCH" \
               --title "chore(catalog): re-sync vendored snapshot" \
-              --body "Upstream published new model files or models. Each model is pinned to a Hugging Face commit, so the current snapshot keeps installing; merging moves the pins to upstream's latest.
-
-          Before merging: check the diff for models **removed** upstream (they disappear from the app's catalog) and run \`cargo test --no-default-features\` for the catalog consistency tests.
-
-          Opened by the weekly \`Catalog drift\` workflow."
+              --body-file "$RUNNER_TEMP/body.md"
           fi

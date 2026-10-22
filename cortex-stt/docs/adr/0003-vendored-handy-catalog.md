@@ -24,7 +24,10 @@ the generated `MODELS.md` was removed in favor of linking there.)
   bytes the shipped sha256 rejects — every released version breaks at once. A
   commit URL keeps serving the pinned bytes, so a release installs the same
   files for as long as Hugging Face keeps the history. Handy pins the
-  commit itself, so a model moves only when upstream moves it.
+  commit itself; the script follows it, except that a pin never moves to
+  older bytes than the snapshot already ships (an update offered to an
+  installed user must not be a downgrade), and a commit that only changes
+  the model card does not move it.
 
 ## Consequences
 

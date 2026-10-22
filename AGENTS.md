@@ -364,7 +364,15 @@ The script rewrites `src/model/catalog.json`: every URL is
 `resolve/<revision>/<file>` at the commit upstream pins, and each file's
 sha256 and size are kept only when Hugging Face serves that file at that
 commit, so a release keeps installing after upstream re-uploads a file
-(ADR 0003). Review the diff, run
+(ADR 0003). A pin never moves to older bytes: when upstream pins a commit
+that main has since superseded with different files, the previous pin
+stays; when only the commit differs and the files are the same, the
+previous pin stays too, so the diff is quiet. Language tags are reduced
+to their base subtag (`en-US` → `en`), which is what Home Assistant
+matches. The log's **Review before committing** list names kept pins,
+default quants that grew, and models no longer offered (a rename
+upstream shows here; it recreates the HA entity, so the release notes
+must list it). Review the diff, run
 `cargo test --no-default-features` (catalog consistency tests), and
 commit. Skipped with a warning: non-transcription models (`role` other
 than `asr` — VAD, language ID, diarization), models whose `minEngine` is
@@ -404,8 +412,8 @@ maintainer runbook (cutting beta then stable, troubleshooting).
 
 ### Release tags
 
-**Re-sync the catalog before every tag** so the release ships the newest
-upstream files. A skipped re-sync is not a breakage — every pin is a
+**Re-sync the catalog before every tag** so the release ships the files
+upstream pins. A skipped re-sync is not a breakage — every pin is a
 commit, which keeps serving its files.
 
 ```bash

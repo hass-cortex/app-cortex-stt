@@ -141,6 +141,23 @@ mod tests {
         }
     }
 
+    /// Home Assistant matches an STT language exactly, so a region-tagged
+    /// `en-US` would leave a pipeline set to `en` unsupported.
+    #[test]
+    fn languages_are_unique_base_subtags() {
+        for m in catalog_models() {
+            let mut seen = std::collections::HashSet::new();
+            for lang in &m.languages {
+                assert!(
+                    !lang.contains('-') && !lang.contains('_'),
+                    "{} lists region-tagged language {lang}",
+                    m.id
+                );
+                assert!(seen.insert(lang), "{} lists {lang} twice", m.id);
+            }
+        }
+    }
+
     #[test]
     fn known_models_present() {
         for id in ["Breeze-ASR-25", "SenseVoiceSmall", "whisper-large-v3-turbo"] {

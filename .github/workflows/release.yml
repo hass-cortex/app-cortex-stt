@@ -31,7 +31,7 @@ jobs:
         with:
           enable-cache: false
 
-      # A release ships upstream's latest files: pins are commits and keep
+      # A release ships the files upstream pins: pins are commits and keep
       # installing, but a stale snapshot would freeze old ones into this
       # version for good. Deliberately not in ci.yml:
       # this depends on upstream and would fail pull requests for reasons
