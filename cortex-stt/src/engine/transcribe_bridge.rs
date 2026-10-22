@@ -52,6 +52,8 @@ impl TranscribeBridge {
             },
             // None = let the backend choose.
             device: None,
+            // Weights are mmapped; downloads rename into place, never rewrite.
+            ..ModelOptions::default()
         };
         let model =
             Model::load_with(model_path, &options).map_err(|e| AsrError::InferenceFailed {
@@ -201,7 +203,7 @@ fn resolve_language(requested: Option<&str>, declared: &[String]) -> Option<Stri
 /// This file is the only binding to the crate, so a dependency bump
 /// lands here anyway; `the_pinned_version_matches_cargo_toml` fails the
 /// build if the two ever disagree.
-pub const TRANSCRIBE_CPP_VERSION: &str = "0.4.0";
+pub const TRANSCRIBE_CPP_VERSION: &str = "0.4.1";
 
 fn map_engine_err(model_id: &str, max_audio_ms: i64, e: transcribe_cpp::Error) -> AsrError {
     use transcribe_cpp::Error as E;
