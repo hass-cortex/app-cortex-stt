@@ -1,8 +1,9 @@
 //! Resident-memory probe for evaluation runs.
 //!
 //! A model's real cost is what it adds to the process's resident set,
-//! which the GGUF file size only approximates: transcribe.cpp does not
-//! mmap weights, and each backend allocates its own scratch buffers.
+//! which the GGUF file size only approximates: weights are copied in, not
+//! mmapped (`no_mmap` in `transcribe_bridge`), and each backend allocates
+//! its own scratch buffers.
 //!
 //! Lives in `eval` because it exists for one question — "does this
 //! model fit?" — and nothing else in the service asks it.

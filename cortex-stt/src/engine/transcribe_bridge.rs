@@ -52,8 +52,9 @@ impl TranscribeBridge {
             },
             // None = let the backend choose.
             device: None,
-            // Weights are mmapped; downloads rename into place, never rewrite.
-            ..ModelOptions::default()
+            // Copy weights in: eval's resident-set probe measures them at load,
+            // and a custom GGUF overwritten in place cannot SIGBUS the process.
+            no_mmap: true,
         };
         let model =
             Model::load_with(model_path, &options).map_err(|e| AsrError::InferenceFailed {

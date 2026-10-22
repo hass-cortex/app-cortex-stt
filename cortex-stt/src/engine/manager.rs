@@ -212,8 +212,8 @@ impl EngineManager {
 
     /// Free capacity for `model_id`, then mark its load as in flight.
     ///
-    /// Eviction happens **before** the incoming pool is built. transcribe.cpp
-    /// copies weights into the resident set rather than mmap-ing them, so
+    /// Eviction happens **before** the incoming pool is built. Weights are
+    /// copied into the resident set rather than mmapped (`no_mmap`), so
     /// building first and evicting after peaks at both models' resident size
     /// at once; on a small host the OOM killer, not the LRU policy, then
     /// decides what gets unloaded.
