@@ -4,11 +4,12 @@
 # ///
 """Sync the vendored model catalog from Handy's catalog.json.
 
-Converts Handy's catalog schema (handy-computer GGUF releases) into our
-own schema. Each model is pinned to a Hugging Face commit: the download
-URL, sha256 and size all come from that one commit, so a release keeps
-installing the bytes it pinned after upstream re-uploads a file. A model
-moves to a newer commit only when one of its files changed.
+Converts Handy's catalog (schema 2, handy-computer GGUF releases) into our
+own schema. Upstream pins each model to a Hugging Face commit; the download
+URL uses that commit, and its sha256 and size are kept only when Hugging
+Face serves the same file there, so a release keeps installing the bytes it
+pinned after upstream re-uploads a file. Only transcription models the
+pinned transcribe-cpp can load are offered.
 Run manually; review the diff before committing.
 
 Usage:
@@ -37,6 +38,7 @@ HF_BASE = "https://huggingface.co"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_OUT = REPO_ROOT / "src" / "model" / "catalog.json"
+CARGO_TOML = REPO_ROOT / "Cargo.toml"
 
 
 def load_source(source: str) -> dict:
@@ -47,13 +49,13 @@ def load_source(source: str) -> dict:
     return json.loads(Path(source).read_text())
 
 
-def resolve_main(repo: str) -> str | None:
-    """Commit sha of the repo's main branch; None when not anonymously accessible."""
-    resp = requests.get(f"{HF_BASE}/api/models/{repo}/revision/main", timeout=30)
+def repo_accessible(repo: str) -> bool:
+    """Whether the repo serves files without authentication (gated repos don't)."""
+    resp = requests.get(f"{HF_BASE}/api/models/{repo}", timeout=30)
     if resp.status_code in (401, 403, 404):
-        return None
+        return False
     resp.raise_for_status()
-    return resp.json()["sha"]
+    return not resp.json().get("gated")
 
 
 def fetch_lfs_files(repo: str, revision: str, filenames: list[str]) -> dict[str, dict]:
@@ -69,93 +71,83 @@ def fetch_lfs_files(repo: str, revision: str, filenames: list[str]) -> dict[str,
     return out
 
 
-def pinned_revision(quants: list[dict]) -> str | None:
-    """The commit a previous snapshot's URLs point at, if they share one."""
-    revs = {q["url"].split("/resolve/", 1)[1].split("/", 1)[0] for q in quants}
-    return revs.pop() if len(revs) == 1 else None
+def engine_version() -> tuple[int, ...]:
+    """The transcribe-cpp version Cargo.toml pins (`=x.y.z`)."""
+    for line in CARGO_TOML.read_text().splitlines():
+        if line.startswith("transcribe-cpp ="):
+            return parse_version(line.split('"=', 1)[1].split('"', 1)[0])
+    raise SystemExit("transcribe-cpp pin not found in Cargo.toml")
 
 
-def pin(repo: str, filenames: list[str], previous: dict | None) -> tuple[str, dict] | str:
-    """Pick the commit to pin and its files, or return why the model is skipped.
+def parse_version(v: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in v.split("."))
 
-    Keeps the previous commit while main still serves identical files, so a
-    model-card edit upstream does not churn the snapshot.
-    """
-    head = resolve_main(repo)
-    if head is None:
+
+def check(m: dict, engine: tuple[int, ...]) -> str | None:
+    """Why the model cannot be offered, or None when it can."""
+    if m["role"] != "asr":
+        return f"role {m['role']} is not transcription"
+    if parse_version(m["minEngine"]) > engine:
+        return f"needs transcribe-cpp {m['minEngine']}"
+    repo, revision = m["repository"], m["revision"]
+    if not repo_accessible(repo):
         return f"repo {repo} not anonymously accessible"
-    files = fetch_lfs_files(repo, head, filenames)
-    missing = [f for f in filenames if f not in files]
-    if missing:
-        return f"no LFS sha256 for {', '.join(missing)}"
-    if previous:
-        kept = pinned_revision(previous["quants"])
-        same = {q["filename"]: q["sha256"] for q in previous["quants"]} == {
-            f: files[f]["sha256"] for f in filenames
-        }
-        if kept and kept != "main" and same:
-            return kept, {q["filename"]: q for q in previous["quants"]}
-    return head, files
+    # Trust upstream's pin only as far as Hugging Face confirms it.
+    files = fetch_lfs_files(repo, revision, [f["filename"] for f in m["files"].values()])
+    for f in m["files"].values():
+        served = files.get(f["filename"])
+        if served != {"sha256": f["sha256"], "size_bytes": f["size"]}:
+            return f"{f['filename']} at {revision[:8]} does not match the catalog"
+    return None
 
 
-def pick_default_quant(model: dict) -> str:
-    if model.get("default_quant"):
-        return model["default_quant"]
-    quants = [f["quant"] for f in model["files"]]
-    return "Q8_0" if "Q8_0" in quants else quants[0]
-
-
-def convert(handy: dict, previous: dict) -> tuple[dict, list[str]]:
-    prev_models = {m["id"]: m for m in previous.get("models", [])}
+def convert(handy: dict) -> tuple[dict, list[str]]:
+    if handy.get("schema") != 2:
+        raise SystemExit(f"unsupported Handy catalog schema {handy.get('schema')}")
+    engine = engine_version()
     models = []
     skipped: list[str] = []
     for m in handy["models"]:
-        repo = m["id"]  # e.g. handy-computer/whisper-small-gguf
-        slug = m.get("slug") or repo.split("/")[-1].removesuffix("-gguf")
-        filenames = [f["filename"] for f in m["files"]]
-        pinned = pin(repo, filenames, prev_models.get(slug))
-        if isinstance(pinned, str):
-            skipped.append(f"{slug} ({pinned})")
+        slug = m["id"]
+        reason = check(m, engine)
+        if reason:
+            skipped.append(f"{slug} ({reason})")
             continue
-        revision, files = pinned
+        repo, revision = m["repository"], m["revision"]
         caps = m["capabilities"]
         models.append(
             {
                 "id": slug,
                 "name": m["name"],
                 "description": m["description"],
-                "family": m.get("family") or m.get("architecture") or "unknown",
+                "family": m["family"],
                 "parameters": m.get("parameters"),
-                "base_model": m.get("base_model"),
                 "license": m.get("license"),
                 "languages": m["languages"],
                 "capabilities": {
                     "streaming": bool(caps.get("streaming")),
                     "translate": bool(caps.get("translate")),
-                    "lang_detect": bool(caps.get("lang_detect")),
-                    "timestamps": caps.get("timestamps") or "none",
+                    "lang_detect": bool(caps.get("languageDetection")),
+                    "timestamps": bool(caps.get("timestamps")),
                 },
                 "quants": [
                     {
-                        "quant": f["quant"],
+                        "quant": quant,
                         "filename": f["filename"],
                         "url": f"{HF_BASE}/{repo}/resolve/{revision}/{f['filename']}",
-                        "sha256": files[f["filename"]]["sha256"],
-                        "size_bytes": files[f["filename"]]["size_bytes"],
+                        "sha256": f["sha256"],
+                        "size_bytes": f["size"],
                     }
-                    for f in m["files"]
+                    for quant, f in m["files"].items()
                 ],
-                "default_quant": pick_default_quant(m),
-                "recommended": bool(m.get("recommended")),
-                "recommended_rank": m.get("recommended_rank"),
-                "speed_score": m.get("speed_score"),
-                "accuracy_score": m.get("accuracy_score"),
+                "default_quant": m["quant"],
+                "recommended": bool(m.get("curated")),
             }
         )
-        print(f"  ok  {slug} ({len(filenames)} quants)", file=sys.stderr)
+        print(f"  ok  {slug} ({len(m['files'])} quants)", file=sys.stderr)
 
     converted = {
-        "catalog_version": handy.get("catalog_version"),
+        "catalog_version": handy["schema"],
         "generated_at": None,  # filled in by main(), see stamp_for
         "source": "cjpais/Handy catalog.json",
         "models": models,
@@ -190,7 +182,7 @@ def main() -> None:
     print(f"Converting {len(handy['models'])} models…", file=sys.stderr)
     out = Path(args.out)
     previous = load_previous(out)
-    catalog, skipped = convert(handy, previous)
+    catalog, skipped = convert(handy)
 
     # The release gate re-syncs and asks git whether anything moved, so a
     # stamp that advances on every run would fail every tag. It marks when

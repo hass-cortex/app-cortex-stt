@@ -356,18 +356,20 @@ models/quants:
 
 ```bash
 cd cortex-stt
-uv run scripts/sync-catalog.py            # fetch Handy main, pin each model to an HF commit
+uv run scripts/sync-catalog.py            # fetch Handy main (schema 2), verify each pin on HF
 # or pin a source: --source /path/to/catalog.json
 ```
 
 The script rewrites `src/model/catalog.json`: every URL is
-`resolve/<commit>/<file>`, and its sha256 and size come from that same
+`resolve/<revision>/<file>` at the commit upstream pins, and each file's
+sha256 and size are kept only when Hugging Face serves that file at that
 commit, so a release keeps installing after upstream re-uploads a file
-(ADR 0003). A model moves to a newer commit only when one of its files
-changed. Review the diff, run
+(ADR 0003). Review the diff, run
 `cargo test --no-default-features` (catalog consistency tests), and
-commit. Models that are not anonymously downloadable (gated repos) are
-skipped with a warning.
+commit. Skipped with a warning: non-transcription models (`role` other
+than `asr` — VAD, language ID, diarization), models whose `minEngine` is
+newer than the pinned transcribe-cpp, gated repos, and pins Hugging Face
+does not confirm. A different upstream `schema` stops the script.
 
 One-off local models need no catalog entry: drop any `*.gguf` into the
 model dir and hit `POST /api/models/scan` (it appears as a **Custom

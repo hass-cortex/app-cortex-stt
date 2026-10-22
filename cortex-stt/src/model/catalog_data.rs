@@ -25,8 +25,6 @@ pub struct CatalogModel {
     #[serde(default)]
     pub parameters: Option<String>,
     #[serde(default)]
-    pub base_model: Option<String>,
-    #[serde(default)]
     pub license: Option<String>,
     pub languages: Vec<String>,
     pub capabilities: CatalogCapabilities,
@@ -34,12 +32,6 @@ pub struct CatalogModel {
     pub default_quant: String,
     #[serde(default)]
     pub recommended: bool,
-    #[serde(default)]
-    pub recommended_rank: Option<u32>,
-    #[serde(default)]
-    pub speed_score: Option<u32>,
-    #[serde(default)]
-    pub accuracy_score: Option<u32>,
 }
 
 /// Model capabilities as advertised by the catalog (display/UX only —
@@ -49,7 +41,7 @@ pub struct CatalogCapabilities {
     pub streaming: bool,
     pub translate: bool,
     pub lang_detect: bool,
-    pub timestamps: String,
+    pub timestamps: bool,
 }
 
 /// One precision variant of a catalog model (a **Quant**).

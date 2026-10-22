@@ -56,29 +56,11 @@ export type ModelStatus =
 	| "custom"
 	| "error";
 
-export type ModelFamily =
-	| "whisper"
-	| "parakeet"
-	| "sensevoice"
-	| "canary"
-	| "cohere"
-	| "fun"
-	| "gigaam"
-	| "granite"
-	| "medasr"
-	| "moonshine"
-	| "nemotron"
-	| "qwen3"
-	| "voxtral"
-	| "custom";
-
-export type TimestampGranularity = "none" | "segment" | "word";
-
 export interface ModelCapabilities {
 	streaming: boolean;
 	translate: boolean;
 	lang_detect: boolean;
-	timestamps: TimestampGranularity;
+	timestamps: boolean;
 }
 
 /** One installable quantization of a model (GGUF). */
@@ -91,7 +73,8 @@ export interface ModelInfo {
 	id: string;
 	name: string;
 	description: string;
-	family: ModelFamily;
+	/** Upstream architecture name, or "custom". */
+	family: string;
 	languages: string[];
 	capabilities: ModelCapabilities;
 	quants: QuantSummary[];
@@ -101,9 +84,6 @@ export interface ModelInfo {
 	/** Size of the downloaded (or default) quant, in MB. */
 	size_mb: number;
 	recommended: boolean;
-	recommended_rank: number | null;
-	speed_score: number | null;
-	accuracy_score: number | null;
 	status: ModelStatus;
 	disk_usage_bytes: number;
 	is_loaded: boolean;
