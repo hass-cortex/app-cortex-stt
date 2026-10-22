@@ -264,10 +264,7 @@ export function NewRunDialog({
 											hitPad={false}
 											className="w-24 shrink-0 justify-end overflow-hidden text-xs text-text-muted"
 										>
-											<span className="truncate">
-												{m.languages.slice(0, 2).join(", ")}
-												{m.languages.length > 2 ? ` +${m.languages.length - 2}` : ""}
-											</span>
+											<span className="truncate">{languageCell(m.languages, language)}</span>
 										</Hint>
 										{m.is_loaded && <span className="text-xs text-accent shrink-0">loaded</span>}
 									</div>
@@ -355,6 +352,21 @@ export function NewRunDialog({
 			</div>
 		</Modal>
 	);
+}
+
+/**
+ * What a candidate's language column says: whether the model declares the
+ * run's hint, which is the question when picking. The catalog lists
+ * languages alphabetically, so its first entries say nothing about the
+ * model. The hint is a BCP-47 tag (`zh-TW`); catalogs declare base subtags.
+ */
+function languageCell(languages: string[], hint: string): string {
+	const base = (hint.trim().split("-")[0] ?? "").toLowerCase();
+	const [only, ...rest] = languages;
+	if (only === undefined) return "unknown";
+	if (!base) return rest.length === 0 ? only : `${languages.length} langs`;
+	const mark = languages.includes(base) ? "✓" : "—";
+	return `${mark} ${base} · ${languages.length}`;
 }
 
 /**

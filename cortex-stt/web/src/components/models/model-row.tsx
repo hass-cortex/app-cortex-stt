@@ -24,18 +24,6 @@ interface ModelRowProps {
 
 const cell = "num text-[11.5px] text-text-secondary";
 
-/** The download API keys on the quant NAME, so two catalog entries sharing
- *  one are not two choices — offering both duplicates a React key and
- *  cannot change what gets fetched. */
-function uniqueQuants(quants: ModelInfo["quants"]): ModelInfo["quants"] {
-	const seen = new Set<string>();
-	return quants.filter((q) => {
-		if (seen.has(q.quant)) return false;
-		seen.add(q.quant);
-		return true;
-	});
-}
-
 export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 	const downloadMutation = useDownloadModel();
 	const deleteMutation = useDeleteModel();
@@ -164,10 +152,10 @@ export function ModelRow({ model, measured, isDefault }: ModelRowProps) {
 						<select
 							value={quant}
 							onChange={(e) => setQuant(e.target.value)}
-							disabled={uniqueQuants(model.quants).length <= 1}
+							disabled={model.quants.length <= 1}
 							className="num w-[62px] h-6 px-1.5 hidden lg:block bg-surface-3 border border-border rounded-[5px] text-[10.5px] text-text-secondary cursor-pointer"
 						>
-							{uniqueQuants(model.quants).map((q) => (
+							{model.quants.map((q) => (
 								<option key={q.quant} value={q.quant}>
 									{q.quant}
 								</option>

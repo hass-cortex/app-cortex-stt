@@ -141,6 +141,23 @@ mod tests {
         }
     }
 
+    /// A download is keyed by quant name, so two entries sharing one would
+    /// be two choices in the UI that fetch the same file.
+    #[test]
+    fn quant_names_are_unique_per_model() {
+        for m in catalog_models() {
+            let mut seen = std::collections::HashSet::new();
+            for q in &m.quants {
+                assert!(
+                    seen.insert(&q.quant),
+                    "{} lists quant {} twice",
+                    m.id,
+                    q.quant
+                );
+            }
+        }
+    }
+
     /// Home Assistant matches an STT language exactly, so a region-tagged
     /// `en-US` would leave a pipeline set to `en` unsupported.
     #[test]
