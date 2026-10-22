@@ -160,10 +160,10 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
     let models = catalog.list_models().await;
 
     println!(
-        "{:<28} {:<12} {:<14} {:<8} {:<6} Languages",
+        "{:<40} {:<20} {:<14} {:<8} {:<6} Languages",
         "ID", "Family", "Status", "Size", "Stream"
     );
-    println!("{}", "-".repeat(96));
+    println!("{}", "-".repeat(116));
 
     for m in &models {
         let langs = if m.languages.len() > 5 {
@@ -188,7 +188,7 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
         };
 
         println!(
-            "{:<28} {:<12} {:<14} {:>5}MB {:<6} {}",
+            "{:<40} {:<20} {:<14} {:>5}MB {:<6} {}",
             m.id,
             m.family,
             status,
@@ -624,7 +624,7 @@ async fn cmd_verify(
     let mut downloaded = 0usize;
 
     for info in &targets {
-        print!("{:<28} ", info.id);
+        print!("{:<40} ", info.id);
 
         // Stage 1: File exists
         let Some(model_path) = catalog.model_path(&info.id) else {
