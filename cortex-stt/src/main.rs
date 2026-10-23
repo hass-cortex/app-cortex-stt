@@ -249,8 +249,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Run HTTP server.
-    axum::serve(http_listener, app).await?;
+    // Run the HTTP server until SIGTERM / Ctrl-C, then stop accepting and
+    // let in-flight requests finish. SSE and WebSocket connections never
+    // finish on their own, so the drain is bounded — inside s6's default
+    // 3 s grace before it SIGKILLs the service.
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(http_listener, app).with_graceful_shutdown(async {
+        let _ = stop_rx.await;
+    });
+    let mut server = tokio::spawn(async move { server.await });
+    tokio::select! {
+        result = &mut server => {
+            result??;
+            return Ok(());
+        }
+        () = shutdown_signal() => {}
+    }
+    tracing::info!("Shutdown signal received; draining requests");
+    let _ = stop_tx.send(());
+    match tokio::time::timeout(SHUTDOWN_DRAIN, server).await {
+        Ok(result) => {
+            result??;
+            tracing::info!("HTTP server stopped");
+        }
+        Err(_) => tracing::info!(
+            drain_ms = SHUTDOWN_DRAIN.as_millis() as u64,
+            "Closing connections still open after the drain"
+        ),
+    }
 
     Ok(())
+}
+
+/// How long a shutdown waits for in-flight requests.
+const SHUTDOWN_DRAIN: Duration = Duration::from_secs(2);
+
+/// Resolves on SIGTERM (Supervisor / s6 stopping the app) or Ctrl-C.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Cannot listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }
