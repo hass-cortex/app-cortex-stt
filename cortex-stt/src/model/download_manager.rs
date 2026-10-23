@@ -296,7 +296,10 @@ impl DownloadManager {
                     model_id: variant.as_key(),
                 });
             }
-            ClaimOutcome::Queued => return Ok(()),
+            ClaimOutcome::Queued => {
+                info!(model_id = %variant, "download queued");
+                return Ok(());
+            }
             ClaimOutcome::Claimed(request) => *request,
         };
 

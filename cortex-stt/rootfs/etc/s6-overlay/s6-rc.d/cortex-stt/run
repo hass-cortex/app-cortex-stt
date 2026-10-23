@@ -8,18 +8,18 @@ LOG_LEVEL="$(bashio::config 'log_level')"
 LOG_FILTER="$(bashio::config 'log_filter')"
 
 # Precedence: a pre-set RUST_LOG wins; then the raw log_filter override; then
-# the log_level enum. The enum's debug/trace use a per-target filter so the
-# verbose level only applies to our own crate — keeping dependency noise (ort,
-# hyper, tower, rubato, …) at info. Set log_filter (e.g. "info,ort=debug") as
-# an escape hatch when you need a dependency crate's debug/trace logs.
+# the log_level enum. The enum's debug/trace raise only our own crate and the
+# inference library (transcribe_cpp, kept at warn otherwise by the binary);
+# other dependencies (hyper, tower, rubato, …) stay at info. Set log_filter
+# (e.g. "info,hyper=debug") as an escape hatch for a dependency's debug logs.
 if bashio::var.has_value "${RUST_LOG:-}"; then
     : # respect an explicitly pre-set RUST_LOG as-is
 elif bashio::var.has_value "${LOG_FILTER}"; then
     export RUST_LOG="${LOG_FILTER}"
 else
     case "${LOG_LEVEL}" in
-        trace)   export RUST_LOG="info,cortex_stt=trace" ;;
-        debug)   export RUST_LOG="info,cortex_stt=debug" ;;
+        trace)   export RUST_LOG="info,cortex_stt=trace,transcribe_cpp=debug" ;;
+        debug)   export RUST_LOG="info,cortex_stt=debug,transcribe_cpp=info" ;;
         info)    export RUST_LOG="info" ;;
         warning) export RUST_LOG="warn" ;;
         error)   export RUST_LOG="error" ;;

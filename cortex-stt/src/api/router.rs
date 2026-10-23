@@ -8,8 +8,8 @@ use std::sync::Arc;
 use axum::Router;
 use axum::middleware;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 
+use crate::api::access_log::access_log;
 use crate::api::auth::auth_middleware;
 use crate::state::AppState;
 
@@ -44,14 +44,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(protected_routes)
         .with_state(state)
         .layer(CorsLayer::permissive())
-        // Catch-all per-request access log (method, path, status, latency).
-        // Outermost layer so it also records auth rejections and CORS-handled
-        // requests. Span + response are emitted at INFO so the access log is
-        // visible at the default log level — the single highest-leverage signal
-        // for "did a request reach the server and how did it end".
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
-        )
+        // Per-request span + access log. Outermost layer so it also records
+        // auth rejections and CORS-handled requests.
+        .layer(middleware::from_fn(access_log))
 }

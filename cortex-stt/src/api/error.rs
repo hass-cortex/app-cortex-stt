@@ -33,19 +33,24 @@ impl From<&AsrError> for ApiError {
     }
 }
 
+/// The error a response carries, for the access log. Attached as a
+/// response extension so the one access-log line names the cause.
+#[derive(Debug, Clone)]
+pub struct ResponseError {
+    pub code: &'static str,
+    pub message: String,
+}
+
 impl IntoResponse for AsrError {
     fn into_response(self) -> Response {
         let status = self.status();
-        // Single choke point for every error response: surface 5xx at warn
-        // (server faults: inference, pool timeout, panic) and 4xx at debug
-        // (client faults: bad audio, auth, not-found). One log here covers all
-        // AsrError variants, which were previously serialized silently.
-        if status.is_server_error() {
-            tracing::warn!(code = self.code(), status = status.as_u16(), error = %self, "request failed");
-        } else {
-            tracing::debug!(code = self.code(), status = status.as_u16(), error = %self, "request rejected");
-        }
         let body = ApiError::from(&self);
-        (status, axum::Json(body)).into_response()
+        let logged = ResponseError {
+            code: body.code,
+            message: body.message.clone(),
+        };
+        let mut response = (status, axum::Json(body)).into_response();
+        response.extensions_mut().insert(logged);
+        response
     }
 }

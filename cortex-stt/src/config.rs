@@ -242,7 +242,7 @@ impl AppConfig {
             if dir.join("index.html").exists() {
                 return Some(dir.clone());
             }
-            tracing::warn!(?dir, "Configured static-dir does not contain index.html");
+            tracing::warn!(dir = %dir.display(), "Configured static-dir does not contain index.html");
             return None;
         }
 

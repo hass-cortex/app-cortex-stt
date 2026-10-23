@@ -181,6 +181,7 @@ pub async fn download_model(
     // promoted task ran), in which case cancel() owns the state and we must
     // not resurrect a "Downloading" entry it just cleared.
     if !cancel_flag.is_cancelled() {
+        info!(model_id = %model_id, url = %url, "download started");
         downloads.set_progress(initial_progress.clone()).await;
     }
 

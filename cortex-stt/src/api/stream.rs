@@ -24,7 +24,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::any;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::Instrument;
 
 use crate::api::auth::AuthKeyId;
 use crate::audio::canonical::SAMPLE_RATE;
@@ -33,7 +33,7 @@ use crate::engine::traits::{Timestamps, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::TranscriptionSource;
 use crate::state::AppState;
-use crate::transcriber::{StreamMeta, TranscribeResponse};
+use crate::transcriber::{StreamMeta, StreamSession, TranscribeResponse};
 
 /// A stream session holds an engine pool slot; a client that goes silent
 /// (TCP half-open, wedged pipeline) must not hold it forever. Applied to
@@ -128,7 +128,24 @@ async fn stream_upgrade(
     ws: WebSocketUpgrade,
 ) -> Response {
     let api_key_id = auth_key.map(|ext| ext.0.0);
-    ws.on_upgrade(move |socket| handle_socket(state, socket, api_key_id))
+    // The session outlives the upgrade request; keep its span so every
+    // line the session writes names the request that opened it.
+    let span = tracing::Span::current();
+    ws.on_upgrade(move |socket| handle_socket(state, socket, api_key_id).instrument(span))
+}
+
+/// Report an error that ends the socket before a session exists. No
+/// history row is written: there is no model or audio yet to record.
+async fn reject(socket: &mut WebSocket, e: &AsrError) {
+    tracing::info!(code = e.code(), error = %e, "stream rejected before start");
+    send_event(socket, &ServerEvent::error(e)).await;
+}
+
+/// Report an error raised by the socket, not the pipeline, mid-session;
+/// the failure row records it instead of a client disconnect.
+async fn abort(socket: &mut WebSocket, session: StreamSession, e: &AsrError) {
+    session.abort(e).await;
+    send_event(socket, &ServerEvent::error(e)).await;
 }
 
 async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: Option<String>) {
@@ -137,7 +154,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
         let frame = match recv_frame(&mut socket).await {
             Ok(f) => f,
             Err(e) => {
-                send_event(&mut socket, &ServerEvent::error(&e)).await;
+                reject(&mut socket, &e).await;
                 return;
             }
         };
@@ -148,18 +165,21 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
                     let e = AsrError::StreamProtocol {
                         detail: "first message must be a start message".to_string(),
                     };
-                    send_event(&mut socket, &ServerEvent::error(&e)).await;
+                    reject(&mut socket, &e).await;
                     return;
                 }
             },
             // Answered automatically by axum.
             Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-            _ => return,
+            _ => {
+                tracing::debug!("stream socket closed before start");
+                return;
+            }
         }
     };
 
     if let Err(e) = validate_start(&start) {
-        send_event(&mut socket, &ServerEvent::error(&e)).await;
+        reject(&mut socket, &e).await;
         return;
     }
 
@@ -204,8 +224,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
         let frame = match recv_frame(&mut socket).await {
             Ok(f) => f,
             Err(e) => {
-                // Idle client: report, then drop the session (aborted row).
-                send_event(&mut socket, &ServerEvent::error(&e)).await;
+                abort(&mut socket, session, &e).await;
                 return;
             }
         };
@@ -214,7 +233,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
                 let samples = match raw_pcm_to_f32(&data, SAMPLE_RATE, 1) {
                     Ok(s) => s,
                     Err(e) => {
-                        send_event(&mut socket, &ServerEvent::error(&e)).await;
+                        abort(&mut socket, session, &e).await;
                         return;
                     }
                 };
@@ -255,14 +274,13 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
                     let e = AsrError::StreamProtocol {
                         detail: "unexpected message during active stream".to_string(),
                     };
-                    send_event(&mut socket, &ServerEvent::error(&e)).await;
+                    abort(&mut socket, session, &e).await;
                     return;
                 }
             },
             Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
             Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                debug!("stream socket closed before finalize; aborting session");
-                // Dropping the session persists the aborted history row.
+                // Dropping the session persists and logs the aborted row.
                 return;
             }
         }

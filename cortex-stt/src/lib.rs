@@ -9,6 +9,7 @@ pub mod eval;
 pub mod history;
 mod http;
 pub mod job;
+pub mod logging;
 pub mod model;
 pub mod retention;
 pub mod settings;

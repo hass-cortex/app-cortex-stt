@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tracing::warn;
+use tracing::{Instrument, warn};
 
 use crate::audio::canonical::SAMPLE_RATE;
 use crate::audio::stats::AudioStats;
@@ -189,11 +189,11 @@ impl Transcriber {
             }
         };
         req.model = engine_key.clone();
-        tracing::info!(
+        tracing::debug!(
             model = %req.model,
             samples = req.samples.len(),
             duration_ms = req.duration_ms,
-            source = ?req.source,
+            source = req.source.as_str(),
             "transcription started",
         );
         let deadline = RequestDeadline::from_now(settings.timeout_secs);
@@ -227,18 +227,8 @@ impl Transcriber {
                 let meta = RecordMeta::from_request(&req);
                 let stats = AudioStats::of(&req.samples);
                 let samples = settings.save_audio.then_some(req.samples.as_ref());
-                self.save_to_history(&meta, samples, stats, &response).await;
-                tracing::info!(
-                    model = %req.model,
-                    inference_ms = response.inference_ms,
-                    pool_wait_ms = response.pool_wait_ms,
-                    cold_load_ms = response.cold_load_ms,
-                    text_len = response.text.len(),
-                    empty = response.text.is_empty(),
-                    device = %response.device,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    "transcription completed",
-                );
+                let record_id = self.save_to_history(&meta, samples, stats, &response).await;
+                log_completed(&meta, &response, stats, record_id.as_deref(), started, None);
                 Ok(response)
             }
             Err(e) => {
@@ -267,9 +257,10 @@ impl Transcriber {
             }
         };
         meta.model = engine_key.clone();
-        tracing::info!(
+        tracing::debug!(
             model = %meta.model,
-            source = ?meta.source,
+            source = meta.source.as_str(),
+            capture_device = meta.capture_device.as_deref(),
             "stream session started",
         );
 
@@ -352,8 +343,8 @@ impl Transcriber {
         Ok((guard, metrics))
     }
 
-    /// Write a history record for the completed transcription.
-    /// Best-effort — errors are logged but never propagate; the
+    /// Write a history record for the completed transcription and return
+    /// its id. Best-effort — errors are logged but never propagate; the
     /// response has already been computed and the caller cares more
     /// about returning that than about a logging-layer failure.
     /// `samples` is `None` when audio persistence is disabled.
@@ -363,7 +354,7 @@ impl Transcriber {
         samples: Option<&[f32]>,
         stats: Option<AudioStats>,
         response: &TranscribeResponse,
-    ) {
+    ) -> Option<String> {
         let segments = response
             .segments
             .iter()
@@ -388,8 +379,12 @@ impl Transcriber {
             clip_ratio: stats.map(|s| s.clip_ratio),
             ..base_record(meta)
         };
-        if let Err(e) = self.history.create(record, samples).await {
-            warn!(error = %e, "Failed to save transcription history");
+        match self.history.create(record, samples).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                warn!(error = %e, "Failed to save transcription history");
+                None
+            }
         }
     }
 
@@ -399,21 +394,41 @@ impl Transcriber {
     /// `/api/metrics` error_count would stay dead (it only ever counted
     /// success rows with has_error=false).
     async fn on_failure(&self, meta: &RecordMeta, error: &AsrError) {
-        warn!(
-            model = %meta.model,
-            code = error.code(),
-            duration_ms = meta.duration_ms,
-            error = %error,
-            "transcription failed",
-        );
         let record = CreateRecord {
             has_error: true,
             error_message: Some(error.to_string()),
             ..base_record(meta)
         };
         // Never persist audio for a failed request.
-        if let Err(e) = self.history.create(record, None).await {
-            warn!(error = %e, "Failed to save failure history record");
+        let record_id = match self.history.create(record, None).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                warn!(error = %e, "Failed to save failure history record");
+                None
+            }
+        };
+        // A server fault is a WARN; a request the caller got wrong (an
+        // ambiguous Variant, audio over the limit) is an INFO.
+        macro_rules! failed {
+            ($level:ident) => {
+                tracing::$level!(
+                    model = %meta.model,
+                    quant = meta.quant.as_deref(),
+                    source = meta.source.as_str(),
+                    capture_device = meta.capture_device.as_deref(),
+                    language = meta.language.as_deref(),
+                    duration_ms = meta.duration_ms,
+                    code = error.code(),
+                    error = %error,
+                    record_id = record_id.as_deref(),
+                    "transcription failed",
+                )
+            };
+        }
+        if error.status().is_server_error() {
+            failed!(warn);
+        } else {
+            failed!(info);
         }
     }
 }
@@ -612,17 +627,17 @@ impl StreamSession {
                 );
                 let samples = std::mem::take(&mut self.buffer);
                 let stats = AudioStats::of(&samples);
-                self.transcriber
+                let record_id = self
+                    .transcriber
                     .save_to_history(&meta, self.save_audio.then_some(&samples), stats, &response)
                     .await;
-                tracing::info!(
-                    model = %self.meta.model,
-                    duration_ms,
-                    inference_ms,
-                    streaming = self.engine_streaming,
-                    text_len = response.text.len(),
-                    elapsed_ms = self.started.elapsed().as_millis() as u64,
-                    "stream session completed",
+                log_completed(
+                    &meta,
+                    &response,
+                    stats,
+                    record_id.as_deref(),
+                    self.started,
+                    Some(self.engine_streaming),
                 );
                 Ok(response)
             }
@@ -630,6 +645,15 @@ impl StreamSession {
                 self.transcriber.on_failure(&meta, &e).await;
                 Err(e)
             }
+        }
+    }
+
+    /// End the session on an error raised outside the pipeline (a protocol
+    /// violation, an idle client): the failure row records `error`, not a
+    /// client disconnect.
+    pub async fn abort(mut self, error: &AsrError) {
+        if matches!(self.state, SessionState::Open(_)) {
+            self.fail(error).await;
         }
     }
 
@@ -694,11 +718,24 @@ impl Drop for StreamSession {
             return;
         };
         let transcriber = Arc::clone(&self.transcriber);
-        handle.spawn(async move {
-            if let Err(e) = transcriber.history.create(record, None).await {
-                warn!(error = %e, "Failed to persist aborted stream row");
+        let model = self.meta.model.clone();
+        let capture_device = self.meta.capture_device.clone();
+        let buffered_ms = self.buffered_ms();
+        handle.spawn(
+            async move {
+                match transcriber.history.create(record, None).await {
+                    Ok(record_id) => tracing::info!(
+                        model = %model,
+                        capture_device = capture_device.as_deref(),
+                        buffered_ms,
+                        record_id = %record_id,
+                        "stream session aborted: client disconnected before finalize",
+                    ),
+                    Err(e) => warn!(error = %e, "Failed to persist aborted stream row"),
+                }
             }
-        });
+            .in_current_span(),
+        );
         // The pool guard drops with self; the engine's own defensive
         // stream teardown makes the slot reusable.
     }
@@ -797,6 +834,37 @@ pub(crate) fn raw_text_if_distinct(
 /// Callers fill in only the fields that differ via struct-update syntax,
 /// so a new `CreateRecord` field is defaulted in one place rather than
 /// risking divergence between the two write sites.
+/// The one INFO line a successful transcription writes (sync, async job
+/// or stream session). `streaming` is `Some` for a stream session: whether
+/// the engine streamed or the session buffered.
+fn log_completed(
+    meta: &RecordMeta,
+    response: &TranscribeResponse,
+    stats: Option<AudioStats>,
+    record_id: Option<&str>,
+    started: Instant,
+    streaming: Option<bool>,
+) {
+    tracing::info!(
+        model = %response.model,
+        source = meta.source.as_str(),
+        capture_device = meta.capture_device.as_deref(),
+        language = meta.language.as_deref(),
+        streaming,
+        duration_ms = response.duration_ms,
+        inference_ms = response.inference_ms,
+        pool_wait_ms = response.pool_wait_ms,
+        cold_load_ms = response.cold_load_ms,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        device = %response.device,
+        text_len = response.text.len(),
+        empty = response.text.is_empty(),
+        rms_db = stats.map(|s| s.rms_db),
+        record_id,
+        "transcription completed",
+    );
+}
+
 fn base_record(meta: &RecordMeta) -> CreateRecord {
     CreateRecord {
         source: meta.source,

@@ -61,6 +61,7 @@ async fn create_key(
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<ApiKeyCreated>), AsrError> {
     let (record, raw_key) = state.db.create_api_key(&req.name).await?;
+    tracing::info!(key_id = %record.id, name = %record.name, "API key created");
 
     Ok((
         StatusCode::CREATED,
@@ -79,6 +80,7 @@ async fn delete_key(
     Path(key_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AsrError> {
     state.db.delete_api_key(&key_id).await?;
+    tracing::info!(key_id = %key_id, "API key revoked");
 
     Ok(Json(serde_json::json!({"deleted": key_id})))
 }

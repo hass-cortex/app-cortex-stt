@@ -92,6 +92,7 @@ async fn delete_history_record(
     Path(record_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AsrError> {
     state.history.delete(&record_id).await?;
+    tracing::info!(record_id = %record_id, "history record deleted");
     Ok(Json(serde_json::json!({"deleted": record_id})))
 }
 
@@ -107,6 +108,11 @@ async fn cleanup_history(
         .history
         .run_retention_sweep(&settings.record_retention, &settings.audio_retention)
         .await;
+    tracing::info!(
+        deleted_records = outcome.deleted_records,
+        dropped_audios = outcome.dropped_audios,
+        "retention sweep run on request",
+    );
     Ok(Json(serde_json::json!({
         "deleted_records": outcome.deleted_records,
         "dropped_audios": outcome.dropped_audios,
@@ -127,6 +133,11 @@ async fn delete_history_records(
     Json(body): Json<DeleteManyBody>,
 ) -> Result<Json<serde_json::Value>, AsrError> {
     let deleted = state.history.delete_many(&body.ids).await?;
+    tracing::info!(
+        requested = body.ids.len(),
+        deleted,
+        "history records deleted"
+    );
     Ok(Json(serde_json::json!({
         "requested": body.ids.len(),
         "deleted": deleted,
@@ -138,6 +149,11 @@ async fn delete_all_history(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AsrError> {
     let outcome = state.history.delete_all().await?;
+    tracing::info!(
+        deleted_records = outcome.records_deleted,
+        deleted_audio_files = outcome.audio_files_deleted,
+        "all history deleted",
+    );
     Ok(Json(serde_json::json!({
         "deleted_records": outcome.records_deleted,
         "deleted_audio_files": outcome.audio_files_deleted,

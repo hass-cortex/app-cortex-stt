@@ -221,6 +221,12 @@ impl EvalRunner {
         .await?;
         let sample_ids: Vec<String> = samples.iter().map(|s| s.id.clone()).collect();
         store::set_run_samples(&self.db, &run_id, &sample_ids).await?;
+        info!(
+            run_id = %run_id,
+            models = %req.model_ids.join(","),
+            samples = sample_ids.len(),
+            "evaluation run started"
+        );
 
         let cancel = Arc::new(AtomicBool::new(false));
         *self.in_flight.lock().await = Some(InFlight {

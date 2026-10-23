@@ -19,19 +19,12 @@ use cortex_stt::job::spawn_job_sweeper;
 use cortex_stt::state::AppState;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load();
 
-    // Initialize tracing with JSON structured logging.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
-        )
-        .json()
-        .init();
+    cortex_stt::logging::init(&config.log_level);
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -44,12 +37,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_dir = config.audio_dir();
     tokio::fs::create_dir_all(&model_dir).await?;
     tokio::fs::create_dir_all(&config.data_dir).await?;
-    tracing::info!(?model_dir, ?audio_dir, "Data directories ready");
+    tracing::info!(model_dir = %model_dir.display(), audio_dir = %audio_dir.display(), "Data directories ready");
 
     // Open SQLite database.
     let db_path = config.data_dir.join("records.db");
     let db = Arc::new(Database::open(&db_path).await?);
-    tracing::info!(?db_path, "Database opened");
+    tracing::info!(db_path = %db_path.display(), "Database opened");
 
     // Load stored settings once; reused below for the engine config and
     // the pre-load.
@@ -69,8 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         pool_size = effective.pool_size,
         max_loaded_models = effective.max_loaded_models,
-        idle_timeout = ?effective.idle_timeout,
-        preload = ?effective.preload,
+        idle_timeout_secs = effective.idle_timeout.map(|d| d.as_secs()),
+        preload = effective.preload.as_deref(),
         "Startup config resolved (stored settings take precedence)"
     );
 
@@ -145,7 +138,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|v| v.key.as_key())
         })
     {
-        tracing::info!(preload = ?stored.preload, "Moved the default model to the pre-load");
+        tracing::info!(
+            preload = stored.preload.as_deref(),
+            "Moved the default model to the pre-load"
+        );
         preload = preload.or_else(|| stored.preload.clone());
         if let Err(e) = db.save_settings(&stored).await {
             tracing::warn!(error = %e, "Failed to save the migrated settings");
@@ -219,7 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // SPA fallback: static files first, then index.html with injection for unknown routes
         let spa_fallback = axum::routing::get(make_index_handler(index_template));
         app = app.fallback_service(serve_dir.not_found_service(spa_fallback));
-        tracing::info!(?web_dir, "Serving web UI with SPA fallback (ingress-aware)");
+        tracing::info!(web_dir = %web_dir.display(), "Serving web UI with SPA fallback (ingress-aware)");
     } else {
         tracing::info!("No web UI directory found; static file serving disabled");
     }
@@ -239,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(resp) => tracing::info!(
                     host = %resp.host,
                     port = resp.port,
-                    uuid = ?resp.uuid,
+                    uuid = resp.uuid.as_deref(),
                     "Discovery announce sent to Home Assistant Supervisor",
                 ),
                 Err(cortex_stt::error::AsrError::NotInSupervisor) => {

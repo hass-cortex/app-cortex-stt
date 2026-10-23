@@ -17,6 +17,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 use crate::api::auth::AuthKeyId;
 use crate::audio::canonical::{SAMPLE_RATE, SAMPLE_RATE_F64};
@@ -87,17 +88,17 @@ fn prepare(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("audio/wav");
 
-    // Request-arrival breadcrumb: proves the request reached the engine layer
-    // and records how many audio bytes were received. Decisive for telling a
-    // real payload apart from an empty/aborted upload.
-    tracing::info!(
+    // Request-arrival breadcrumb: records how many audio bytes arrived,
+    // telling a real payload apart from an empty/aborted upload. The
+    // outcome line (`transcription completed` / `failed`) is the INFO one.
+    tracing::debug!(
         model = %query.model,
         content_type = %content_type,
         body_bytes = body.len(),
-        sample_rate = ?query.sample_rate,
-        channels = ?query.channels,
-        language = ?query.language,
-        api_key_id = ?api_key_id,
+        sample_rate = query.sample_rate,
+        channels = query.channels,
+        language = query.language.as_deref(),
+        capture_device = query.capture_device.as_deref(),
         "transcribe request received",
     );
 
@@ -210,39 +211,37 @@ async fn transcribe_async(
     };
     state.job_store.insert(job).await;
 
+    tracing::info!(job_id = %job_id, model = %req.model, "async transcription job accepted");
+
     // Spawn background task to drive the pipeline.
     let job_store = Arc::clone(&state.job_store);
     let transcriber = Arc::clone(&state.transcriber);
     let job_id_bg = job_id.clone();
 
-    tokio::spawn(async move {
-        // Skip work if the job was cancelled before we started. A cancel
-        // that arrives *during* inference is handled by the JobStore
-        // transition guard: `complete`/`fail` no-op once the job is
-        // Cancelled, so the result below can't clobber the cancellation.
-        if job_store.is_cancelled(&job_id_bg).await {
-            return;
-        }
+    let span = tracing::info_span!("job", job_id = %job_id);
+    tokio::spawn(
+        async move {
+            // Skip work if the job was cancelled before we started. A cancel
+            // that arrives *during* inference is handled by the JobStore
+            // transition guard: `complete`/`fail` no-op once the job is
+            // Cancelled, so the result below can't clobber the cancellation.
+            if job_store.is_cancelled(&job_id_bg).await {
+                return;
+            }
 
-        match transcriber.transcribe(req).await {
-            Ok(response) => {
-                job_store.complete(&job_id_bg, response).await;
-            }
-            Err(e) => {
-                // Transcriber::transcribe already logged the failure at warn
-                // level and persisted a failure history row; this breadcrumb
-                // only adds the job_id correlation, so keep it at debug to
-                // avoid double-counting failures in warn-level log scrapes.
-                tracing::debug!(
-                    job_id = %job_id_bg,
-                    code = e.code(),
-                    error = %e,
-                    "async transcription job failed",
-                );
-                job_store.fail(&job_id_bg, e.to_string()).await;
+            match transcriber.transcribe(req).await {
+                Ok(response) => {
+                    job_store.complete(&job_id_bg, response).await;
+                }
+                Err(e) => {
+                    // Transcriber::transcribe already logged the failure (inside
+                    // this task's `job` span) and persisted a failure row.
+                    job_store.fail(&job_id_bg, e.to_string()).await;
+                }
             }
         }
-    });
+        .instrument(span),
+    );
 
     Ok((
         StatusCode::ACCEPTED,

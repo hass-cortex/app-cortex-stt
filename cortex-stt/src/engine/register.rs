@@ -70,7 +70,7 @@ pub async fn register_installed_variants(
         ) else {
             continue;
         };
-        info!(variant = %key, model_path = ?variant.path, "Registered engine");
+        info!(variant = %key, model_path = %variant.path.display(), "Registered engine");
         engine_manager.register(&key, factory).await;
         registered += 1;
     }

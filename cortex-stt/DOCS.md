@@ -159,11 +159,11 @@ idle timeout, history retention, and timezone.
 
 ## Configuration
 
-| Option              | Default   | Description                                                                                                                                                                                                         |
-| ------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `log_level`         | `info`    | One of `trace`, `debug`, `info`, `warning`, `error`, `fatal`. `debug`/`trace` raise only this app's own logs and keep dependency crates at `info`.                                                                  |
-| `log_filter`        | _(empty)_ | Advanced. Raw `RUST_LOG` filter that overrides `log_level` when set — e.g. `info,cortex_stt::engine=debug` to capture engine logs, or `info,cortex_stt=debug,hyper=debug` for HTTP. Leave empty to use `log_level`. |
-| `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                                   |
+| Option              | Default   | Description                                                                                                                                                                                                                                               |
+| ------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `log_level`         | `info`    | One of `trace`, `debug`, `info`, `warning`, `error`, `fatal`. At `info`, routine polling (fast successful GETs) is not logged; `debug`/`trace` add it, raise this app's own logs and the inference library's, and keep other dependency crates at `info`. |
+| `log_filter`        | _(empty)_ | Advanced. Raw `RUST_LOG` filter that overrides `log_level` when set — e.g. `info,cortex_stt::engine=debug` to capture engine logs, or `info,cortex_stt=debug,hyper=debug` for HTTP. Leave empty to use `log_level`.                                       |
+| `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                                                                         |
 
 The app exposes its HTTP API on port `8769`. Most runtime settings
 (pre-load, idle timeout, history retention, timezone)

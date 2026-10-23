@@ -44,6 +44,25 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Each field that differs between `self` and `new`, as
+    /// `field: old -> new` (values in compact JSON) — the audit line a
+    /// settings change writes.
+    pub fn changes_to(&self, new: &Settings) -> Vec<String> {
+        let (Ok(serde_json::Value::Object(old)), Ok(serde_json::Value::Object(new))) =
+            (serde_json::to_value(self), serde_json::to_value(new))
+        else {
+            return Vec::new();
+        };
+        new.iter()
+            .filter_map(|(field, value)| {
+                let before = old.get(field).unwrap_or(&serde_json::Value::Null);
+                (before != value).then(|| format!("{field}: {before} -> {value}"))
+            })
+            .collect()
+    }
+}
+
+impl Settings {
     /// The engine idle-timeout these settings ask for — the single home
     /// for the "0 or null means keep loaded forever" rule. Both the
     /// startup precedence matrix (`EffectiveConfig::resolve`) and the
@@ -101,6 +120,29 @@ impl Default for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_settings_change_names_the_field_and_both_values() {
+        let old = Settings::default();
+        let mut new = old.clone();
+        new.preload = Some("SenseVoiceSmall:Q8_0".to_string());
+        new.save_audio = !old.save_audio;
+        let changes = old.changes_to(&new);
+        assert!(
+            changes.contains(&r#"preload: null -> "SenseVoiceSmall:Q8_0""#.to_string()),
+            "{changes:?}"
+        );
+        assert!(
+            changes.iter().any(|c| c.starts_with("save_audio: ")),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_save_reports_no_changes() {
+        let settings = Settings::default();
+        assert!(settings.changes_to(&settings.clone()).is_empty());
+    }
 
     #[test]
     fn settings_default_uses_days_policies() {

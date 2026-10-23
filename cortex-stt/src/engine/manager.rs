@@ -432,7 +432,7 @@ impl EngineManager {
                         let mut pools = mgr.pools.write().await;
                         let mut locks = mgr.load_locks.write().await;
                         for id in &to_unload {
-                            warn!(model_id = %id, "unloading idle model");
+                            info!(model_id = %id, "unloading idle model");
                             remove_model(&mut pools, &mut locks, id);
                         }
                     }

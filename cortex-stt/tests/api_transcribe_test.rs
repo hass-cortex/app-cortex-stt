@@ -16,6 +16,7 @@ use cortex_stt::api::stream::stream_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig, SharedEngineFactory};
 use cortex_stt::engine::testing::FakeEngine;
+use cortex_stt::history::ListRecordsFilter;
 use cortex_stt::state::AppState;
 use test_helpers::test_state_with;
 
@@ -455,4 +456,43 @@ async fn test_ws_stream_input_too_long_error() {
     let error_event = events.last().unwrap();
     assert_eq!(error_event["type"], "error");
     assert_eq!(error_event["code"], "INPUT_TOO_LONG");
+}
+
+#[tokio::test]
+async fn test_ws_protocol_violation_is_recorded_as_the_cause_not_a_disconnect() {
+    let (state, _tmp) = create_test_state().await;
+    let addr = spawn_ws_server(Arc::clone(&state)).await;
+
+    let url = format!("ws://{addr}/api/transcribe/stream");
+    let (mut ws, _resp) = connect_async(url).await.expect("ws connect");
+    let start = r#"{"type":"start","model":"whisper-small"}"#;
+    ws.send(WsMessage::text(start)).await.unwrap();
+    ws.send(WsMessage::binary(pcm_frame(8_000))).await.unwrap();
+    // A second start mid-session violates the protocol.
+    ws.send(WsMessage::text(start)).await.unwrap();
+
+    let mut error = None;
+    while let Some(Ok(msg)) = ws.next().await {
+        let Ok(text) = msg.to_text() else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+            continue;
+        };
+        if value["type"] == "error" {
+            error = Some(value);
+            break;
+        }
+    }
+    assert_eq!(error.expect("an error event")["code"], "STREAM_PROTOCOL");
+
+    let records = state
+        .history
+        .list(&ListRecordsFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1, "one failure row for the session");
+    let message = records[0].error_message.as_deref().unwrap_or_default();
+    assert!(
+        message.contains("unexpected message"),
+        "the row names the protocol violation, got {message:?}"
+    );
 }

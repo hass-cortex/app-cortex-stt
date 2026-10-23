@@ -30,6 +30,10 @@ async fn update_settings(
         state.catalog.resolve_variant(key)?;
     }
     state.db.save_settings(&settings).await?;
+    let changes = old.changes_to(&settings);
+    if !changes.is_empty() {
+        tracing::info!(changes = %changes.join("; "), "settings changed");
+    }
 
     apply_engine_settings(
         &state.engine_manager,
