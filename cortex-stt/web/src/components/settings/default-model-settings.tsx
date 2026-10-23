@@ -4,36 +4,65 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import { useSetDefaultModel } from "@/hooks/use-engine";
-import { useModels } from "@/hooks/use-models";
+import { useModels, useSetPreferredQuant } from "@/hooks/use-models";
 import { useMutationToast } from "@/hooks/use-mutation-toast";
 import { useSettings, useUpdateSettings } from "@/hooks/use-settings";
+import { variantKey } from "@/lib/variant";
 
 export function DefaultModelSettings() {
 	const { data: models } = useModels();
 	const { data: settings } = useSettings();
 	const setDefaultMutation = useSetDefaultModel();
+	const setPreferredMutation = useSetPreferredQuant();
 	const updateSettingsMutation = useUpdateSettings();
-	const runSetDefault = useMutationToast(setDefaultMutation, { success: "Default model updated" });
+	const { toast } = useToast();
 	const runSavePreload = useMutationToast(updateSettingsMutation, {
 		success: "Pre-load setting saved",
 	});
 
-	const defaultModel = settings?.default_model ?? "";
-	const [selectedDefault, setSelectedDefault] = useState(defaultModel);
-	const [preloadModel, setPreloadModel] = useState(settings?.preload_default_model ?? false);
-
-	const downloadedModels = (models ?? []).filter(
-		(m) => m.status === "downloaded" || m.status === "custom",
+	// The default names a model; its Preferred variant picks the quant, so
+	// choosing a Variant here sets both.
+	const candidates = (models ?? []).flatMap((m) =>
+		m.variants
+			.filter((v) => v.status === "downloaded")
+			.map((v) => ({
+				key: variantKey(m.id, v.quant),
+				modelId: m.id,
+				quant: v.quant,
+				label: v.quant ? `${m.name} (${v.quant})` : m.name,
+			})),
 	);
+	const defaultModel = models?.find((m) => m.id === settings?.default_model);
+	const defaultKey = defaultModel
+		? variantKey(defaultModel.id, defaultModel.preferred_quant)
+		: (settings?.default_model ?? "");
+	const [picked, setPicked] = useState<string | null>(null);
+	const selectedKey = picked ?? defaultKey;
+	const [preloadModel, setPreloadModel] = useState(settings?.preload_default_model ?? false);
 
 	const modelOptions = [
 		{ value: "", label: "" },
-		...downloadedModels.map((m) => ({ value: m.id, label: m.name })),
+		...candidates.map((c) => ({ value: c.key, label: c.label })),
 	];
 
-	const handleSetDefault = () => {
-		runSetDefault(selectedDefault);
+	const handleSetDefault = async () => {
+		const candidate = candidates.find((c) => c.key === selectedKey);
+		if (!candidate) return;
+		try {
+			if (candidate.modelId !== settings?.default_model)
+				await setDefaultMutation.mutateAsync(candidate.modelId);
+			if (candidate.quant)
+				await setPreferredMutation.mutateAsync({
+					modelId: candidate.modelId,
+					quant: candidate.quant,
+				});
+			setPicked(null);
+			toast(`${candidate.label} is now the default`, "success");
+		} catch (err) {
+			toast(`Failed: ${(err as Error).message}`, "error");
+		}
 	};
 
 	const handleSavePreload = () => {
@@ -46,26 +75,26 @@ export function DefaultModelSettings() {
 		<Card>
 			<CardHeader
 				title="Default Model"
-				description="Model used when no explicit model is specified"
+				description="Model and quant used when a request names no model"
 			/>
 			<div className="space-y-4">
 				<div className="flex items-center gap-2">
 					<Select
 						options={modelOptions}
-						value={selectedDefault}
-						onChange={(e) => setSelectedDefault(e.target.value)}
+						value={selectedKey}
+						onChange={(e) => setPicked(e.target.value)}
 						placeholder="Select model"
 						className="flex-1"
 					/>
 					<Button
 						onClick={handleSetDefault}
-						loading={setDefaultMutation.isPending}
-						disabled={selectedDefault === defaultModel}
+						loading={setDefaultMutation.isPending || setPreferredMutation.isPending}
+						disabled={!selectedKey || selectedKey === defaultKey}
 					>
 						Apply
 					</Button>
 				</div>
-				{defaultModel && selectedDefault === defaultModel && (
+				{defaultKey && selectedKey === defaultKey && (
 					<Badge variant="success">Current default</Badge>
 				)}
 
