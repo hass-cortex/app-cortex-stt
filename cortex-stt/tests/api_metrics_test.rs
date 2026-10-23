@@ -19,6 +19,7 @@ fn record() -> CreateRecord {
         source: TranscriptionSource::HttpApi,
         language: Some("zh".into()),
         model_id: "whisper-small".into(),
+        quant: None,
         audio_duration_ms: 1000,
         inference_ms: 100,
         model_load_ms: 0,

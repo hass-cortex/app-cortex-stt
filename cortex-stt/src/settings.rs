@@ -23,6 +23,13 @@ pub struct Settings {
     /// preserves the stored value, so a whole-blob save can't clobber it.
     #[serde(default)]
     pub default_model: Option<String>,
+    /// Each model's chosen **Preferred variant** quant, keyed by model id.
+    /// Written ONLY by `PUT /api/models/{id}/preferred`; preserved by
+    /// `PUT /api/settings` like `default_model`. A model absent here, or
+    /// whose chosen quant is not installed, falls back to its
+    /// earliest-installed Variant.
+    #[serde(default)]
+    pub preferred_quants: HashMap<String, String>,
     pub pool_size: usize,
     pub max_loaded_models: usize,
     /// None = keep models loaded forever; Some(n) = unload after n seconds idle.
@@ -63,6 +70,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             default_model: None,
+            preferred_quants: HashMap::new(),
             pool_size: 1,
             max_loaded_models: 1,
             idle_timeout_secs: None,

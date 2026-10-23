@@ -35,8 +35,28 @@ pub async fn test_state_full(
     .unwrap()
 }
 
+/// Give each engine registered by a bare name a Custom model file of that
+/// name, so a request naming it resolves to that Variant just as a real
+/// install would.
+pub async fn install_custom_models(engine_manager: &EngineManager, model_dir: &Path) {
+    std::fs::create_dir_all(model_dir).unwrap();
+    for id in engine_manager.registered_models().await {
+        if id.contains(':') {
+            continue; // a catalog Variant key, not a Custom model name
+        }
+        let file = model_dir.join(format!("{id}.gguf"));
+        if !file.exists() {
+            std::fs::write(file, b"fake").unwrap();
+        }
+    }
+}
+
 /// `test_state_full` with models and audio sharing one root.
+///
+/// The root is the test's own temp dir, so each engine registered by name
+/// gets its Custom model file there (see [`install_custom_models`]).
 pub async fn test_state_with(engine_manager: Arc<EngineManager>, data_dir: &Path) -> Arc<AppState> {
+    install_custom_models(&engine_manager, data_dir).await;
     test_state_full(engine_manager, data_dir, data_dir).await
 }
 

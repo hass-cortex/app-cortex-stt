@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use crate::error::AsrError;
 use crate::http;
+use crate::model::installed::VariantKey;
 
 const SUPERVISOR_DISCOVERY_URL: &str = "http://supervisor/discovery";
 
@@ -76,10 +77,16 @@ async fn fire_event(
     core_api_base: &str,
     token: &str,
     event: &str,
-    model_id: &str,
+    variant: &VariantKey,
 ) -> reqwest::Result<reqwest::Response> {
     let url = format!("{core_api_base}/events/{EVENT_TYPE}");
-    let body = serde_json::json!({ "event": event, "model_id": model_id });
+    // `quant` is null for a Custom model. Advisory either way: the
+    // listener re-fetches `/api/models` and reconciles.
+    let body = serde_json::json!({
+        "event": event,
+        "model_id": variant.model,
+        "quant": variant.quant,
+    });
     http::client()
         .post(&url)
         .bearer_auth(token)
@@ -92,12 +99,13 @@ async fn fire_event(
 /// Fire-and-forget notification that the installed model set changed. No-op
 /// when not running under Supervisor (no `SUPERVISOR_TOKEN`). Failures are
 /// logged, never propagated — an Install/Uninstall must succeed regardless.
-pub async fn notify_models_changed(event: &str, model_id: &str) {
+pub async fn notify_models_changed(event: &str, variant: &VariantKey) {
     let Some(token) = token() else {
         return;
     };
+    let model_id = variant.as_key();
 
-    match fire_event(SUPERVISOR_CORE_API, &token, event, model_id).await {
+    match fire_event(SUPERVISOR_CORE_API, &token, event, variant).await {
         Ok(resp) if resp.status().is_success() => {
             tracing::info!(event, model = %model_id, "HA event fired");
         }
@@ -157,7 +165,8 @@ mod tests {
     async fn fire_event_posts_typed_event_with_bearer_token() {
         let (base, mut rx) = spawn_core_mock().await;
 
-        let resp = fire_event(&base, "tok-123", "model_added", "whisper-tiny-int8")
+        let variant = VariantKey::new("whisper-tiny", Some("Q8_0".into()));
+        let resp = fire_event(&base, "tok-123", "model_added", &variant)
             .await
             .unwrap();
         assert!(resp.status().is_success());
@@ -169,7 +178,8 @@ mod tests {
         assert_eq!(event_type, EVENT_TYPE);
         assert_eq!(auth, "Bearer tok-123");
         assert_eq!(body["event"], "model_added");
-        assert_eq!(body["model_id"], "whisper-tiny-int8");
+        assert_eq!(body["model_id"], "whisper-tiny");
+        assert_eq!(body["quant"], "Q8_0");
     }
 
     #[tokio::test]
@@ -177,7 +187,7 @@ mod tests {
         // SUPERVISOR_TOKEN is unset in the test environment: must not panic.
         // (Avoids mutating process env, which would race other tests.)
         if token().is_none() {
-            notify_models_changed("model_removed", "whisper-tiny-int8").await;
+            notify_models_changed("model_removed", &VariantKey::new("whisper-tiny", None)).await;
         }
     }
 }

@@ -104,34 +104,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Clean-cut 0.3.0: remove legacy pre-GGUF artifacts (.bin / ONNX
     // dirs / orphaned .part) before scanning for downloadable models.
     cortex_stt::model::maintenance::cleanup_legacy_artifacts(&model_dir);
+    // Move pre-ADR-0007 flat installs into their model directories, with
+    // sidecars, before anything scans for installed Variants.
+    cortex_stt::model::installed::migrate_layout(&model_dir).await;
 
-    // Register engine factories for downloaded catalog models.
-    cortex_stt::engine::register::register_downloaded_models(
+    // Register an engine factory per installed Variant.
+    cortex_stt::engine::register::register_installed_variants(
         &engine_manager,
         &model_dir,
         &effective.backend_overrides,
     )
     .await;
 
-    // Fingerprint models installed before fingerprints existed, so
+    // Fingerprint files installed before fingerprints existed, so
     // upstream republishes show as updates. Background: hashes GBs once.
     {
         let model_dir = model_dir.clone();
-        tokio::spawn(async move { cortex_stt::model::fingerprint::backfill(&model_dir).await });
-    }
-
-    // Pre-load default model if the resolved config asks (CLI flag OR DB).
-    if effective.preload {
-        tracing::info!(model = %default_model, "Pre-loading default model");
-        match engine_manager.acquire(&default_model).await {
-            Ok(guard) => {
-                drop(guard); // Release back to pool immediately.
-                tracing::info!(model = %default_model, "Default model pre-loaded");
-            }
-            Err(e) => {
-                tracing::warn!(model = %default_model, error = %e, "Failed to pre-load default model");
-            }
-        }
+        tokio::spawn(async move { cortex_stt::model::installed::backfill(&model_dir).await });
     }
 
     // Assemble the service object graph (single assembly point — the
@@ -146,6 +135,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.http_port,
     )
     .await?;
+
+    // Pre-load the default model's Preferred variant if the resolved
+    // config asks (CLI flag OR DB).
+    if effective.preload {
+        let default_model = &state.startup_default_model;
+        tracing::info!(model = %default_model, "Pre-loading default model");
+        let loaded = match state.catalog.resolve_variant(default_model, None).await {
+            Ok(variant) => state
+                .engine_manager
+                .acquire(&variant.key.as_key())
+                .await
+                .map(drop),
+            Err(e) => Err(e),
+        };
+        match loaded {
+            Ok(()) => tracing::info!(model = %default_model, "Default model pre-loaded"),
+            Err(e) => {
+                tracing::warn!(model = %default_model, error = %e, "Failed to pre-load default model")
+            }
+        }
+    }
 
     // Spawn background retention cleanup (hourly).
     let _cleanup_handle = spawn_retention_cleanup(db.clone(), state.history.clone());

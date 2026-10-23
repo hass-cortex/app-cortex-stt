@@ -35,17 +35,28 @@ impl Database {
     }
 
     /// Save settings from `PUT /api/settings`. The incoming blob's
-    /// `default_model` is IGNORED — the stored value is preserved, so a
-    /// stale settings-form snapshot can never clobber a default set via
-    /// `PUT /api/engine/default` (the single writer of that field).
+    /// `default_model` and `preferred_quants` are IGNORED — the stored
+    /// values are preserved, so a stale settings-form snapshot can never
+    /// clobber a choice made through its own endpoint (the single writer
+    /// of each field).
     pub async fn save_settings(&self, settings: &Settings) -> Result<(), AsrError> {
         let _guard = self.settings_write_lock().lock().await;
         let mut merged = settings.clone();
-        merged.default_model = self
-            .read_settings_blob()
-            .await?
-            .and_then(|stored| stored.default_model);
+        let stored = self.read_settings_blob().await?;
+        merged.default_model = stored.as_ref().and_then(|s| s.default_model.clone());
+        merged.preferred_quants = stored.map(|s| s.preferred_quants).unwrap_or_default();
         self.write_settings_blob(&merged).await
+    }
+
+    /// Persist a model's Preferred variant quant — the only writer of
+    /// `preferred_quants`.
+    pub async fn set_preferred_quant(&self, model_id: &str, quant: &str) -> Result<(), AsrError> {
+        let _guard = self.settings_write_lock().lock().await;
+        let mut settings = self.read_settings_blob().await?.unwrap_or_default();
+        settings
+            .preferred_quants
+            .insert(model_id.to_string(), quant.to_string());
+        self.write_settings_blob(&settings).await
     }
 
     /// Persist the default model ID — the only writer of the field.

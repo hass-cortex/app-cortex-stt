@@ -1,7 +1,5 @@
-//! Engine factory registration based on the vendored catalog.
-//!
-//! No directory scanning heuristics — a model is registered when its
-//! catalog quant file (or a custom `*.gguf`) exists on disk.
+//! Engine factory registration: one factory per installed **Variant**
+//! (ADR 0007), keyed by `VariantKey::as_key`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -10,16 +8,15 @@ use tracing::info;
 
 use crate::engine::manager::EngineManager;
 use crate::engine::traits::BackendOverride;
-use crate::model::catalog::downloaded_quant;
-use crate::model::catalog_data::{catalog_models, find_by_filename};
+use crate::model::installed;
 use crate::settings::Settings;
 
 /// Sync engine-relevant settings to the runtime.
 ///
 /// Config knobs take effect on the next acquire / idle-check cycle.
 /// Backend overrides bake into factories at registration time, so a
-/// change re-registers and unloads the affected models — it takes
-/// effect on the next acquire instead of the next restart.
+/// change re-registers and unloads every Variant of the affected models —
+/// it takes effect on the next acquire instead of the next restart.
 pub async fn apply_engine_settings(
     engine_manager: &EngineManager,
     model_dir: &Path,
@@ -38,67 +35,44 @@ pub async fn apply_engine_settings(
         .await;
 
     if new.backend_overrides != old.backend_overrides {
-        register_downloaded_models(engine_manager, model_dir, &new.backend_overrides).await;
+        register_installed_variants(engine_manager, model_dir, &new.backend_overrides).await;
         let changed: std::collections::HashSet<&String> = new
             .backend_overrides
             .keys()
             .chain(old.backend_overrides.keys())
             .filter(|k| new.backend_overrides.get(*k) != old.backend_overrides.get(*k))
             .collect();
-        for model_id in changed {
-            engine_manager.unload(model_id).await;
+        for key in engine_manager.registered_models().await {
+            let model = key.split_once(':').map_or(key.as_str(), |(m, _)| m);
+            if changed.contains(&model.to_string()) {
+                engine_manager.unload(&key).await;
+            }
         }
     }
 }
 
-/// Register engine factories for all downloaded models.
-///
-/// Iterates the catalog (any quant on disk registers the model), then
-/// custom `*.gguf` files. Returns the number of factories registered.
-pub async fn register_downloaded_models(
+/// Register an engine factory for every installed Variant. A backend
+/// override is set per model and applies to all of its Variants.
+/// Returns the number of factories registered.
+pub async fn register_installed_variants(
     engine_manager: &EngineManager,
     model_dir: &Path,
     backend_overrides: &HashMap<String, BackendOverride>,
 ) -> u32 {
     let mut registered = 0u32;
 
-    for model in catalog_models() {
-        let Some(q) = downloaded_quant(model_dir, model) else {
-            continue;
-        };
-        let model_path = model_dir.join(&q.filename);
+    for variant in installed::scan(model_dir) {
+        let key = variant.key.as_key();
         let Some(factory) = create_factory(
-            &model.id,
-            model_path.clone(),
-            backend_overrides.get(&model.id),
+            &key,
+            variant.path.clone(),
+            backend_overrides.get(&variant.key.model),
         ) else {
             continue;
         };
-        info!(
-            model_id = %model.id,
-            quant = %q.quant,
-            ?model_path,
-            "Registered engine"
-        );
-        engine_manager.register(&model.id, factory).await;
+        info!(variant = %key, model_path = ?variant.path, "Registered engine");
+        engine_manager.register(&key, factory).await;
         registered += 1;
-    }
-
-    if let Ok(entries) = std::fs::read_dir(model_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".gguf") || find_by_filename(&name).is_some() {
-                continue;
-            }
-            let id = name.trim_end_matches(".gguf").to_string();
-            let Some(factory) = create_factory(&id, entry.path(), backend_overrides.get(&id))
-            else {
-                continue;
-            };
-            info!(model_id = %id, "Registered custom engine");
-            engine_manager.register(&id, factory).await;
-            registered += 1;
-        }
     }
 
     info!(registered, "Engine registration complete");

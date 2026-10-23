@@ -1,35 +1,37 @@
 //! Install / Uninstall: the only two operations that change the installed
-//! model set (see GLOSSARY.md).
+//! set (see GLOSSARY.md), both per **Variant** (ADR 0007).
 //!
-//! An **Install** is the transition "download reached Completed → model
-//! usable": remove any other quant (one quant per model), refresh the
-//! engine factory registration, unload the engine built from the previous
-//! file, announce the change to HA (live model sync). It runs on the download task before its slot is released —
-//! while the active entry still blocks a same-model re-download — and
+//! An **Install** is the transition "download reached Completed → Variant
+//! usable": refresh the engine factory registration, unload the engine
+//! built from the previous file of the same Variant (an update), announce
+//! the change to HA (live model sync). The model's other Variants are
+//! untouched. It runs on the download task before its slot is released —
+//! while the active entry still blocks a same-Variant re-download — and
 //! only for Completed, never Failed or Cancelled. Best-effort: a failed
 //! step logs and continues.
 //!
-//! An **Uninstall** is the mirror: delete the model's files, unload it,
-//! drop a kept download failure, announce to HA.
+//! An **Uninstall** is the mirror for one Variant: delete its file,
+//! unload it, drop a kept download failure, announce to HA. Removing a
+//! whole model is an Uninstall of each of its Variants.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
-use crate::engine::register::register_downloaded_models;
+use crate::engine::register::register_installed_variants;
 use crate::error::AsrError;
-use crate::model::catalog::{ModelCatalog, ResolvedModel, stale_quant_files};
-use crate::model::fingerprint;
+use crate::model::catalog::ModelCatalog;
+use crate::model::installed::VariantKey;
 use crate::model::progress::ProgressBoard;
 use crate::model::types::DownloadPhase;
 use crate::supervisor::notify_models_changed;
 
 /// Owner of the Install / Uninstall operations. Wired into
 /// [`DownloadManager`](crate::model::download_manager::DownloadManager)
-/// (via `set_installer`) so the download task can Install on completion.
+/// so the download task can Install on completion.
 pub struct ModelInstaller {
     model_dir: PathBuf,
     engine_manager: Arc<EngineManager>,
@@ -55,16 +57,14 @@ impl ModelInstaller {
         })
     }
 
-    /// Install a model whose download just reached Completed.
+    /// Install a Variant whose download just reached Completed.
     ///
     /// Called exactly once per Completed download — never for Failed or
     /// Cancelled. Infallible by design: every step is best-effort (the
     /// file is already verified on disk; nothing upstream can act on a
     /// partial install).
-    pub async fn install(&self, model_id: &str, new_filename: &str) {
-        self.remove_other_quants(model_id, new_filename).await;
-
-        // Refresh engine factory registration so the model is usable
+    pub async fn install(&self, variant: &VariantKey) {
+        // Refresh engine factory registration so the Variant is usable
         // without restarting the addon. Before the unload, so the next
         // acquire builds from the new file.
         let backend_overrides = self
@@ -74,61 +74,78 @@ impl ModelInstaller {
             .ok()
             .map(|s| s.backend_overrides)
             .unwrap_or_default();
-        register_downloaded_models(&self.engine_manager, &self.model_dir, &backend_overrides).await;
-        info!(model = %model_id, "Engine factory registered after download");
-        self.engine_manager.unload(model_id).await;
+        register_installed_variants(&self.engine_manager, &self.model_dir, &backend_overrides)
+            .await;
+        info!(variant = %variant, "Engine factory registered after download");
+        self.engine_manager.unload(&variant.as_key()).await;
 
-        // Announce so HA can add the model's entities without a reload.
-        notify_models_changed("model_added", model_id).await;
+        // Announce so HA can add the Variant's entities without a reload.
+        notify_models_changed("model_added", variant).await;
     }
 
-    /// Uninstall a model: delete its files, unload, announce to HA.
+    /// Uninstall the Variant at `quant`, or every Variant of the model
+    /// when `quant` is `None`.
     ///
-    /// File deletion keeps the status-gated rules in
-    /// [`ModelCatalog::delete_model`] (refuses in-flight downloads);
-    /// those errors propagate to the caller. It runs first, so a refused
-    /// Uninstall leaves the model loaded.
-    pub async fn uninstall(&self, model_id: &str) -> Result<(), AsrError> {
-        self.catalog.delete_model(model_id).await?;
-        self.engine_manager.unload(model_id).await;
-        // A failed update of the model is moot once the model is gone;
-        // kept, it would turn the row into `error`.
+    /// File deletion keeps the rules in [`ModelCatalog::delete_variant`]
+    /// (refuses in-flight downloads); those errors propagate. Removing a
+    /// whole model checks every Variant first, so a refusal leaves all of
+    /// them installed.
+    pub async fn uninstall(&self, model_id: &str, quant: Option<&str>) -> Result<(), AsrError> {
+        let targets: Vec<VariantKey> = match quant {
+            Some(q) => vec![VariantKey::new(model_id, Some(q.to_string()))],
+            None => {
+                let keys: Vec<VariantKey> = self
+                    .catalog
+                    .installed()
+                    .into_iter()
+                    .filter(|v| v.key.model == model_id)
+                    .map(|v| v.key)
+                    .collect();
+                if keys.is_empty() {
+                    return Err(AsrError::ModelNotFound {
+                        model_id: model_id.to_string(),
+                    });
+                }
+                for key in &keys {
+                    if self
+                        .progress
+                        .get(key)
+                        .await
+                        .is_some_and(|p| !p.status.is_terminal())
+                    {
+                        return Err(AsrError::DownloadInProgress {
+                            model_id: key.as_key(),
+                        });
+                    }
+                }
+                keys
+            }
+        };
+        for key in targets {
+            self.uninstall_variant(key).await?;
+        }
+        Ok(())
+    }
+
+    async fn uninstall_variant(&self, key: VariantKey) -> Result<(), AsrError> {
+        self.catalog.delete_variant(&key).await?;
+        self.engine_manager.unload(&key.as_key()).await;
+        // A failed update of the Variant is moot once it is gone; kept, it
+        // would turn the row into `error`.
         if self
             .progress
-            .get(model_id)
+            .get(&key)
             .await
             .is_some_and(|p| p.status == DownloadPhase::Failed)
         {
-            self.progress.remove(model_id).await;
+            self.progress.remove(&key).await;
         }
 
         // Fire-and-forget so the caller (DELETE handler) returns
         // immediately rather than blocking on the outbound POST.
-        let model_id = model_id.to_string();
         tokio::spawn(async move {
-            notify_models_changed("model_removed", &model_id).await;
+            notify_models_changed("model_removed", &key).await;
         });
         Ok(())
-    }
-
-    /// One quant per model: drop any other quant of `model_id` now that
-    /// `new_filename` is verified on disk. The old quant is only ever
-    /// removed AFTER a successful download — a failed download must never
-    /// destroy a working model.
-    async fn remove_other_quants(&self, model_id: &str, new_filename: &str) {
-        let Ok(ResolvedModel::Catalog(model)) = self.catalog.resolve(model_id) else {
-            return; // Custom model: single file, no quants, nothing to switch.
-        };
-        for old in stale_quant_files(&self.model_dir, model, new_filename) {
-            match tokio::fs::remove_file(&old).await {
-                Ok(()) => {
-                    fingerprint::remove(&old).await;
-                    info!(model_id = %model_id, path = %old.display(),
-                        "removed previous quant after successful download");
-                }
-                Err(e) => warn!(model_id = %model_id, path = %old.display(),
-                    error = %e, "failed to remove previous quant"),
-            }
-        }
     }
 }

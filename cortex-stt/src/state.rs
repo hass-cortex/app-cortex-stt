@@ -36,7 +36,7 @@ pub struct AppState {
     pub history: Arc<History>,
     /// Transcription pipeline (engine acquire → inference → save).
     pub transcriber: Arc<Transcriber>,
-    /// Install / Uninstall operations (quant switch, engine registration, HA notify).
+    /// Install / Uninstall operations (engine registration, HA notify), per Variant.
     pub installer: Arc<ModelInstaller>,
     /// Evaluation samples, runs, results and judgements.
     pub eval: Arc<Eval>,
@@ -70,10 +70,19 @@ impl AppState {
         // Shared download-progress board (written by DownloadManager, read
         // by ModelCatalog) — keeps the construction graph acyclic.
         let progress = ProgressBoard::new();
-        let catalog =
-            ModelCatalog::new(model_dir.clone(), progress.clone(), engine_manager.clone());
+        let catalog = ModelCatalog::new(
+            model_dir.clone(),
+            progress.clone(),
+            engine_manager.clone(),
+            db.clone(),
+        );
         let history = History::new(db.clone(), data_dir.join("audio")).await?;
-        let transcriber = Transcriber::new(engine_manager.clone(), history.clone(), db.clone());
+        let transcriber = Transcriber::new(
+            engine_manager.clone(),
+            catalog.clone(),
+            history.clone(),
+            db.clone(),
+        );
         // Installer injected into the download coordinator — the completion
         // tail (Install + slot release) is wired at construction, not
         // late-bound.

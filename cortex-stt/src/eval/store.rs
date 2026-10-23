@@ -293,6 +293,43 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
     )
     .await?;
 
+    // One-shot (ADR 0007). A candidate is a Variant, named by its key
+    // (`model:quant`). Runs before Variants recorded the model id with the
+    // quant beside it; rewrite them to the key, results first (they find
+    // their quant through the run's candidate row), so an old run lines
+    // up with a new run of the same Variant. A candidate with no recorded
+    // quant (a Custom model) already is its key. The marker stops this
+    // from touching anything written since.
+    db.connection()
+        .call(|conn| {
+            let tx = conn.transaction()?;
+            let done: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM settings WHERE key = 'eval.candidates_are_variants')",
+                [],
+                |r| r.get(0),
+            )?;
+            if !done {
+                tx.execute_batch(
+                    "UPDATE eval_results
+                        SET model_id = model_id || ':' || (
+                            SELECT rm.quant FROM eval_run_models rm
+                             WHERE rm.run_id = eval_results.run_id
+                               AND rm.model_id = eval_results.model_id)
+                      WHERE (SELECT rm.quant FROM eval_run_models rm
+                              WHERE rm.run_id = eval_results.run_id
+                                AND rm.model_id = eval_results.model_id) IS NOT NULL;
+                     UPDATE eval_run_models SET model_id = model_id || ':' || quant
+                      WHERE quant IS NOT NULL;
+                     INSERT INTO settings (key, value)
+                          VALUES ('eval.candidates_are_variants', '1');",
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(map_db_err)?;
+
     Ok(())
 }
 

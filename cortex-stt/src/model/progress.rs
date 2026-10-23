@@ -20,9 +20,10 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use crate::model::installed::VariantKey;
 use crate::model::types::DownloadProgress;
 
-/// Model-id-keyed download progress snapshots.
+/// Download progress snapshots, keyed by Variant (`VariantKey::as_key`).
 #[derive(Default)]
 pub struct ProgressBoard {
     map: RwLock<HashMap<String, DownloadProgress>>,
@@ -37,18 +38,32 @@ impl ProgressBoard {
         self.map
             .write()
             .await
-            .insert(progress.model_id.clone(), progress);
+            .insert(progress.key().as_key(), progress);
     }
 
-    pub async fn get(&self, model_id: &str) -> Option<DownloadProgress> {
-        self.map.read().await.get(model_id).cloned()
+    pub async fn get(&self, key: &VariantKey) -> Option<DownloadProgress> {
+        self.map.read().await.get(&key.as_key()).cloned()
     }
 
-    pub async fn remove(&self, model_id: &str) {
-        self.map.write().await.remove(model_id);
+    pub async fn remove(&self, key: &VariantKey) {
+        self.map.write().await.remove(&key.as_key());
     }
 
-    pub async fn contains(&self, model_id: &str) -> bool {
-        self.map.read().await.contains_key(model_id)
+    pub async fn contains(&self, key: &VariantKey) -> bool {
+        self.map.read().await.contains_key(&key.as_key())
+    }
+
+    /// Every entry of one model.
+    pub async fn of_model(&self, model_id: &str) -> Vec<DownloadProgress> {
+        let mut out: Vec<_> = self
+            .map
+            .read()
+            .await
+            .values()
+            .filter(|p| p.model_id == model_id)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.quant.cmp(&b.quant));
+        out
     }
 }

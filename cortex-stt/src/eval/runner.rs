@@ -29,13 +29,15 @@ use crate::engine::manager::EngineManager;
 use crate::engine::traits::TranscribeOptions;
 use crate::error::AsrError;
 use crate::model::catalog::ModelCatalog;
-use crate::model::types::ModelStatus;
+use crate::model::installed::VariantKey;
+use crate::model::types::VariantStatus;
 use crate::text::Renderer;
 
 /// What to run.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunRequest {
-    /// Candidate models. Must already be installed — evaluation reads
+    /// Candidate Variants, as `VariantKey::as_key` (`model:quant`, or the
+    /// bare id of a Custom model). Must already be installed — evaluation reads
     /// the installed set and never triggers a download, which would
     /// turn a "compare these" button into gigabytes of traffic and a
     /// string of Installs announced to Home Assistant.
@@ -162,16 +164,20 @@ impl EvalRunner {
         // and the OOM killer took the addon down mid-run — losing 20
         // samples of work and two partial downloads with it. Both
         // activities were within budget alone; together they were not.
-        // An installed model's update counts too: it reports Downloaded.
+        // An installed Variant's update counts too: it reports Downloaded.
         let busy: Vec<String> = self
             .catalog
             .list_models()
             .await
             .into_iter()
-            .filter(|m| {
-                m.updating || matches!(m.status, ModelStatus::Downloading | ModelStatus::Queued)
+            .flat_map(|m| {
+                let id = m.id;
+                m.variants.into_iter().filter_map(move |v| {
+                    let busy = v.updating
+                        || matches!(v.status, VariantStatus::Downloading | VariantStatus::Queued);
+                    busy.then(|| VariantKey::new(&id, v.quant).as_key())
+                })
             })
-            .map(|m| m.id)
             .collect();
         if !busy.is_empty() {
             return Err(AsrError::EvalBlockedByDownload {
@@ -289,10 +295,17 @@ impl EvalRunner {
                 self.engines.unload(&id).await;
             }
 
-            let info = self.catalog.get_model(model_id).await;
-            let (quant, file_size) = info
+            let installed = self
+                .catalog
+                .installed()
+                .into_iter()
+                .find(|v| &v.key.as_key() == model_id);
+            let (quant, file_size) = installed
                 .as_ref()
-                .map(|i| (i.downloaded_quant.clone(), i.disk_usage_bytes as i64))
+                .map(|v| {
+                    let bytes = v.path.metadata().map(|m| m.len()).unwrap_or(0);
+                    (v.key.quant.clone(), bytes as i64)
+                })
                 .unwrap_or((None, 0));
 
             let before = memory::resident_bytes().unwrap_or(floor);

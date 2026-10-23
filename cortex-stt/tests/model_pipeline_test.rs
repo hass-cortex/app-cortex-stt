@@ -1,6 +1,6 @@
 //! Model pipeline integration tests — full detect→register→acquire→transcribe.
 //!
-//! Uses the SAME `register_downloaded_models` function as the real server,
+//! Uses the SAME `register_installed_variants` function as the real server,
 //! testing the actual auto-registration flow.
 //!
 //! Tests SKIP when model files are absent (CI safe).
@@ -16,7 +16,7 @@ use std::time::Duration;
 use test_helpers::{audio_dir, load_audio, model_dir};
 
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::register::register_downloaded_models;
+use cortex_stt::engine::register::register_installed_variants;
 use cortex_stt::engine::traits::TranscribeOptions;
 
 /// Create EngineManager, run auto-registration from registry, then transcribe.
@@ -38,12 +38,20 @@ async fn run_pipeline(model_id: &str, audio_file: &str, lang: &str) {
         idle_check_interval: Duration::from_secs(60),
     });
 
-    // 2. Auto-register from registry (same function as main.rs)
+    // 2. Move flat installs into model directories, then register every
+    // installed Variant (the same calls as main.rs).
+    cortex_stt::model::installed::migrate_layout(&mdir).await;
     let registered =
-        register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
+        register_installed_variants(&engine_manager, &mdir, &std::collections::HashMap::new())
+            .await;
 
     // 3. Try acquire — if model not registered, it wasn't downloaded
-    let mut guard = match engine_manager.acquire(model_id).await {
+    let key = cortex_stt::model::installed::scan(&mdir)
+        .into_iter()
+        .find(|v| v.key.model == model_id)
+        .map(|v| v.key.as_key())
+        .unwrap_or_else(|| model_id.to_string());
+    let mut guard = match engine_manager.acquire(&key).await {
         Ok(g) => g,
         Err(_) => {
             eprintln!("SKIP {model_id}: not downloaded (registered {registered} models)");

@@ -1,19 +1,22 @@
 //! Model catalog: the unified view of all installed and installable
-//! models. Combines the vendored catalog, on-disk scanning for custom
-//! GGUFs, and live download status from [`DownloadManager`].
+//! models. Combines the vendored catalog, the installed Variants on disk
+//! (ADR 0007), live download status, and engine load state.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tracing::info;
 
+use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
-use crate::model::catalog_data::{CatalogModel, QuantFile, catalog_models, find_model};
-use crate::model::fingerprint;
+use crate::model::catalog_data::{CatalogModel, catalog_models, find_model};
+use crate::model::installed::{self, InstalledVariant, Snapshot, VariantKey};
 use crate::model::progress::ProgressBoard;
-use crate::model::storage::dir_size;
-use crate::model::types::{DownloadPhase, ModelInfo, ModelStatus};
+use crate::model::types::{
+    DownloadPhase, DownloadProgress, ModelInfo, ModelStatus, VariantInfo, VariantStatus, to_mb,
+};
 
 /// Read-only view of installed and installable models. The catalog
 /// does NOT own download lifecycle — it only reads the shared
@@ -24,41 +27,7 @@ pub struct ModelCatalog {
     model_dir: PathBuf,
     progress: Arc<ProgressBoard>,
     engines: Arc<EngineManager>,
-}
-
-/// A model id resolved to its identity class — the single notion of
-/// "valid model id". Callers branch on the class instead of memorizing
-/// which lookup accepts custom models (downloads and quant switches are
-/// catalog-only; load/default accept both).
-pub enum ResolvedModel {
-    /// Vendored catalog entry (downloadable; quant rules apply).
-    Catalog(&'static CatalogModel),
-    /// Hand-dropped GGUF on disk; no download lifecycle, no quants.
-    Custom(PathBuf),
-}
-
-/// The quant of `model` present on disk, if any (one quant per model).
-pub fn downloaded_quant<'a>(model_dir: &Path, model: &'a CatalogModel) -> Option<&'a QuantFile> {
-    model
-        .quants
-        .iter()
-        .find(|q| model_dir.join(&q.filename).is_file())
-}
-
-/// On-disk files of `model`'s other quants — everything that must go to
-/// uphold "one quant per model" once `keep_filename` is the installed one.
-pub fn stale_quant_files(
-    model_dir: &Path,
-    model: &CatalogModel,
-    keep_filename: &str,
-) -> Vec<PathBuf> {
-    model
-        .quants
-        .iter()
-        .filter(|q| q.filename != keep_filename)
-        .map(|q| model_dir.join(&q.filename))
-        .filter(|p| p.is_file())
-        .collect()
+    db: Arc<Database>,
 }
 
 impl ModelCatalog {
@@ -66,11 +35,13 @@ impl ModelCatalog {
         model_dir: PathBuf,
         progress: Arc<ProgressBoard>,
         engines: Arc<EngineManager>,
+        db: Arc<Database>,
     ) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
             progress,
             engines,
+            db,
         })
     }
 
@@ -78,62 +49,63 @@ impl ModelCatalog {
         &self.model_dir
     }
 
-    /// List all models — catalog entries plus custom GGUFs found on
-    /// disk. The reported [`ModelStatus`] reflects live state: in-flight
-    /// downloads surface as `Queued` / `Downloading`, models present on
-    /// disk as `Downloaded`, a failed download of a model not on disk as
-    /// `Error`, otherwise `Available`. A failure carries its reason in
-    /// `download_error` either way.
+    /// Every installed Variant, read from disk.
+    pub fn installed(&self) -> Vec<InstalledVariant> {
+        installed::scan(&self.model_dir)
+    }
+
+    async fn preferred_choices(&self) -> HashMap<String, String> {
+        self.db
+            .load_settings()
+            .await
+            .map(|s| s.preferred_quants)
+            .unwrap_or_default()
+    }
+
+    /// List all models: catalog entries, models the catalog no longer
+    /// offers that still have Variants installed (Retired), and Custom
+    /// models. A Variant on disk reports `Downloaded` whatever its
+    /// download phase — an update keeps the old file serving until the new
+    /// one verifies, and the HA reconcile must never see it disappear.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
+        let installed = self.installed();
+        let choices = self.preferred_choices().await;
+        let loaded: HashSet<String> = self.engines.loaded_models().await.into_iter().collect();
         let mut models = Vec::new();
 
         for model in catalog_models() {
-            let (phase, download_error) = match self.progress.get(&model.id).await {
-                Some(p) => (Some(p.status), p.error),
-                None => (None, None),
-            };
-            let info = match downloaded_quant(&self.model_dir, model) {
-                // A file on disk stays in service while a download runs for
-                // the model (an update or a quant switch): it is replaced
-                // only once the new file verifies. Reporting it Downloaded
-                // throughout keeps the HA reconcile from dropping it.
-                Some(q) => {
-                    let path = self.model_dir.join(&q.filename);
-                    let mut info = ModelInfo::from_catalog(
-                        model,
-                        ModelStatus::Downloaded,
-                        Some(q.quant.clone()),
-                        dir_size(&path),
-                    );
-                    info.updating = phase.is_some_and(|p| !p.is_terminal());
-                    info.update_available = fingerprint::update_available(&path, &q.sha256);
-                    info.download_error = download_error;
-                    info
-                }
-                None => {
-                    let status = match phase {
-                        Some(DownloadPhase::Queued) => ModelStatus::Queued,
-                        Some(DownloadPhase::Failed) => ModelStatus::Error,
-                        Some(_) => ModelStatus::Downloading,
-                        None => ModelStatus::Available,
-                    };
-                    let mut info = ModelInfo::from_catalog(model, status, None, 0);
-                    info.download_error = download_error;
-                    info
-                }
-            };
+            let mine = installed::of_model(&installed, &model.id);
+            let progress = self.progress.of_model(&model.id).await;
+            let mut info = ModelInfo::from_catalog(model);
+            info.variants = variant_infos(Some(model), &mine, &progress, &loaded);
+            info.preferred_quant = preferred_quant(&mine, &choices, &model.id);
+            info.summarise(ModelStatus::Available);
             models.push(info);
         }
 
-        for info in self.scan_custom_models() {
-            if !models.iter().any(|m| m.id == info.id) {
-                models.push(info);
-            }
+        let mut retired: Vec<&str> = installed
+            .iter()
+            .filter(|v| v.key.quant.is_some() && find_model(&v.key.model).is_none())
+            .map(|v| v.key.model.as_str())
+            .collect();
+        retired.dedup();
+        for id in retired {
+            let mine = installed::of_model(&installed, id);
+            let Some(snapshot) = mine.iter().find_map(|v| v.snapshot.clone()) else {
+                continue;
+            };
+            let mut info = ModelInfo::retired(id, snapshot);
+            info.variants = variant_infos(None, &mine, &[], &loaded);
+            info.preferred_quant = preferred_quant(&mine, &choices, id);
+            info.summarise(ModelStatus::Available);
+            models.push(info);
         }
 
-        let loaded = self.engines.loaded_models().await;
-        for model in &mut models {
-            model.is_loaded = loaded.contains(&model.id);
+        for variant in installed.iter().filter(|v| v.key.quant.is_none()) {
+            let mut info = ModelInfo::custom(&variant.key.model);
+            info.variants = variant_infos(None, &[variant], &[], &loaded);
+            info.summarise(ModelStatus::Custom);
+            models.push(info);
         }
 
         models
@@ -144,190 +116,307 @@ impl ModelCatalog {
         self.list_models().await.into_iter().find(|m| m.id == id)
     }
 
-    /// Resolve `id` to its identity class. `Err(ModelNotFound)` when the
-    /// id is neither a catalog entry nor a custom GGUF on disk. A single
-    /// stat instead of the full `list_models` directory scan.
-    pub fn resolve(&self, id: &str) -> Result<ResolvedModel, AsrError> {
-        if let Some(model) = find_model(id) {
-            return Ok(ResolvedModel::Catalog(model));
+    /// Whether `id` names a model: a catalog entry, or one with Variants
+    /// installed (Retired or Custom).
+    pub fn exists(&self, id: &str) -> bool {
+        find_model(id).is_some() || self.installed().iter().any(|v| v.key.model == id)
+    }
+
+    /// The Variant a request for `model_id` (and optionally `quant`) gets:
+    /// that quant, or the model's **Preferred variant** when none is named.
+    /// `ModelNotFound` when the model has nothing installed;
+    /// `VariantNotInstalled` when the named quant is not installed.
+    pub async fn resolve_variant(
+        &self,
+        model_id: &str,
+        quant: Option<&str>,
+    ) -> Result<InstalledVariant, AsrError> {
+        let installed = self.installed();
+        let mine = installed::of_model(&installed, model_id);
+        if mine.is_empty() {
+            return Err(AsrError::ModelNotFound {
+                model_id: model_id.to_string(),
+            });
         }
-        let custom = self.model_dir.join(format!("{id}.gguf"));
-        if custom.is_file() {
-            return Ok(ResolvedModel::Custom(custom));
-        }
-        Err(AsrError::ModelNotFound {
-            model_id: id.to_string(),
+        let found = match quant {
+            Some(q) => mine.into_iter().find(|v| v.key.quant.as_deref() == Some(q)),
+            None => {
+                let choices = self.preferred_choices().await;
+                installed::preferred(&mine, choices.get(model_id).map(String::as_str))
+            }
+        };
+        found.cloned().ok_or_else(|| AsrError::VariantNotInstalled {
+            model_id: model_id.to_string(),
+            quant: quant.unwrap_or_default().to_string(),
         })
     }
 
-    /// Cheap existence check (catalog entry or custom GGUF on disk).
-    pub fn exists(&self, id: &str) -> bool {
-        self.resolve(id).is_ok()
-    }
-
-    /// Resolve the on-disk GGUF path for a model id (catalog quant file
-    /// or custom `<id>.gguf`).
-    pub fn model_path(&self, id: &str) -> Option<PathBuf> {
-        match self.resolve(id).ok()? {
-            ResolvedModel::Catalog(model) => {
-                downloaded_quant(&self.model_dir, model).map(|q| self.model_dir.join(&q.filename))
-            }
-            ResolvedModel::Custom(path) => Some(path),
-        }
-    }
-
-    /// Delete a model's files from disk. Refuses models with a download
-    /// queued or running (`DownloadInProgress`) and models with nothing on
-    /// disk, including an `Error` row (`ModelFileNotFound`; dismiss that
-    /// via the download cancel).
-    pub async fn delete_model(&self, id: &str) -> Result<(), AsrError> {
-        let model = self
-            .get_model(id)
+    /// Delete one Variant's file and sidecar. Refuses a Variant with a
+    /// download queued or running (`DownloadInProgress`) and one with
+    /// nothing on disk, including a failed first install (dismiss that via
+    /// the download cancel).
+    pub async fn delete_variant(&self, key: &VariantKey) -> Result<(), AsrError> {
+        if self
+            .progress
+            .get(key)
             .await
-            .ok_or_else(|| AsrError::ModelNotFound {
-                model_id: id.to_string(),
-            })?;
-
-        match model.status {
-            ModelStatus::Downloaded if model.updating => {
-                return Err(AsrError::DownloadInProgress {
-                    model_id: id.to_string(),
-                });
-            }
-            ModelStatus::Downloaded | ModelStatus::Custom => {}
-            ModelStatus::Available | ModelStatus::Error => {
-                return Err(AsrError::ModelFileNotFound {
-                    path: self.model_dir.join(id),
-                });
-            }
-            ModelStatus::Downloading | ModelStatus::Queued => {
-                return Err(AsrError::DownloadInProgress {
-                    model_id: id.to_string(),
-                });
-            }
+            .is_some_and(|p| !p.status.is_terminal())
+        {
+            return Err(AsrError::DownloadInProgress {
+                model_id: key.as_key(),
+            });
         }
-
-        let Some(path) = self.model_path(id) else {
-            return Err(AsrError::ModelFileNotFound {
-                path: self.model_dir.join(id),
+        let Some(variant) = self.installed().into_iter().find(|v| &v.key == key) else {
+            return Err(match &key.quant {
+                Some(q) => AsrError::VariantNotInstalled {
+                    model_id: key.model.clone(),
+                    quant: q.clone(),
+                },
+                None => AsrError::ModelNotFound {
+                    model_id: key.model.clone(),
+                },
             });
         };
-        tokio::fs::remove_file(&path).await?;
-        fingerprint::remove(&path).await;
-
-        info!(model_id = %id, path = %path.display(), "model files deleted");
+        tokio::fs::remove_file(&variant.path).await?;
+        installed::remove_sidecar(&variant.path).await;
+        if key.quant.is_some()
+            && let Some(dir) = variant.path.parent()
+        {
+            // Only succeeds once the model's last Variant is gone.
+            let _ = tokio::fs::remove_dir(dir).await;
+        }
+        info!(variant = %key, path = %variant.path.display(), "model files deleted");
         Ok(())
     }
 
-    /// Scan the model directory for custom (non-catalog) GGUF models.
+    /// Scan the model directory for Custom models.
     pub fn scan_custom_models(&self) -> Vec<ModelInfo> {
-        let mut custom = Vec::new();
+        self.installed()
+            .iter()
+            .filter(|v| v.key.quant.is_none())
+            .map(|v| {
+                let mut info = ModelInfo::custom(&v.key.model);
+                info.variants = variant_infos(None, &[v], &[], &HashSet::new());
+                info.summarise(ModelStatus::Custom);
+                info
+            })
+            .collect()
+    }
+}
 
-        let entries = match std::fs::read_dir(&self.model_dir) {
-            Ok(e) => e,
-            Err(_) => return custom,
-        };
+fn preferred_quant(
+    mine: &[&InstalledVariant],
+    choices: &HashMap<String, String>,
+    model_id: &str,
+) -> Option<String> {
+    installed::preferred(mine, choices.get(model_id).map(String::as_str))
+        .and_then(|v| v.key.quant.clone())
+}
 
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let path = entry.path();
-
-            if !path.is_file() || !name.ends_with(".gguf") {
-                continue;
+/// One model's Variants as shown to clients: every installed one, plus
+/// each catalog quant with a download in flight or a kept failure, in
+/// the catalog's quant order.
+fn variant_infos(
+    model: Option<&CatalogModel>,
+    mine: &[&InstalledVariant],
+    progress: &[DownloadProgress],
+    loaded: &HashSet<String>,
+) -> Vec<VariantInfo> {
+    let phase_of =
+        |quant: &Option<String>| progress.iter().find(|p| Some(&p.quant) == quant.as_ref());
+    let mut out: Vec<VariantInfo> = mine
+        .iter()
+        .map(|v| {
+            let p = phase_of(&v.key.quant);
+            let bytes = v.path.metadata().map(|m| m.len()).unwrap_or(0);
+            VariantInfo {
+                quant: v.key.quant.clone(),
+                status: VariantStatus::Downloaded,
+                size_mb: to_mb(bytes),
+                disk_usage_bytes: bytes,
+                is_loaded: loaded.contains(&v.key.as_key()),
+                update_available: v.update_available(),
+                updating: p.is_some_and(|p| !p.status.is_terminal()),
+                retired: v.is_retired(),
+                installed_at: Some(v.installed_at),
+                download_error: p.and_then(|p| p.error.clone()),
             }
-            if crate::model::catalog_data::find_by_filename(&name).is_some() {
-                continue;
-            }
+        })
+        .collect();
 
-            let id = name.trim_end_matches(".gguf").to_string();
-            custom.push(ModelInfo::custom(&id, dir_size(&path)));
+    for p in progress {
+        if out
+            .iter()
+            .any(|v| v.quant.as_deref() == Some(p.quant.as_str()))
+        {
+            continue;
         }
+        let size = model
+            .and_then(|m| m.quant(&p.quant))
+            .map_or(0, |q| to_mb(q.size_bytes));
+        out.push(VariantInfo {
+            quant: Some(p.quant.clone()),
+            status: match p.status {
+                DownloadPhase::Queued => VariantStatus::Queued,
+                DownloadPhase::Failed => VariantStatus::Error,
+                _ => VariantStatus::Downloading,
+            },
+            size_mb: size,
+            disk_usage_bytes: 0,
+            is_loaded: false,
+            update_available: false,
+            updating: false,
+            retired: false,
+            installed_at: None,
+            download_error: p.error.clone(),
+        });
+    }
 
-        custom
+    let order = |v: &VariantInfo| {
+        model
+            .and_then(|m| {
+                m.quants
+                    .iter()
+                    .position(|q| Some(&q.quant) == v.quant.as_ref())
+            })
+            .unwrap_or(usize::MAX)
+    };
+    out.sort_by_key(|v| (order(v), v.quant.clone()));
+    out
+}
+
+impl ModelInfo {
+    /// A catalog model, before its Variants are filled in.
+    pub fn from_catalog(model: &CatalogModel) -> Self {
+        Self {
+            id: model.id.clone(),
+            name: model.name.clone(),
+            description: model.description.clone(),
+            family: model.family.clone(),
+            languages: model.languages.clone(),
+            capabilities: model.capabilities.clone(),
+            quants: model
+                .quants
+                .iter()
+                .map(|q| crate::model::types::QuantSummary {
+                    quant: q.quant.clone(),
+                    size_mb: to_mb(q.size_bytes),
+                })
+                .collect(),
+            default_quant: model.default_quant.clone(),
+            size_mb: to_mb(model.default_quant_file().size_bytes),
+            recommended: model.recommended,
+            status: ModelStatus::Available,
+            disk_usage_bytes: 0,
+            is_loaded: false,
+            preferred_quant: None,
+            retired: false,
+            variants: Vec::new(),
+        }
+    }
+
+    /// A model the catalog no longer offers, shown from the snapshot its
+    /// Variants were installed with.
+    pub fn retired(id: &str, snapshot: Snapshot) -> Self {
+        Self {
+            id: id.to_string(),
+            name: snapshot.name,
+            description: snapshot.description,
+            family: snapshot.family,
+            languages: snapshot.languages,
+            capabilities: snapshot.capabilities,
+            quants: Vec::new(),
+            default_quant: String::new(),
+            size_mb: 0,
+            recommended: false,
+            status: ModelStatus::Available,
+            disk_usage_bytes: 0,
+            is_loaded: false,
+            preferred_quant: None,
+            retired: true,
+            variants: Vec::new(),
+        }
+    }
+
+    /// A user-provided GGUF outside the catalog. Capabilities are unknown
+    /// until the model is loaded.
+    pub fn custom(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: "Custom GGUF model".to_string(),
+            family: "custom".to_string(),
+            languages: Vec::new(),
+            capabilities: crate::model::catalog_data::CatalogCapabilities {
+                streaming: false,
+                translate: false,
+                lang_detect: false,
+                timestamps: false,
+            },
+            quants: Vec::new(),
+            default_quant: String::new(),
+            size_mb: 0,
+            recommended: false,
+            status: ModelStatus::Custom,
+            disk_usage_bytes: 0,
+            is_loaded: false,
+            preferred_quant: None,
+            retired: false,
+            variants: Vec::new(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::catalog_data::find_model;
+    use crate::model::installed::{Sidecar, variant_path, write_sidecar};
 
-    fn make_catalog(model_dir: PathBuf) -> Arc<ModelCatalog> {
-        let progress = ProgressBoard::new();
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        ModelCatalog::new(model_dir, progress, engines)
+    async fn make_catalog(model_dir: &Path) -> Arc<ModelCatalog> {
+        catalog_with(model_dir, ProgressBoard::new(), engines()).await
     }
 
-    /// The default-quant filename of a known catalog model.
-    fn tiny_filename() -> String {
-        find_model("whisper-tiny")
-            .expect("whisper-tiny in catalog")
-            .default_quant_file()
-            .filename
-            .clone()
+    async fn catalog_with(
+        model_dir: &Path,
+        progress: Arc<ProgressBoard>,
+        engines: Arc<EngineManager>,
+    ) -> Arc<ModelCatalog> {
+        let db = Arc::new(Database::open_in_memory().await.unwrap());
+        ModelCatalog::new(model_dir.to_path_buf(), progress, engines, db)
     }
 
-    #[tokio::test]
-    async fn list_models_includes_catalog() {
-        let tmp = tempfile::tempdir().unwrap();
-        let catalog = make_catalog(tmp.path().to_path_buf());
-        let models = catalog.list_models().await;
-
-        assert!(!models.is_empty());
-        assert!(models.iter().any(|m| m.id == "whisper-tiny"));
-        assert!(models.iter().any(|m| m.id == "Breeze-ASR-25"));
+    fn engines() -> Arc<EngineManager> {
+        EngineManager::new(crate::engine::manager::EngineManagerConfig::default())
     }
 
-    #[tokio::test]
-    async fn downloaded_model_detected() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
-
-        let catalog = make_catalog(tmp.path().to_path_buf());
-        let models = catalog.list_models().await;
-        let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
-        assert_eq!(tiny.status, ModelStatus::Downloaded);
-        assert!(tiny.disk_usage_bytes > 0);
-        assert_eq!(
-            tiny.downloaded_quant.as_deref(),
-            Some(find_model("whisper-tiny").unwrap().default_quant.as_str())
-        );
+    fn tiny() -> &'static CatalogModel {
+        find_model("whisper-tiny").expect("whisper-tiny in catalog")
     }
 
-    #[tokio::test]
-    async fn completed_progress_reports_downloaded() {
-        // Regression: right after a download finishes, the Completed progress
-        // entry lingers briefly before being cleared. list_models must report
-        // the model as Downloaded (file is in place), not Downloading — else
-        // the event-driven HA reconcile that fires on completion filters it
-        // out and the model's entities never appear.
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
-
-        let progress = ProgressBoard::new();
-        progress
-            .set(crate::model::types::DownloadProgress {
-                model_id: "whisper-tiny".to_string(),
-                status: DownloadPhase::Completed,
-                downloaded_bytes: 4,
-                total_bytes: 4,
-                speed_bps: 0.0,
-                eta_secs: None,
-                error: None,
-            })
-            .await;
-
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress, engines);
-        let models = catalog.list_models().await;
-        let tiny = models.iter().find(|m| m.id == "whisper-tiny").unwrap();
-        assert_eq!(tiny.status, ModelStatus::Downloaded);
-        assert!(tiny.disk_usage_bytes > 0);
+    /// Two quants of whisper-tiny, catalog order.
+    fn two_quants() -> (String, String) {
+        let q = &tiny().quants;
+        (q[0].quant.clone(), q[1].quant.clone())
     }
 
-    fn progress_at(phase: DownloadPhase) -> crate::model::types::DownloadProgress {
-        crate::model::types::DownloadProgress {
+    /// Install `quant` of whisper-tiny the way a download does: the file
+    /// in its model directory, a sidecar beside it.
+    async fn install(dir: &Path, quant: &str, installed_at: i64) -> PathBuf {
+        let model = tiny();
+        let q = model.quant(quant).unwrap();
+        let file = variant_path(dir, &model.id, &q.filename);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fake").unwrap();
+        let mut sidecar = Sidecar::for_install(model, quant, Some(q.sha256.clone()));
+        sidecar.installed_at = installed_at;
+        write_sidecar(&file, &sidecar).await;
+        file
+    }
+
+    fn progress_at(quant: &str, phase: DownloadPhase) -> DownloadProgress {
+        DownloadProgress {
             model_id: "whisper-tiny".to_string(),
+            quant: quant.to_string(),
             status: phase,
             downloaded_bytes: 0,
             total_bytes: 4,
@@ -337,166 +426,295 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_republished_file_reports_an_update() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join(tiny_filename());
-        std::fs::write(&file, b"fake").unwrap();
-        let catalog = make_catalog(tmp.path().to_path_buf());
+    fn failed(quant: &str, reason: &str) -> DownloadProgress {
+        DownloadProgress {
+            error: Some(reason.to_string()),
+            ..progress_at(quant, DownloadPhase::Failed)
+        }
+    }
 
-        // No fingerprint yet: unknown, not an update.
-        assert!(
-            !catalog
-                .get_model("whisper-tiny")
-                .await
-                .unwrap()
-                .update_available
+    fn variant<'a>(m: &'a ModelInfo, quant: &str) -> &'a VariantInfo {
+        m.variants
+            .iter()
+            .find(|v| v.quant.as_deref() == Some(quant))
+            .unwrap_or_else(|| panic!("{} has no {quant} variant", m.id))
+    }
+
+    fn key(quant: &str) -> VariantKey {
+        VariantKey::new("whisper-tiny", Some(quant.to_string()))
+    }
+
+    #[tokio::test]
+    async fn list_models_includes_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models = make_catalog(tmp.path()).await.list_models().await;
+        assert!(models.iter().any(|m| m.id == "whisper-tiny"));
+        assert!(models.iter().any(|m| m.id == "Breeze-ASR-25"));
+    }
+
+    #[tokio::test]
+    async fn two_installed_quants_are_two_downloaded_variants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        install(tmp.path(), &b, 200).await;
+
+        let tiny = make_catalog(tmp.path())
+            .await
+            .get_model("whisper-tiny")
+            .await
+            .unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert_eq!(variant(&tiny, &a).status, VariantStatus::Downloaded);
+        assert_eq!(variant(&tiny, &b).status, VariantStatus::Downloaded);
+        assert_eq!(
+            tiny.preferred_quant.as_deref(),
+            Some(a.as_str()),
+            "earliest installed"
+        );
+        assert!(tiny.disk_usage_bytes > 0);
+    }
+
+    #[tokio::test]
+    async fn completed_progress_reports_downloaded() {
+        // Regression: right after a download finishes, the Completed progress
+        // entry lingers briefly before being cleared. The Variant must read
+        // Downloaded (file is in place), not Downloading — else the
+        // event-driven HA reconcile that fires on completion filters it out
+        // and its entities never appear.
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, _) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        let progress = ProgressBoard::new();
+        progress
+            .set(progress_at(&a, DownloadPhase::Completed))
+            .await;
+
+        let catalog = catalog_with(tmp.path(), progress, engines()).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert_eq!(variant(&tiny, &a).status, VariantStatus::Downloaded);
+    }
+
+    #[tokio::test]
+    async fn a_republished_file_reports_an_update_on_its_variant_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        let file = install(tmp.path(), &a, 100).await;
+        install(tmp.path(), &b, 200).await;
+        write_sidecar(
+            &file,
+            &Sidecar::for_install(tiny(), &a, Some("0000".into())),
+        )
+        .await;
+
+        let tiny = make_catalog(tmp.path())
+            .await
+            .get_model("whisper-tiny")
+            .await
+            .unwrap();
+        assert!(variant(&tiny, &a).update_available);
+        assert!(!variant(&tiny, &b).update_available);
+    }
+
+    /// An update re-downloads over an installed file. The Variant must stay
+    /// Downloaded (in service, kept by the HA reconcile) and undeletable
+    /// until the download ends; a failed update keeps it Downloaded too.
+    #[tokio::test]
+    async fn an_update_in_flight_keeps_the_variant_downloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, _) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        let progress = ProgressBoard::new();
+        progress
+            .set(progress_at(&a, DownloadPhase::Downloading))
+            .await;
+        let catalog = catalog_with(tmp.path(), progress.clone(), engines()).await;
+
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(variant(&tiny, &a).status, VariantStatus::Downloaded);
+        assert!(variant(&tiny, &a).updating);
+        assert!(matches!(
+            catalog.delete_variant(&key(&a)).await,
+            Err(AsrError::DownloadInProgress { .. })
+        ));
+
+        progress.set(failed(&a, "checksum mismatch")).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        let v = variant(&tiny, &a);
+        assert_eq!(v.status, VariantStatus::Downloaded);
+        assert!(!v.updating);
+        assert_eq!(v.download_error.as_deref(), Some("checksum mismatch"));
+    }
+
+    /// Adding a second quant while the first serves: the model stays
+    /// Downloaded, the new quant reads as a download in flight.
+    #[tokio::test]
+    async fn adding_a_quant_shows_a_new_variant_downloading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        let progress = ProgressBoard::new();
+        progress
+            .set(progress_at(&b, DownloadPhase::Downloading))
+            .await;
+
+        let catalog = catalog_with(tmp.path(), progress, engines()).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert_eq!(variant(&tiny, &b).status, VariantStatus::Downloading);
+        assert!(!variant(&tiny, &a).updating);
+    }
+
+    /// A failed first download must not read as "never tried": the
+    /// Variant (and the model) report `Error` with the reason until a retry
+    /// or a dismiss.
+    #[tokio::test]
+    async fn failed_download_reports_error_with_its_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, _) = two_quants();
+        let progress = ProgressBoard::new();
+        let catalog = catalog_with(tmp.path(), progress.clone(), engines()).await;
+
+        progress.set(failed(&a, "checksum mismatch")).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Error);
+        assert_eq!(
+            variant(&tiny, &a).download_error.as_deref(),
+            Some("checksum mismatch")
         );
 
-        fingerprint::record(&file, "0000").await;
-        assert!(
+        progress.remove(&key(&a)).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Available);
+        assert!(tiny.variants.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_variant_leaves_the_others_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        let file_a = install(tmp.path(), &a, 100).await;
+        install(tmp.path(), &b, 200).await;
+        let catalog = make_catalog(tmp.path()).await;
+
+        catalog.delete_variant(&key(&a)).await.unwrap();
+        assert!(!file_a.exists());
+        assert!(!installed::sidecar_path(&file_a).exists());
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert_eq!(tiny.status, ModelStatus::Downloaded);
+        assert_eq!(tiny.preferred_quant.as_deref(), Some(b.as_str()));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_variant_that_is_not_installed_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, _) = two_quants();
+        let catalog = make_catalog(tmp.path()).await;
+        assert!(matches!(
+            catalog.delete_variant(&key(&a)).await,
+            Err(AsrError::VariantNotInstalled { .. })
+        ));
+    }
+
+    /// Only the Variant that is loaded reports loaded; the model reports
+    /// loaded while any of its Variants is.
+    #[tokio::test]
+    async fn load_state_is_per_variant() {
+        use crate::engine::testing::FakeEngine;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        install(tmp.path(), &b, 200).await;
+
+        let engines = engines();
+        engines
+            .register(key(&b).as_key(), FakeEngine::new().factory())
+            .await;
+        drop(engines.acquire(&key(&b).as_key()).await.unwrap());
+
+        let catalog = catalog_with(tmp.path(), ProgressBoard::new(), engines).await;
+        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
+        assert!(tiny.is_loaded);
+        assert!(variant(&tiny, &b).is_loaded);
+        assert!(!variant(&tiny, &a).is_loaded);
+    }
+
+    #[tokio::test]
+    async fn a_request_gets_the_named_quant_or_the_preferred_variant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = two_quants();
+        install(tmp.path(), &a, 100).await;
+        install(tmp.path(), &b, 200).await;
+        let catalog = make_catalog(tmp.path()).await;
+
+        let quant_of = |v: InstalledVariant| v.key.quant.unwrap();
+        assert_eq!(
+            quant_of(catalog.resolve_variant("whisper-tiny", None).await.unwrap()),
+            a
+        );
+        assert_eq!(
+            quant_of(
+                catalog
+                    .resolve_variant("whisper-tiny", Some(&b))
+                    .await
+                    .unwrap()
+            ),
+            b
+        );
+
+        catalog
+            .db
+            .set_preferred_quant("whisper-tiny", &b)
+            .await
+            .unwrap();
+        assert_eq!(
+            quant_of(catalog.resolve_variant("whisper-tiny", None).await.unwrap()),
+            b
+        );
+        assert_eq!(
             catalog
                 .get_model("whisper-tiny")
                 .await
                 .unwrap()
-                .update_available
+                .preferred_quant
+                .as_deref(),
+            Some(b.as_str())
         );
 
-        let pinned = &find_model("whisper-tiny")
-            .unwrap()
-            .default_quant_file()
-            .sha256;
-        fingerprint::record(&file, pinned).await;
-        assert!(
-            !catalog
-                .get_model("whisper-tiny")
-                .await
-                .unwrap()
-                .update_available
-        );
-    }
-
-    /// An update re-downloads over an installed file. The model must stay
-    /// Downloaded (in service, kept by the HA reconcile) and undeletable
-    /// until the download ends.
-    #[tokio::test]
-    async fn an_update_in_flight_keeps_the_model_downloaded() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join(tiny_filename());
-        std::fs::write(&file, b"fake").unwrap();
-
-        let progress = ProgressBoard::new();
-        progress.set(progress_at(DownloadPhase::Downloading)).await;
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
-
-        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
-        assert_eq!(tiny.status, ModelStatus::Downloaded);
-        assert!(tiny.updating);
         assert!(matches!(
-            catalog.delete_model("whisper-tiny").await,
-            Err(AsrError::DownloadInProgress { .. })
-        ));
-
-        progress.set(failed("checksum mismatch")).await;
-        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
-        assert_eq!(tiny.status, ModelStatus::Downloaded);
-        assert!(!tiny.updating);
-        assert_eq!(tiny.download_error.as_deref(), Some("checksum mismatch"));
-    }
-
-    fn failed(reason: &str) -> crate::model::types::DownloadProgress {
-        crate::model::types::DownloadProgress {
-            error: Some(reason.to_string()),
-            ..progress_at(DownloadPhase::Failed)
-        }
-    }
-
-    /// A failed first download must not read as "never tried": the row
-    /// reports `Error` with the reason until a retry or a dismiss.
-    #[tokio::test]
-    async fn failed_download_reports_error_with_its_reason() {
-        let tmp = tempfile::tempdir().unwrap();
-        let progress = ProgressBoard::new();
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), progress.clone(), engines);
-
-        progress.set(failed("checksum mismatch")).await;
-        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
-        assert_eq!(tiny.status, ModelStatus::Error);
-        assert_eq!(tiny.download_error.as_deref(), Some("checksum mismatch"));
-
-        progress.remove("whisper-tiny").await;
-        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
-        assert_eq!(tiny.status, ModelStatus::Available);
-        assert_eq!(tiny.download_error, None);
-    }
-
-    #[tokio::test]
-    async fn delete_removes_the_fingerprint() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join(tiny_filename());
-        std::fs::write(&file, b"fake").unwrap();
-        fingerprint::record(&file, "0000").await;
-        let catalog = make_catalog(tmp.path().to_path_buf());
-
-        catalog.delete_model("whisper-tiny").await.unwrap();
-        assert!(!fingerprint::sidecar_path(&file).exists());
-    }
-
-    /// Regression: `get_model`/`list_models` must reflect engine load state.
-    /// Before the catalog owned the join, only `GET /api/models` overlaid
-    /// `is_loaded`, so every other caller read a constant `false`.
-    #[tokio::test]
-    async fn get_model_reports_loaded_state() {
-        use crate::engine::testing::FakeEngine;
-
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(tiny_filename()), b"fake").unwrap();
-
-        let engines = EngineManager::new(crate::engine::manager::EngineManagerConfig::default());
-        engines
-            .register("whisper-tiny", FakeEngine::new().factory())
-            .await;
-        // Acquire-and-drop triggers the lazy load.
-        drop(engines.acquire("whisper-tiny").await.unwrap());
-
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), ProgressBoard::new(), engines);
-        let tiny = catalog.get_model("whisper-tiny").await.unwrap();
-        assert!(tiny.is_loaded);
-        assert!(!catalog.get_model("whisper-small").await.unwrap().is_loaded);
-    }
-
-    #[tokio::test]
-    async fn resolve_classifies_catalog_custom_and_unknown() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("my-custom.gguf"), b"data").unwrap();
-        let catalog = make_catalog(tmp.path().to_path_buf());
-
-        // Catalog entry resolves even before download.
-        assert!(matches!(
-            catalog.resolve("whisper-tiny"),
-            Ok(ResolvedModel::Catalog(m)) if m.id == "whisper-tiny"
+            catalog
+                .resolve_variant("whisper-tiny", Some("F32-not-installed"))
+                .await,
+            Err(AsrError::VariantNotInstalled { .. })
         ));
         assert!(matches!(
-            catalog.resolve("my-custom"),
-            Ok(ResolvedModel::Custom(p)) if p.ends_with("my-custom.gguf")
-        ));
-        assert!(matches!(
-            catalog.resolve("no-such-model"),
+            catalog.resolve_variant("whisper-small", None).await,
             Err(AsrError::ModelNotFound { .. })
         ));
     }
 
+    /// A model the catalog no longer offers keeps serving, shown from the
+    /// snapshot it was installed with.
     #[tokio::test]
-    async fn exists_covers_catalog_and_custom_models() {
+    async fn a_model_gone_from_the_catalog_is_listed_as_retired() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("my-custom.gguf"), b"data").unwrap();
-        let catalog = make_catalog(tmp.path().to_path_buf());
+        let file = variant_path(tmp.path(), "gone-upstream", "gone-upstream-Q8_0.gguf");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fake").unwrap();
+        let mut sidecar = Sidecar::for_install(tiny(), "Q8_0", None);
+        sidecar.model = "gone-upstream".into();
+        sidecar.snapshot.name = "Gone Upstream".into();
+        write_sidecar(&file, &sidecar).await;
 
-        assert!(catalog.exists("whisper-tiny")); // catalog entry, not downloaded
-        assert!(catalog.exists("my-custom")); // custom GGUF on disk
-        assert!(!catalog.exists("no-such-model"));
+        let catalog = make_catalog(tmp.path()).await;
+        let gone = catalog.get_model("gone-upstream").await.unwrap();
+        assert!(gone.retired);
+        assert_eq!(gone.name, "Gone Upstream");
+        assert_eq!(gone.status, ModelStatus::Downloaded);
+        assert!(variant(&gone, "Q8_0").retired);
+        assert!(catalog.resolve_variant("gone-upstream", None).await.is_ok());
     }
 
     #[tokio::test]
@@ -504,13 +722,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("my-custom-model.gguf"), b"data").unwrap();
 
-        let catalog = make_catalog(tmp.path().to_path_buf());
+        let catalog = make_catalog(tmp.path()).await;
         let models = catalog.list_models().await;
-        assert!(
-            models
-                .iter()
-                .any(|m| m.id == "my-custom-model" && m.status == ModelStatus::Custom)
-        );
+        let custom = models.iter().find(|m| m.id == "my-custom-model").unwrap();
+        assert_eq!(custom.status, ModelStatus::Custom);
+        assert!(catalog.exists("my-custom-model"));
+        let v = catalog
+            .resolve_variant("my-custom-model", None)
+            .await
+            .unwrap();
+        assert_eq!(v.key.quant, None);
     }
 
     #[tokio::test]
@@ -519,28 +740,7 @@ mod tests {
         std::fs::write(tmp.path().join("legacy-whisper.bin"), b"old").unwrap();
         std::fs::create_dir(tmp.path().join("legacy-onnx-dir")).unwrap();
 
-        let catalog = make_catalog(tmp.path().to_path_buf());
-        let models = catalog.list_models().await;
+        let models = make_catalog(tmp.path()).await.list_models().await;
         assert!(!models.iter().any(|m| m.id.contains("legacy")));
-    }
-
-    #[tokio::test]
-    async fn delete_not_downloaded_returns_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let catalog = make_catalog(tmp.path().to_path_buf());
-        let result = catalog.delete_model("whisper-tiny").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn delete_downloaded_model() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join(tiny_filename());
-        std::fs::write(&file, b"fake model").unwrap();
-        assert!(file.exists());
-
-        let catalog = make_catalog(tmp.path().to_path_buf());
-        catalog.delete_model("whisper-tiny").await.unwrap();
-        assert!(!file.exists());
     }
 }

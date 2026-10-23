@@ -99,3 +99,67 @@ async fn test_engine_status() {
         "no models should be loaded initially"
     );
 }
+
+async fn send(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or_default())
+}
+
+fn put_preferred(model: &str, quant: &str) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(format!("/api/models/{model}/preferred"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "quant": quant }).to_string(),
+        ))
+        .unwrap()
+}
+
+/// The Preferred variant can only be set to an installed quant, and the
+/// choice shows on the model; a client that knows nothing of Variants
+/// still sees the model as downloaded.
+#[tokio::test]
+async fn the_preferred_variant_is_chosen_among_installed_quants() {
+    use cortex_stt::model::catalog_data::find_model;
+    use cortex_stt::model::installed::{Sidecar, variant_path, write_sidecar};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let model = find_model("whisper-tiny").unwrap();
+    let (first, second) = (&model.quants[0], &model.quants[1]);
+    for (i, q) in [first, second].into_iter().enumerate() {
+        let file = variant_path(tmp.path(), &model.id, &q.filename);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fake").unwrap();
+        let mut sidecar = Sidecar::for_install(model, &q.quant, None);
+        sidecar.installed_at = 100 + i as i64;
+        write_sidecar(&file, &sidecar).await;
+    }
+    let app = test_app(test_state_in(tmp.path()).await);
+
+    let (status, body) = send(&app, put_preferred(&model.id, "not-a-quant")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "VARIANT_NOT_INSTALLED");
+
+    let (status, _) = send(&app, put_preferred(&model.id, &second.quant)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let list = Request::builder()
+        .uri("/api/models")
+        .body(Body::empty())
+        .unwrap();
+    let (_, models) = send(&app, list).await;
+    let tiny = models
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == model.id.as_str())
+        .unwrap();
+    assert_eq!(tiny["status"], "downloaded");
+    assert_eq!(tiny["preferred_quant"], second.quant.as_str());
+    assert_eq!(tiny["variants"].as_array().unwrap().len(), 2);
+}

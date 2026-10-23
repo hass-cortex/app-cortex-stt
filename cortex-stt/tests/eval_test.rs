@@ -224,6 +224,7 @@ async fn a_history_sweep_does_not_touch_evaluation_audio() {
                 source: TranscriptionSource::HttpApi,
                 language: None,
                 model_id: "fake".into(),
+                quant: None,
                 audio_duration_ms: 1000,
                 inference_ms: 1,
                 model_load_ms: 0,
@@ -1131,6 +1132,7 @@ async fn a_run_refuses_to_start_while_a_download_is_in_flight() {
         .downloads
         .set_progress(cortex_stt::model::types::DownloadProgress {
             model_id: "whisper-tiny".into(),
+            quant: tiny_quant(),
             status: cortex_stt::model::types::DownloadPhase::Downloading,
             downloaded_bytes: 1,
             total_bytes: 100,
@@ -1170,15 +1172,18 @@ async fn a_run_refuses_to_start_while_an_installed_model_updates() {
     state.eval.promote(&p.id, "ok", None).await.unwrap();
 
     let tiny = cortex_stt::model::catalog_data::find_model("whisper-tiny").unwrap();
-    std::fs::write(
-        tmp.path().join(&tiny.default_quant_file().filename),
-        b"installed",
-    )
-    .unwrap();
+    let file = cortex_stt::model::installed::variant_path(
+        tmp.path(),
+        &tiny.id,
+        &tiny.default_quant_file().filename,
+    );
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"installed").unwrap();
     state
         .downloads
         .set_progress(cortex_stt::model::types::DownloadProgress {
             model_id: "whisper-tiny".into(),
+            quant: tiny_quant(),
             status: cortex_stt::model::types::DownloadPhase::Queued,
             downloaded_bytes: 0,
             total_bytes: 0,
@@ -1389,4 +1394,81 @@ async fn a_run_closes_before_it_puts_the_working_set_back() {
         "the run never put the working set back: {:?}",
         state.engine_manager.loaded_models().await
     );
+}
+
+fn tiny_quant() -> String {
+    cortex_stt::model::catalog_data::find_model("whisper-tiny")
+        .unwrap()
+        .default_quant
+        .clone()
+}
+
+/// A run recorded before Variants named its candidates by model id, with
+/// the quant beside it. After the upgrade its candidates and results are
+/// keyed by Variant (`model:quant`), so it lines up with a new run of the
+/// same Variant; a Custom model's candidate (no quant) is left alone.
+#[tokio::test]
+async fn an_old_runs_candidates_become_variant_keys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
+    Eval::new(db.clone(), tmp.path().join("eval"))
+        .await
+        .unwrap();
+
+    // Put the database back in its pre-Variant shape.
+    db.connection()
+        .call(|conn| {
+            conn.execute_batch(
+                "DELETE FROM settings WHERE key = 'eval.candidates_are_variants';
+                 INSERT INTO eval_runs (id, status) VALUES ('old', 'completed');
+                 INSERT INTO eval_run_models (run_id, model_id, quant)
+                      VALUES ('old', 'SenseVoiceSmall', 'Q8_0'), ('old', 'my-custom', NULL);
+                 INSERT INTO eval_results (id, run_id, sample_id, model_id, text)
+                      VALUES ('r1', 'old', 's1', 'SenseVoiceSmall', 'a'),
+                             ('r2', 'old', 's1', 'my-custom', 'b');",
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .unwrap();
+
+    let eval = Eval::new(db.clone(), tmp.path().join("eval"))
+        .await
+        .unwrap();
+
+    let mut candidates: Vec<String> = eval
+        .list_run_models("old")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| m.model_id)
+        .collect();
+    candidates.sort();
+    assert_eq!(candidates, ["SenseVoiceSmall:Q8_0", "my-custom"]);
+
+    let results: Vec<(String, String)> = db
+        .connection()
+        .call(|conn| {
+            let mut stmt = conn.prepare("SELECT id, model_id FROM eval_results ORDER BY id")?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        results,
+        [
+            ("r1".to_string(), "SenseVoiceSmall:Q8_0".to_string()),
+            ("r2".to_string(), "my-custom".to_string())
+        ]
+    );
+
+    // Once only: a later start leaves new-shaped rows alone.
+    Eval::new(db.clone(), tmp.path().join("eval"))
+        .await
+        .unwrap();
+    let again = eval.list_run_models("old").await.unwrap();
+    assert!(again.iter().any(|m| m.model_id == "SenseVoiceSmall:Q8_0"));
 }

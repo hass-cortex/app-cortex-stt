@@ -109,14 +109,14 @@ src/
 ├── model/                  model installation
 │   ├── catalog_data.rs     vendored catalog (include_str catalog.json; slug/quants/capabilities)
 │   ├── catalog.json        converted Handy catalog snapshot (sync-catalog.py output)
-│   ├── catalog.rs          ModelCatalog: list / get / resolve (Catalog|Custom) / delete / scan custom *.gguf
+│   ├── catalog.rs          ModelCatalog: list / get / resolve_variant (named quant or Preferred) / delete_variant / scan custom *.gguf
 │   ├── download_manager.rs DownloadManager facade: start / cancel_download + queue + slots + completion tail
 │   ├── download.rs         async download pipeline (HTTP + SHA-256; single-file GGUF)
-│   ├── fingerprint.rs      `<file>.sha256` sidecars: verified hash per installed file → `update_available`
+│   ├── installed.rs        installed Variants (ADR 0007): VariantKey, `<file>.json` sidecars (identity + sha256 + install time + display snapshot), scan, Preferred, startup layout migration + sha backfill
 │   ├── progress.rs         ProgressBoard: shared download-progress snapshots (manager writes, catalog reads)
-│   ├── install.rs          ModelInstaller: Install (quant switch + register + unload + notify) / Uninstall
+│   ├── install.rs          ModelInstaller: Install (register + unload + notify) / Uninstall, per Variant
 │   ├── maintenance.rs      startup-once model-dir cleanup (legacy .bin/ONNX/.part artifacts)
-│   ├── storage.rs          disk usage helpers (layout is flat: `{model_dir}/{filename}.gguf`)
+│   ├── storage.rs          disk usage helpers (layout: `{model_dir}/{model_id}/{filename}.gguf`; Custom models at the top level)
 │   └── types.rs            model type definitions (ModelInfo, DownloadPhase, …)
 ├── audio/              preprocessing
 │   ├── canonical.rs    shared 16 kHz / 16-bit / mono constants
@@ -141,7 +141,8 @@ src/
 - **`model::ModelCatalog` is the single assembly point for model state**: registry + disk scan + live download status (via the shared `ProgressBoard`) + engine load state (via `EngineManager`) — `list_models`/`get_model` return the complete state, so no caller re-joins it. `DownloadManager` is the download facade: `start(model, quant)` and `cancel_download` own path resolution, slot claiming/compensation, and the completion tail (`complete`: Install → slot release → next-launch → delayed clear of a Completed entry; a Failed entry stays, surfacing as `download_error` until a retry or a dismiss via `cancel_download`); the `ModelInstaller` is injected at construction.
 - **`state::AppState::assemble` is the single assembly point of the service object graph** (`ProgressBoard → ModelCatalog → History → Transcriber → ModelInstaller → DownloadManager → Eval → EvalRunner`): `main.rs` and the test harness (`tests/test_helpers.rs`) both call it, so adding a dependency is a one-place change. `api::build_router` is the analogous seam for the route + middleware stack — `tests/api_router_test.rs` exercises the shipped router including auth. `asr-cli` deliberately wires a documented subset (no installer, throwaway history).
 - **`History::metrics_snapshot` owns the metrics aggregate** — one SQL pass computes every history-derived figure; `api/metrics.rs` is a shell that joins in the engine/catalog/key counts. Storage figures likewise come from their owners (`History::audio_disk_usage_bytes`, `Database::disk_usage_bytes`) — handlers never re-derive another module's disk layout.
-- **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (GLOSSARY.md). Install (quant switch → engine re-registration → unload → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled, and once the task commits to it a cancel is a no-op (`CancelToken`). Uninstall (delete files → unload → drop a kept failure → HA notify) backs `DELETE /api/models/{id}`.
+- **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed set (GLOSSARY.md), both per **Variant** (ADR 0007). Install (engine re-registration → unload of that Variant → HA notify; the model's other Variants are untouched) is fired by the download task itself on `Completed`, before its slot is released, so a same-Variant re-download stays blocked throughout; it never fires for Failed/Cancelled, and once the task commits to it a cancel is a no-op (`CancelToken`). Uninstall (delete file → unload → drop a kept failure → HA notify) backs `DELETE /api/models/{id}?quant=`; without `quant` it removes every Variant, refusing before touching any if one is downloading.
+- **Identity is the sidecar, never the filename.** `model::installed::scan` reads each catalog file's `<file>.json` (model, quant, sha256, install time, catalog display snapshot) — that is what lets a file outlive its catalog entry as a **Retired variant** and keeps an upstream rename from moving files to a new id. The download task writes the sidecar after the rename, with the sha256 only when it verified. Engine pools, download slots and progress entries are keyed by `VariantKey::as_key` (`model:quant`, or the bare id of a Custom model). A request resolves `model` + optional `quant` to a Variant once, in `Transcriber` (`ModelCatalog::resolve_variant`): the named quant, else the model's **Preferred variant** (`Settings.preferred_quants`, else earliest installed).
 
 See [`cortex-stt/GLOSSARY.md`](cortex-stt/GLOSSARY.md) for the domain
 vocabulary (Transcription history record, Delete record vs Drop audio,
@@ -208,7 +209,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 
 | Method      | Path                                 | Description                                                                   |
 | ----------- | ------------------------------------ | ----------------------------------------------------------------------------- |
-| POST        | `/api/transcribe`                    | Sync transcription (JSON)                                                     |
+| POST        | `/api/transcribe`                    | Sync transcription (JSON; `model` + optional `quant`)                         |
 | GET         | `/api/transcribe/stream`             | WebSocket streaming session (see ADR 0001)                                    |
 | POST        | `/api/transcribe/async`              | Async job submission                                                          |
 | GET         | `/api/transcribe/jobs/{id}`          | Job status                                                                    |
@@ -216,14 +217,15 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | DELETE      | `/api/transcribe/jobs/{id}`          | Cancel job                                                                    |
 | GET         | `/api/models`                        | List models                                                                   |
 | POST        | `/api/models/scan`                   | Rescan model dir                                                              |
-| POST        | `/api/models/{id}/download`          | Start download                                                                |
-| DELETE      | `/api/models/{id}/download`          | Cancel download                                                               |
-| GET         | `/api/models/{id}/download/progress` | Download progress (SSE)                                                       |
-| DELETE      | `/api/models/{id}`                   | Delete downloaded model                                                       |
-| GET         | `/api/engine`                        | Engine status                                                                 |
+| POST        | `/api/models/{id}/download`          | Start download (`?quant=`, default `default_quant`); adds a Variant           |
+| DELETE      | `/api/models/{id}/download`          | Cancel download / dismiss a failure (`?quant=`)                               |
+| GET         | `/api/models/{id}/download/progress` | Download progress (SSE, `?quant=`)                                            |
+| DELETE      | `/api/models/{id}`                   | Uninstall one Variant (`?quant=`) or the whole model                          |
+| PUT         | `/api/models/{id}/preferred`         | Choose the Preferred variant (`{quant}`, must be installed)                   |
+| GET         | `/api/engine`                        | Engine status (`loaded_models` by model, `loaded_variants`)                   |
 | GET         | `/api/engine/live`                   | Load-state changes (SSE; empty payload, refetch models + engine)              |
-| POST        | `/api/engine/load`                   | Load model into memory                                                        |
-| POST        | `/api/engine/unload`                 | Unload model                                                                  |
+| POST        | `/api/engine/load`                   | Load a Variant into memory (`{model_id, quant?}`)                             |
+| POST        | `/api/engine/unload`                 | Unload a Variant (`{model_id, quant?}`)                                       |
 | PUT         | `/api/engine/default`                | Set default model                                                             |
 | GET / PUT   | `/api/settings`                      | Runtime settings                                                              |
 | GET         | `/api/keys`                          | List API keys                                                                 |
@@ -312,10 +314,10 @@ authenticated with `SUPERVISOR_TOKEN`. This requires
 **`homeassistant_api: true`** in `config.yaml` (alongside the existing
 `hassio_api: true` used for `/discovery`).
 
-**Notify** — `notify_models_changed(event, model_id)`:
+**Notify** — `notify_models_changed(event, variant)`:
 
 - No-op when `SUPERVISOR_TOKEN` is unset (dev / not under Supervisor).
-- POSTs `{"event", "model_id"}` via the shared pooled client
+- POSTs `{"event", "model_id", "quant"}` (`quant` null for a Custom model) via the shared pooled client
   (`src/http.rs`) with a short per-request timeout and
   `bearer_auth(SUPERVISOR_TOKEN)`.
 - Fire-and-forget: failures are logged, never propagated, so a model
@@ -326,23 +328,25 @@ authenticated with `SUPERVISOR_TOKEN`. This requires
 Fired from the two operations owned by `model::install::ModelInstaller`:
 
 - `"model_added"` — at the end of an **Install**, right after
-  `register_downloaded_models`. The download task awaits the Install on
+  `register_installed_variants`. The download task awaits the Install on
   `Completed` (it is already detached, so it blocks nothing).
-- `"model_removed"` — at the end of an **Uninstall**,
-  **`tokio::spawn`-ed** after `catalog.delete_model` so the DELETE
+- `"model_removed"` — at the end of each Variant's **Uninstall**,
+  **`tokio::spawn`-ed** after `catalog.delete_variant` so the DELETE
   response returns immediately.
 
 The payload is advisory — the HA listener re-fetches `/api/models` and
 reconciles the full set, so it self-heals on a missed/duplicate event.
 
 **Critical invariant** — `ModelCatalog::list_models` must report a
-model whose file exists as `Downloaded` (`catalog.rs`) whatever its
-download phase, NOT `Downloading`. The event fires on download-complete
-while the `Completed` progress entry still lingers (cleared ~later by
+Variant whose file exists as `Downloaded` (`catalog.rs`) whatever its
+download phase, NOT `Downloading`, and the model as `Downloaded` while
+any Variant is. The event fires on download-complete while the
+`Completed` progress entry still lingers (cleared ~later by
 `remove_progress`), and a **Model update** downloads while the old file
 keeps serving (`updating: true`); either way HA's reconcile would
-otherwise see `Downloading`, filter the model out, and drop or never add
-its entities. Any new path that fires the event depends on this. Guarded end-to-end by
+otherwise see `Downloading`, filter the Variant out, and drop or never
+add its entities. The model-level `status` is also what an integration
+that predates Variants reads. Any new path that fires the event depends on this. Guarded end-to-end by
 `completion_tail_reports_downloaded_to_catalog_before_progress_clears`
 (`download_manager.rs`), which spans the completion tail and the catalog
 view together.

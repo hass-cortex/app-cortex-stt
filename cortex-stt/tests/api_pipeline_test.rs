@@ -22,7 +22,7 @@ use cortex_stt::api::history::history_routes;
 use cortex_stt::api::models::model_routes;
 use cortex_stt::api::transcribe::transcribe_routes;
 use cortex_stt::engine::manager::{EngineManager, EngineManagerConfig};
-use cortex_stt::engine::register::register_downloaded_models;
+use cortex_stt::engine::register::register_installed_variants;
 use cortex_stt::state::AppState;
 use test_helpers::{audio_dir, model_dir};
 
@@ -45,9 +45,11 @@ async fn build_test_app() -> (Router, Arc<AppState>) {
         idle_check_interval: Duration::from_secs(60),
     });
 
-    // Register real engines from downloaded models.
+    // Register real engines from installed Variants (as main.rs does).
+    cortex_stt::model::installed::migrate_layout(&mdir).await;
     let registered =
-        register_downloaded_models(&engine_manager, &mdir, &std::collections::HashMap::new()).await;
+        register_installed_variants(&engine_manager, &mdir, &std::collections::HashMap::new())
+            .await;
     eprintln!("Registered {registered} models from {}", mdir.display());
 
     let state = test_helpers::test_state_full(engine_manager, &mdir, &data_dir).await;
@@ -77,7 +79,11 @@ async fn run_api_pipeline(model_id: &str, audio_file: &str, lang: &str) {
 
     // Check model is registered via engine manager.
     let registered = state.engine_manager.registered_models().await;
-    if !registered.contains(&model_id.to_string()) {
+    let variant_prefix = format!("{model_id}:");
+    if !registered
+        .iter()
+        .any(|k| k == model_id || k.starts_with(&variant_prefix))
+    {
         eprintln!("SKIP {model_id}: not registered (model files not downloaded)");
         return;
     }

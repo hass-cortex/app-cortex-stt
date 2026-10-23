@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::error::AsrError;
 use crate::model::download_manager::{CancelToken, DownloadManager, QueuedDownloadRequest};
-use crate::model::fingerprint;
+use crate::model::installed::{self, Sidecar, VariantKey};
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
 /// Hosts allowed for model downloads. The vendored catalog only points
@@ -148,12 +148,14 @@ pub async fn download_model(
     config: DownloadConfig,
 ) -> Result<DownloadHandle, AsrError> {
     let QueuedDownloadRequest {
-        model_id,
+        variant,
         url,
         dest_path,
         sha256: expected_sha256,
+        sidecar,
         cancel_flag,
     } = request;
+    let model_id = variant.as_key();
 
     if !validate_download_url(&url) {
         return Err(AsrError::DownloadFailed {
@@ -163,7 +165,8 @@ pub async fn download_model(
     }
 
     let initial_progress = DownloadProgress {
-        model_id: model_id.clone(),
+        model_id: variant.model.clone(),
+        quant: quant_of(&variant),
         status: DownloadPhase::Downloading,
         downloaded_bytes: 0,
         total_bytes: 0,
@@ -188,7 +191,8 @@ pub async fn download_model(
             &url,
             &dest_path,
             &expected_sha256,
-            &model_id,
+            &variant,
+            &sidecar,
             &cancel_flag,
             &downloads,
             &config,
@@ -211,7 +215,8 @@ pub async fn download_model(
 
         let terminal = match &result {
             Ok(DownloadOutcome::Completed) => DownloadProgress {
-                model_id: model_id.clone(),
+                model_id: variant.model.clone(),
+                quant: quant_of(&variant),
                 status: DownloadPhase::Completed,
                 downloaded_bytes: 0,
                 total_bytes: 0,
@@ -223,7 +228,8 @@ pub async fn download_model(
             Err(e) => {
                 error!(model_id = %model_id, error = %e, "download failed");
                 DownloadProgress {
-                    model_id: model_id.clone(),
+                    model_id: variant.model.clone(),
+                    quant: quant_of(&variant),
                     status: DownloadPhase::Failed,
                     downloaded_bytes: 0,
                     total_bytes: 0,
@@ -237,7 +243,7 @@ pub async fn download_model(
 
         // Install (on success) + slot release + next launch + delayed
         // progress clear — the manager owns the whole tail.
-        downloads.complete(&dest_path, terminal).await;
+        downloads.complete(terminal).await;
     });
 
     Ok(DownloadHandle { progress_rx: rx })
@@ -251,7 +257,8 @@ pub(crate) fn start_queued_download(
     downloads: Arc<DownloadManager>,
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
-        let model_id = request.model_id.clone();
+        let variant = request.variant.clone();
+        let model_id = variant.as_key();
         match download_model(request, downloads.clone(), DownloadConfig::default()).await {
             // Task launched; it is detached and stops via the cancel flag.
             Ok(_handle) => {}
@@ -263,10 +270,10 @@ pub(crate) fn start_queued_download(
                 // Clear the Queued progress entry recorded when this
                 // request was parked — left behind, it would report the
                 // model as downloading forever and block its Uninstall.
-                downloads.remove_progress(&model_id).await;
+                downloads.remove_progress(&variant).await;
                 // Slot was claimed when this request was promoted; release
                 // it (and launch anything else queued) so the cap recovers.
-                downloads.finish_and_launch_next(&model_id).await;
+                downloads.finish_and_launch_next(&variant).await;
             }
         }
     })
@@ -278,13 +285,19 @@ async fn download_task(
     url: &str,
     dest_path: &Path,
     expected_sha256: &str,
-    model_id: &str,
+    variant: &VariantKey,
+    sidecar: &Sidecar,
     cancel_flag: &CancelToken,
     downloads: &Arc<DownloadManager>,
     config: &DownloadConfig,
     tx: &watch::Sender<DownloadProgress>,
 ) -> Result<DownloadOutcome, AsrError> {
+    let model_id = variant.as_key();
+    let model_id = model_id.as_str();
     let part_path = part_path(dest_path);
+    if let Some(dir) = dest_path.parent() {
+        fs::create_dir_all(dir).await?;
+    }
 
     // Check for existing partial download to resume.
     let existing_bytes = if part_path.exists() {
@@ -339,7 +352,8 @@ async fn download_task(
             url,
             dest_path,
             expected_sha256,
-            model_id,
+            variant,
+            sidecar,
             cancel_flag,
             downloads,
             config,
@@ -406,7 +420,8 @@ async fn download_task(
         };
 
         let progress = DownloadProgress {
-            model_id: model_id.to_string(),
+            model_id: variant.model.clone(),
+            quant: quant_of(variant),
             status: DownloadPhase::Downloading,
             downloaded_bytes,
             total_bytes: total,
@@ -451,7 +466,8 @@ async fn download_task(
             return Ok(DownloadOutcome::Cancelled);
         }
         let verifying = DownloadProgress {
-            model_id: model_id.to_string(),
+            model_id: variant.model.clone(),
+            quant: quant_of(variant),
             status: DownloadPhase::Verifying,
             downloaded_bytes,
             total_bytes: total,
@@ -491,14 +507,16 @@ async fn download_task(
 
     // GGUF models are single files — rename .part to final destination.
     fs::rename(&part_path, dest_path).await?;
-    // The fingerprint vouches only for a verified file; a stale one from
-    // the replaced file must not survive an unverified install.
-    if verified {
-        fingerprint::record(dest_path, expected_sha256).await;
-    } else {
-        fingerprint::remove(dest_path).await;
-    }
+    // The sidecar's sha256 vouches only for a verified file; a stale one
+    // from the replaced file must not survive an unverified install.
+    let mut sidecar = sidecar.clone();
+    sidecar.sha256 = verified.then(|| expected_sha256.to_ascii_lowercase());
+    installed::write_sidecar(dest_path, &sidecar).await;
 
     info!(model_id = %model_id, path = %dest_path.display(), "model download complete");
     Ok(DownloadOutcome::Completed)
+}
+
+fn quant_of(variant: &VariantKey) -> String {
+    variant.quant.clone().unwrap_or_default()
 }

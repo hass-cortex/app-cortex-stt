@@ -14,6 +14,8 @@ use cortex_stt::engine::testing::FakeEngine;
 use cortex_stt::engine::traits::TranscribeOptions;
 use cortex_stt::error::AsrError;
 use cortex_stt::history::{History, ListRecordsFilter, TranscriptionSource};
+use cortex_stt::model::catalog::ModelCatalog;
+use cortex_stt::model::progress::ProgressBoard;
 use cortex_stt::transcriber::{StreamMeta, TranscribeRequest, Transcriber};
 
 type Factory = SharedEngineFactory;
@@ -82,7 +84,16 @@ async fn fixture_with_factory(model_id: &str, factory: Factory) -> Fixture {
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
         .unwrap();
-    let transcriber = Transcriber::new(engine_manager, history.clone(), db.clone());
+    let models = tmp.path().join("models");
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::write(models.join(format!("{model_id}.gguf")), b"fake").unwrap();
+    let catalog = ModelCatalog::new(
+        models,
+        ProgressBoard::new(),
+        engine_manager.clone(),
+        db.clone(),
+    );
+    let transcriber = Transcriber::new(engine_manager, catalog, history.clone(), db.clone());
 
     Fixture {
         transcriber,
@@ -103,6 +114,7 @@ fn one_second_samples() -> Arc<[f32]> {
 fn request_for(model: &str) -> TranscribeRequest {
     TranscribeRequest {
         model: model.to_string(),
+        quant: None,
         samples: one_second_samples(),
         duration_ms: 1000,
         options: TranscribeOptions::default(),
@@ -116,6 +128,7 @@ fn request_for(model: &str) -> TranscribeRequest {
 fn stream_meta(model: &str) -> StreamMeta {
     StreamMeta {
         model: model.to_string(),
+        quant: None,
         language: None,
         source: TranscriptionSource::WsApi,
         api_key_id: None,
@@ -212,6 +225,7 @@ async fn transcribe_rejects_input_over_max_audio_ms() {
     // 2 s of audio against the engine's advertised 1 s ceiling.
     let req = TranscribeRequest {
         model: "limited-model".to_string(),
+        quant: None,
         samples: Arc::from(vec![0.0f32; 32_000]),
         duration_ms: 2000,
         options: TranscribeOptions::default(),
@@ -390,4 +404,74 @@ async fn stream_persists_aborted_row_on_drop() {
         records[0].audio_path.is_none(),
         "audio must never be persisted for an aborted request"
     );
+}
+
+/// Two Variants of one catalog model serve side by side: a request that
+/// names a quant gets it, one that does not gets the Preferred variant,
+/// and the response and history record say which one served.
+#[tokio::test]
+async fn a_request_is_served_by_the_named_quant_or_the_preferred_variant() {
+    use cortex_stt::model::catalog_data::find_model;
+    use cortex_stt::model::installed::{Sidecar, VariantKey, variant_path, write_sidecar};
+
+    let model = find_model("whisper-tiny").unwrap();
+    let (first, second) = (&model.quants[0], &model.quants[1]);
+    let tmp = tempfile::tempdir().unwrap();
+    let models = tmp.path().join("models");
+    let engine_manager = EngineManager::new(EngineManagerConfig::default());
+    for (i, q) in [first, second].into_iter().enumerate() {
+        let file = variant_path(&models, &model.id, &q.filename);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fake").unwrap();
+        let mut sidecar = Sidecar::for_install(model, &q.quant, None);
+        sidecar.installed_at = 100 + i as i64;
+        write_sidecar(&file, &sidecar).await;
+        let key = VariantKey::new(&model.id, Some(q.quant.clone())).as_key();
+        let factory = FakeEngine::new().with_text(&q.quant).factory();
+        engine_manager.register(key, factory).await;
+    }
+    let db = Arc::new(Database::open_in_memory().await.unwrap());
+    let history = History::new(db.clone(), tmp.path().join("audio"))
+        .await
+        .unwrap();
+    let catalog = ModelCatalog::new(
+        models,
+        ProgressBoard::new(),
+        engine_manager.clone(),
+        db.clone(),
+    );
+    let transcriber = Transcriber::new(engine_manager, catalog, history.clone(), db.clone());
+
+    let unnamed = transcriber
+        .transcribe(request_for(&model.id))
+        .await
+        .unwrap();
+    assert_eq!(unnamed.text, first.quant, "earliest installed is Preferred");
+    assert_eq!(unnamed.quant.as_deref(), Some(first.quant.as_str()));
+
+    let mut named = request_for(&model.id);
+    named.quant = Some(second.quant.clone());
+    let named = transcriber.transcribe(named).await.unwrap();
+    assert_eq!(named.text, second.quant);
+    assert_eq!(named.quant.as_deref(), Some(second.quant.as_str()));
+
+    db.set_preferred_quant(&model.id, &second.quant)
+        .await
+        .unwrap();
+    let preferred = transcriber
+        .transcribe(request_for(&model.id))
+        .await
+        .unwrap();
+    assert_eq!(preferred.text, second.quant);
+
+    let records = history.list(&ListRecordsFilter::default()).await.unwrap();
+    let mut quants: Vec<_> = records.iter().filter_map(|r| r.quant.clone()).collect();
+    quants.sort();
+    let mut expected = vec![
+        first.quant.clone(),
+        second.quant.clone(),
+        second.quant.clone(),
+    ];
+    expected.sort();
+    assert_eq!(quants, expected);
 }

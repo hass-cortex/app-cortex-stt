@@ -36,7 +36,7 @@ pub struct CatalogModel {
 
 /// Model capabilities as advertised by the catalog (display/UX only —
 /// the runtime source of truth is the loaded engine's capabilities).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CatalogCapabilities {
     pub streaming: bool,
     pub translate: bool,

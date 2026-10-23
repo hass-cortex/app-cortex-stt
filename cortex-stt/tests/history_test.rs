@@ -20,6 +20,7 @@ fn sample_record() -> CreateRecord {
         source: TranscriptionSource::HttpApi,
         language: Some("en".to_string()),
         model_id: "whisper-tiny".to_string(),
+        quant: None,
         audio_duration_ms: 3200,
         inference_ms: 450,
         model_load_ms: 0,

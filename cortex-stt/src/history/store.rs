@@ -62,6 +62,8 @@ pub struct CreateRecord {
     pub source: TranscriptionSource,
     pub language: Option<String>,
     pub model_id: String,
+    /// The Variant's quant; `None` for a Custom model.
+    pub quant: Option<String>,
     pub audio_duration_ms: i64,
     pub inference_ms: i64,
     pub model_load_ms: i64,
@@ -95,6 +97,9 @@ pub struct TranscriptionRecord {
     pub source: String,
     pub language: Option<String>,
     pub model_id: String,
+    /// The Variant's quant. `None` for a Custom model, and for records
+    /// written before Variants existed — unknown, not guessed.
+    pub quant: Option<String>,
     pub audio_duration_ms: i64,
     pub inference_ms: i64,
     pub model_load_ms: i64,
@@ -161,7 +166,7 @@ fn to_column_format(value: &str) -> String {
 /// order MUST match the positional `row.get(N)` indices in
 /// [`row_to_record`]; keeping the list in one place stops the SELECT
 /// sites and the mapper from drifting apart when a column is added.
-const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text";
+const RECORD_COLUMNS: &str = "id, timestamp, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text, quant";
 
 // ---------------------------------------------------------------------------
 // Schema — the `records` table is owned by this module. Adding a column
@@ -259,6 +264,10 @@ pub(super) async fn migrate(db: &Database) -> Result<(), AsrError> {
     db.add_column_if_missing("records", "raw_text", "TEXT")
         .await?;
 
+    // Migration: the Variant's quant (ADR 0007). Rows predating it stay
+    // NULL: which quant served them is unknown, and is not guessed.
+    db.add_column_if_missing("records", "quant", "TEXT").await?;
+
     Ok(())
 }
 
@@ -279,6 +288,7 @@ pub(super) async fn insert(
     let source = rec.source.as_str().to_string();
     let language = rec.language.clone();
     let model_id = rec.model_id.clone();
+    let quant = rec.quant.clone();
     let audio_duration_ms = rec.audio_duration_ms;
     let inference_ms = rec.inference_ms;
     let model_load_ms = rec.model_load_ms;
@@ -300,8 +310,8 @@ pub(super) async fn insert(
     db.connection()
         .call(move |conn| {
             conn.execute(
-                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                "INSERT INTO records (id, source, language, model_id, audio_duration_ms, inference_ms, model_load_ms, pool_wait_ms, cold_load_ms, text, segments_json, audio_path, has_error, error_message, api_key_id, device, capture_device, rms_db, peak_db, clip_ratio, raw_text, quant)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     id,
                     source,
@@ -324,6 +334,7 @@ pub(super) async fn insert(
                     peak_db,
                     clip_ratio,
                     raw_text,
+                    quant,
                 ],
             )?;
             Ok(())
@@ -701,6 +712,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptionRecor
         peak_db: row.get(19)?,
         clip_ratio: row.get(20)?,
         raw_text: row.get(21)?,
+        quant: row.get(22)?,
     })
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::catalog_data::{CatalogCapabilities, CatalogModel};
+use crate::model::catalog_data::CatalogCapabilities;
 
 /// High-level availability status of a model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +28,45 @@ pub struct QuantSummary {
     pub size_mb: u64,
 }
 
+/// State of one Variant of a model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VariantStatus {
+    /// A first install waiting in the download queue.
+    Queued,
+    /// A first install downloading.
+    Downloading,
+    /// On disk and usable — throughout an update, too.
+    Downloaded,
+    /// A first install failed; nothing is on disk.
+    Error,
+}
+
+/// One Variant as shown to clients: installed, or on its way.
+#[derive(Debug, Clone, Serialize)]
+pub struct VariantInfo {
+    /// `None` for a Custom model.
+    pub quant: Option<String>,
+    pub status: VariantStatus,
+    pub size_mb: u64,
+    /// Disk usage in bytes (0 until installed).
+    pub disk_usage_bytes: u64,
+    pub is_loaded: bool,
+    /// The installed file differs from the one the catalog now pins
+    /// (upstream republished it); re-downloading this quant updates it.
+    pub update_available: bool,
+    /// A download is replacing the installed file, which stays in service
+    /// until the new one verifies.
+    pub updating: bool,
+    /// The catalog no longer offers this Variant; it keeps serving.
+    pub retired: bool,
+    /// Unix seconds; `None` until installed.
+    pub installed_at: Option<i64>,
+    /// Why the last download of this Variant failed. Kept until it is
+    /// downloaded again or the failure is dismissed.
+    pub download_error: Option<String>,
+}
+
 /// Full model metadata combining the catalog entry with runtime status.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
@@ -37,99 +76,76 @@ pub struct ModelInfo {
     pub family: String,
     pub languages: Vec<String>,
     pub capabilities: CatalogCapabilities,
+    /// Quants the catalog offers (empty for a Custom or Retired model).
     pub quants: Vec<QuantSummary>,
     pub default_quant: String,
-    /// The quant currently on disk, when downloaded.
-    pub downloaded_quant: Option<String>,
-    /// Size of the downloaded quant, or of the default quant otherwise.
+    /// Size of the Preferred variant when one is installed, else of the
+    /// default quant.
     pub size_mb: u64,
     pub recommended: bool,
+    /// `Downloaded` while any Variant is installed, so a client that knows
+    /// nothing of Variants still sees the model as usable.
     pub status: ModelStatus,
-    /// Disk usage in bytes (0 if not downloaded).
+    /// Disk usage of every installed Variant together.
     pub disk_usage_bytes: u64,
-    /// Whether the model is currently loaded in the engine manager.
+    /// Whether any Variant is loaded.
     pub is_loaded: bool,
-    /// The installed file differs from the one the catalog now pins
-    /// (upstream republished it); re-downloading the installed quant updates it.
-    pub update_available: bool,
-    /// A download is replacing the installed file, which stays in service
-    /// until the new one verifies.
-    pub updating: bool,
-    /// Why the last download of this model failed. Kept until the model is
-    /// downloaded again or the failure is dismissed.
-    pub download_error: Option<String>,
+    /// The quant a request naming only this model gets; `None` while no
+    /// Variant is installed (and for a Custom model).
+    pub preferred_quant: Option<String>,
+    /// The catalog no longer offers this model; its installed Variants
+    /// keep serving.
+    pub retired: bool,
+    /// Installed Variants, and catalog quants with a download in progress
+    /// or a kept failure.
+    pub variants: Vec<VariantInfo>,
 }
 
-fn to_mb(bytes: u64) -> u64 {
+pub(crate) fn to_mb(bytes: u64) -> u64 {
     bytes / (1024 * 1024)
 }
 
 impl ModelInfo {
-    /// Create a `ModelInfo` from a catalog entry and runtime status.
-    pub fn from_catalog(
-        model: &CatalogModel,
-        status: ModelStatus,
-        downloaded_quant: Option<String>,
-        disk_usage_bytes: u64,
-    ) -> Self {
-        let shown_quant = downloaded_quant
-            .as_deref()
-            .and_then(|q| model.quant(q))
-            .unwrap_or_else(|| model.default_quant_file());
-        Self {
-            id: model.id.clone(),
-            name: model.name.clone(),
-            description: model.description.clone(),
-            family: model.family.clone(),
-            languages: model.languages.clone(),
-            capabilities: model.capabilities.clone(),
-            quants: model
-                .quants
-                .iter()
-                .map(|q| QuantSummary {
-                    quant: q.quant.clone(),
-                    size_mb: to_mb(q.size_bytes),
-                })
-                .collect(),
-            default_quant: model.default_quant.clone(),
-            size_mb: to_mb(shown_quant.size_bytes),
-            downloaded_quant,
-            recommended: model.recommended,
-            status,
-            disk_usage_bytes,
-            is_loaded: false,
-            update_available: false,
-            updating: false,
-            download_error: None,
-        }
-    }
-
-    /// Create a `ModelInfo` for a user-provided GGUF outside the catalog.
-    /// Capabilities are unknown until the model is loaded.
-    pub fn custom(id: &str, disk_usage_bytes: u64) -> Self {
-        Self {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: "Custom GGUF model".to_string(),
-            family: "custom".to_string(),
-            languages: Vec::new(),
-            capabilities: CatalogCapabilities {
-                streaming: false,
-                translate: false,
-                lang_detect: false,
-                timestamps: false,
-            },
-            quants: Vec::new(),
-            default_quant: String::new(),
-            downloaded_quant: None,
-            size_mb: to_mb(disk_usage_bytes),
-            recommended: false,
-            status: ModelStatus::Custom,
-            disk_usage_bytes,
-            is_loaded: false,
-            update_available: false,
-            updating: false,
-            download_error: None,
+    /// Derive the model-level summary from its Variants. `status` is the
+    /// fallback when nothing is installed or in flight.
+    pub(crate) fn summarise(&mut self, idle: ModelStatus) {
+        let installed = |v: &&VariantInfo| v.status == VariantStatus::Downloaded;
+        self.disk_usage_bytes = self.variants.iter().map(|v| v.disk_usage_bytes).sum();
+        self.is_loaded = self.variants.iter().any(|v| v.is_loaded);
+        self.status = if self.variants.iter().any(|v| installed(&v)) {
+            if idle == ModelStatus::Custom {
+                ModelStatus::Custom
+            } else {
+                ModelStatus::Downloaded
+            }
+        } else if self
+            .variants
+            .iter()
+            .any(|v| v.status == VariantStatus::Downloading)
+        {
+            ModelStatus::Downloading
+        } else if self
+            .variants
+            .iter()
+            .any(|v| v.status == VariantStatus::Queued)
+        {
+            ModelStatus::Queued
+        } else if self
+            .variants
+            .iter()
+            .any(|v| v.status == VariantStatus::Error)
+        {
+            ModelStatus::Error
+        } else {
+            idle
+        };
+        if let Some(preferred) = self
+            .variants
+            .iter()
+            .filter(installed)
+            .find(|v| v.quant == self.preferred_quant)
+        {
+            self.size_mb = preferred.size_mb;
         }
     }
 }
@@ -160,10 +176,18 @@ impl DownloadPhase {
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
     pub model_id: String,
+    pub quant: String,
     pub status: DownloadPhase,
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub speed_bps: f64,
     pub eta_secs: Option<f64>,
     pub error: Option<String>,
+}
+
+impl DownloadProgress {
+    /// The Variant this download installs.
+    pub fn key(&self) -> crate::model::installed::VariantKey {
+        crate::model::installed::VariantKey::new(&self.model_id, Some(self.quant.clone()))
+    }
 }

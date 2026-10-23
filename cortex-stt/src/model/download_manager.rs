@@ -13,11 +13,12 @@
 //! there is no separate counter that could drift out of sync with it.
 //! Releasing a slot is *idempotent per download*: it is keyed on removing
 //! that download's entry, so a normal completion and a racing cancel can
-//! never both free the same slot. At most one download per model is in
-//! flight at a time: [`try_claim_slot`](DownloadManager::try_claim_slot)
-//! does the duplicate check AND the claim under the one lock, so two
-//! concurrent submissions for the same model can't both start, and the
-//! model_id is a safe key for every later operation.
+//! never both free the same slot. At most one download per **Variant** is
+//! in flight at a time (two quants of one model may download together):
+//! [`try_claim_slot`](DownloadManager::try_claim_slot) does the duplicate
+//! check AND the claim under the one lock, so two concurrent submissions
+//! for the same Variant can't both start, and its key is safe for every
+//! later operation.
 //!
 //! ## Cancellation
 //!
@@ -71,6 +72,7 @@ use crate::error::AsrError;
 use crate::model::catalog_data::find_model;
 use crate::model::download::{DownloadConfig, download_model, start_queued_download};
 use crate::model::install::ModelInstaller;
+use crate::model::installed::{self, Sidecar, VariantKey};
 use crate::model::progress::ProgressBoard;
 use crate::model::types::{DownloadPhase, DownloadProgress};
 
@@ -119,10 +121,13 @@ impl CancelToken {
 
 /// A pending download request waiting in the queue.
 pub struct QueuedDownloadRequest {
-    pub model_id: String,
+    pub variant: VariantKey,
     pub url: String,
     pub dest_path: PathBuf,
     pub sha256: String,
+    /// Written beside the file once it is in place, its sha256 filled in
+    /// only when the download verified.
+    pub sidecar: Sidecar,
     /// Shared with the running download task. Setting it asks the task to
     /// stop cooperatively at its next chunk boundary. Recorded in the
     /// `active` map at claim time so a cancel can reach the download even
@@ -132,12 +137,19 @@ pub struct QueuedDownloadRequest {
 
 impl QueuedDownloadRequest {
     /// Build a request with a fresh (un-cancelled) cancel flag.
-    pub fn new(model_id: String, url: String, dest_path: PathBuf, sha256: String) -> Self {
+    pub fn new(
+        variant: VariantKey,
+        url: String,
+        dest_path: PathBuf,
+        sha256: String,
+        sidecar: Sidecar,
+    ) -> Self {
         Self {
-            model_id,
+            variant,
             url,
             dest_path,
             sha256,
+            sidecar,
             cancel_flag: Arc::new(CancelToken::default()),
         }
     }
@@ -163,10 +175,10 @@ impl ActiveDownload {
 /// Outcome of [`DownloadManager::try_claim_slot`].
 pub enum ClaimOutcome {
     /// A slot was claimed; the caller must launch this request.
-    Claimed(QueuedDownloadRequest),
+    Claimed(Box<QueuedDownloadRequest>),
     /// The cap was reached; the request was parked in the queue.
     Queued,
-    /// A download for this model is already active or queued.
+    /// A download for this Variant is already active or queued.
     AlreadyActive,
 }
 
@@ -179,9 +191,10 @@ struct DownloadQueue {
 }
 
 impl DownloadQueue {
-    /// Whether a download for `model_id` is already active or queued.
-    fn contains(&self, model_id: &str) -> bool {
-        self.active.contains_key(model_id) || self.pending.iter().any(|r| r.model_id == model_id)
+    /// Whether a download for `variant` is already active or queued.
+    fn contains(&self, variant: &VariantKey) -> bool {
+        self.active.contains_key(&variant.as_key())
+            || self.pending.iter().any(|r| &r.variant == variant)
     }
 
     /// Promote the next queued request to active, claiming its slot, and
@@ -189,7 +202,7 @@ impl DownloadQueue {
     fn claim_next(&mut self) -> Option<QueuedDownloadRequest> {
         let next = self.pending.pop_front()?;
         self.active
-            .insert(next.model_id.clone(), ActiveDownload::from_request(&next));
+            .insert(next.variant.as_key(), ActiveDownload::from_request(&next));
         Some(next)
     }
 }
@@ -243,11 +256,13 @@ impl DownloadManager {
         &self.model_dir
     }
 
-    /// Start (or queue) a download for `model_id` at `quant` — the single
-    /// public entry for the whole download flow. Resolves the catalog
-    /// entry and destination path, claims a slot (rejecting a duplicate),
+    /// Start (or queue) a download of `model_id` at `quant` (the catalog's
+    /// `default_quant` when omitted) — the single public entry for the
+    /// whole download flow. Resolves the catalog entry and destination
+    /// path, claims a slot (rejecting a duplicate of the same Variant),
     /// and launches the byte pipeline whose completion tail runs the
-    /// Install and releases the slot. `Ok(())` means started or queued.
+    /// Install and releases the slot. Another quant of the model may
+    /// download at the same time. `Ok(())` means started or queued.
     pub async fn start(
         self: &Arc<Self>,
         model_id: &str,
@@ -263,24 +278,26 @@ impl DownloadManager {
                 detail: format!("model {model_id} has no quant {quant_name}"),
             })?;
 
+        let variant = VariantKey::new(&model.id, Some(quant.quant.clone()));
         let request = QueuedDownloadRequest::new(
-            model_id.to_string(),
+            variant.clone(),
             quant.url.clone(),
-            self.model_dir.join(&quant.filename),
+            installed::variant_path(&self.model_dir, &model.id, &quant.filename),
             quant.sha256.clone(),
+            Sidecar::for_install(model, &quant.quant, None),
         );
 
         // Atomically claim a slot, queue, or reject a duplicate. The
         // duplicate check lives inside try_claim_slot (under its lock) so
-        // two concurrent submissions for the same model can't both start.
+        // two concurrent submissions for the same Variant can't both start.
         let request = match self.try_claim_slot(request).await {
             ClaimOutcome::AlreadyActive => {
                 return Err(AsrError::DownloadInProgress {
-                    model_id: model_id.to_string(),
+                    model_id: variant.as_key(),
                 });
             }
             ClaimOutcome::Queued => return Ok(()),
-            ClaimOutcome::Claimed(request) => request,
+            ClaimOutcome::Claimed(request) => *request,
         };
 
         if let Err(e) = download_model(request, self.clone(), DownloadConfig::default()).await {
@@ -288,9 +305,8 @@ impl DownloadManager {
             // (and launch anything queued) on a detached task so the
             // cap recovers without blocking the error response.
             let downloads = self.clone();
-            let model_id = model_id.to_string();
             tokio::spawn(async move {
-                downloads.finish_and_launch_next(&model_id).await;
+                downloads.finish_and_launch_next(&variant).await;
             });
             return Err(e);
         }
@@ -313,21 +329,22 @@ impl DownloadManager {
     ///   [`ClaimOutcome::Queued`].
     pub async fn try_claim_slot(&self, request: QueuedDownloadRequest) -> ClaimOutcome {
         let mut q = self.queue.lock().await;
-        if q.contains(&request.model_id) {
+        if q.contains(&request.variant) {
             return ClaimOutcome::AlreadyActive;
         }
         if q.active.len() < MAX_CONCURRENT_DOWNLOADS {
             q.active.insert(
-                request.model_id.clone(),
+                request.variant.as_key(),
                 ActiveDownload::from_request(&request),
             );
-            ClaimOutcome::Claimed(request)
+            ClaimOutcome::Claimed(Box::new(request))
         } else {
-            let model_id = request.model_id.clone();
+            let variant = request.variant.clone();
             q.pending.push_back(request);
             drop(q);
             self.set_progress(DownloadProgress {
-                model_id,
+                model_id: variant.model.clone(),
+                quant: variant.quant.clone().unwrap_or_default(),
                 status: crate::model::types::DownloadPhase::Queued,
                 downloaded_bytes: 0,
                 total_bytes: 0,
@@ -340,7 +357,7 @@ impl DownloadManager {
         }
     }
 
-    /// Release the slot held by `model_id` (normal completion or failure
+    /// Release the slot held by `variant` (normal completion or failure
     /// to start) and hand back the next queued request — with its slot
     /// already claimed — if any.
     ///
@@ -348,9 +365,9 @@ impl DownloadManager {
     /// actually removes the active entry. A second call for an already
     /// released download is a no-op (`None`), so a normal completion and a
     /// concurrent [`cancel`](Self::cancel) can never double-free a slot.
-    async fn finish(&self, model_id: &str) -> Option<QueuedDownloadRequest> {
+    async fn finish(&self, variant: &VariantKey) -> Option<QueuedDownloadRequest> {
         let mut q = self.queue.lock().await;
-        q.active.remove(model_id)?;
+        q.active.remove(&variant.as_key())?;
         q.claim_next()
     }
 
@@ -358,8 +375,8 @@ impl DownloadManager {
     /// the pairing every release path needs. Keeping it in one method means
     /// no caller can free a slot and forget the promotion (which would
     /// stall the queue).
-    pub(crate) async fn finish_and_launch_next(self: &Arc<Self>, model_id: &str) {
-        let next = self.finish(model_id).await;
+    pub(crate) async fn finish_and_launch_next(self: &Arc<Self>, variant: &VariantKey) {
+        let next = self.finish(variant).await;
         self.launch(next);
     }
 
@@ -376,32 +393,28 @@ impl DownloadManager {
     ///
     /// 1. Publish the terminal progress snapshot.
     /// 2. On `Completed`, run the Install BEFORE the slot is released:
-    ///    the active entry still blocks a same-model re-download, so the
-    ///    quant switch can't interleave with a new download writing the
-    ///    same files; `list_models` reports Downloaded throughout
-    ///    (Completed progress + file on disk), so the HA reconcile
-    ///    triggered by the Install's announce sees the model.
+    ///    the active entry still blocks a same-Variant re-download, so the
+    ///    Install can't interleave with a new download writing the same
+    ///    file; `list_models` reports Downloaded throughout (Completed
+    ///    progress + file on disk), so the HA reconcile triggered by the
+    ///    Install's announce sees the Variant.
     /// 3. Release the slot and launch the next queued download.
     /// 4. On `Completed`, after an SSE grace window, clear the progress —
-    ///    unless a same-model re-download admitted in that window owns the
-    ///    model_id-keyed entry now (it shows anything but `Completed`).
-    ///    A `Failed` entry stays until the model is downloaded again or the
+    ///    unless a same-Variant re-download admitted in that window owns
+    ///    the entry now (it shows anything but `Completed`).
+    ///    A `Failed` entry stays until the Variant is downloaded again or the
     ///    failure is dismissed (`cancel_download`), so the reason outlives
     ///    the download that produced it.
-    pub(crate) async fn complete(self: &Arc<Self>, dest_path: &Path, terminal: DownloadProgress) {
-        let model_id = terminal.model_id.clone();
+    pub(crate) async fn complete(self: &Arc<Self>, terminal: DownloadProgress) {
+        let variant = terminal.key();
         let completed = matches!(terminal.status, DownloadPhase::Completed);
         self.set_progress(terminal).await;
 
         if completed && let Some(installer) = &self.installer {
-            let filename = dest_path
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            installer.install(&model_id, &filename).await;
+            installer.install(&variant).await;
         }
 
-        self.finish_and_launch_next(&model_id).await;
+        self.finish_and_launch_next(&variant).await;
 
         if !completed {
             return;
@@ -410,11 +423,11 @@ impl DownloadManager {
         // Only this download's own Completed: a re-download admitted in the
         // window may have published a live entry or its own kept failure.
         if self
-            .get_progress(&model_id)
+            .get_progress(&variant)
             .await
             .is_some_and(|p| p.status == DownloadPhase::Completed)
         {
-            self.remove_progress(&model_id).await;
+            self.remove_progress(&variant).await;
         }
     }
 
@@ -426,19 +439,19 @@ impl DownloadManager {
         self.progress.set(progress).await;
     }
 
-    pub async fn get_progress(&self, model_id: &str) -> Option<DownloadProgress> {
-        self.progress.get(model_id).await
+    pub async fn get_progress(&self, variant: &VariantKey) -> Option<DownloadProgress> {
+        self.progress.get(variant).await
     }
 
-    pub async fn remove_progress(&self, model_id: &str) {
-        self.progress.remove(model_id).await;
+    pub async fn remove_progress(&self, variant: &VariantKey) {
+        self.progress.remove(variant).await;
     }
 
-    /// Whether the model has any progress entry: queued, in flight, or a
+    /// Whether the Variant has any progress entry: queued, in flight, or a
     /// terminal one still on the board (a lingering Completed or a kept
     /// Failed).
-    pub async fn is_downloading(&self, model_id: &str) -> bool {
-        self.progress.contains(model_id).await
+    pub async fn is_downloading(&self, variant: &VariantKey) -> bool {
+        self.progress.contains(variant).await
     }
 
     // -----------------------------------------------------------------
@@ -470,17 +483,22 @@ impl DownloadManager {
     ///
     /// Public callers use [`cancel_download`](Self::cancel_download),
     /// which also launches the promoted request.
-    async fn cancel(&self, model_id: &str) -> Result<Option<QueuedDownloadRequest>, AsrError> {
+    async fn cancel(
+        &self,
+        variant: &VariantKey,
+    ) -> Result<Option<QueuedDownloadRequest>, AsrError> {
+        let model_id = variant.as_key();
+        let model_id = model_id.as_str();
         // Phase 1: classify + signal, keeping the active entry as a barrier.
         let dest_path = {
             let mut q = self.queue.lock().await;
 
             // Queued (not yet started): drop it from pending; no slot held,
             // no file on disk yet.
-            if let Some(idx) = q.pending.iter().position(|r| r.model_id == model_id) {
+            if let Some(idx) = q.pending.iter().position(|r| &r.variant == variant) {
                 q.pending.remove(idx);
                 drop(q);
-                self.remove_progress(model_id).await;
+                self.remove_progress(variant).await;
                 info!(model_id = %model_id, "queued download cancelled");
                 return Ok(None);
             }
@@ -499,8 +517,8 @@ impl DownloadManager {
                     // No slot held: either already finished (progress may
                     // still linger) — a no-op — or a genuinely unknown id.
                     drop(q);
-                    if self.is_downloading(model_id).await {
-                        self.remove_progress(model_id).await;
+                    if self.is_downloading(variant).await {
+                        self.remove_progress(variant).await;
                         return Ok(None);
                     }
                     return Err(AsrError::ModelNotFound {
@@ -511,8 +529,8 @@ impl DownloadManager {
         };
 
         // Phase 2: clean side effects while the entry still blocks a
-        // re-download of this model.
-        self.remove_progress(model_id).await;
+        // re-download of this Variant.
+        self.remove_progress(variant).await;
         remove_part_file(&dest_path).await;
 
         // Phase 3: release the slot and promote the next queued request —
@@ -530,8 +548,8 @@ impl DownloadManager {
 
     /// Cancel a download and launch whatever queued request its freed
     /// slot promoted. The public face of [`cancel`](Self::cancel).
-    pub async fn cancel_download(self: &Arc<Self>, model_id: &str) -> Result<(), AsrError> {
-        let next = self.cancel(model_id).await?;
+    pub async fn cancel_download(self: &Arc<Self>, variant: &VariantKey) -> Result<(), AsrError> {
+        let next = self.cancel(variant).await?;
         self.launch(next);
         Ok(())
     }
@@ -564,12 +582,18 @@ mod tests {
         DownloadManager::new(tmp.to_path_buf(), ProgressBoard::new(), None)
     }
 
+    /// A Variant key for a test download named `id`.
+    fn k(id: &str) -> VariantKey {
+        VariantKey::new(id, Some("Q8_0".into()))
+    }
+
     fn request(tmp: &std::path::Path, id: &str) -> QueuedDownloadRequest {
         QueuedDownloadRequest::new(
-            id.to_string(),
+            k(id),
             "https://example.com/n".to_string(),
             tmp.join(format!("{id}.bin")),
             String::new(),
+            Sidecar::for_install(find_model("whisper-tiny").unwrap(), "Q8_0", None),
         )
     }
 
@@ -592,16 +616,37 @@ mod tests {
         }
     }
 
+    /// Two quants of one model are two Variants: both may download at once,
+    /// while a second download of the same Variant is rejected.
+    #[tokio::test]
+    async fn the_duplicate_check_is_per_variant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let downloads = manager(tmp.path());
+        let at = |quant: &str| {
+            let mut r = request(tmp.path(), "m");
+            r.variant = VariantKey::new("m", Some(quant.into()));
+            r
+        };
+
+        assert!(claimed(downloads.try_claim_slot(at("Q4_K_M")).await));
+        assert!(claimed(downloads.try_claim_slot(at("Q8_0")).await));
+        assert!(matches!(
+            downloads.try_claim_slot(at("Q8_0")).await,
+            ClaimOutcome::AlreadyActive
+        ));
+    }
+
     #[tokio::test]
     async fn progress_tracking_lifecycle() {
         let tmp = tempfile::tempdir().unwrap();
         let downloads = manager(tmp.path());
 
-        assert!(!downloads.is_downloading("test-model").await);
+        assert!(!downloads.is_downloading(&k("test-model")).await);
 
         downloads
             .set_progress(DownloadProgress {
                 model_id: "test-model".to_string(),
+                quant: "Q8_0".to_string(),
                 status: DownloadPhase::Downloading,
                 downloaded_bytes: 100,
                 total_bytes: 1000,
@@ -611,12 +656,12 @@ mod tests {
             })
             .await;
 
-        assert!(downloads.is_downloading("test-model").await);
-        let progress = downloads.get_progress("test-model").await.unwrap();
+        assert!(downloads.is_downloading(&k("test-model")).await);
+        let progress = downloads.get_progress(&k("test-model")).await.unwrap();
         assert_eq!(progress.downloaded_bytes, 100);
 
-        downloads.remove_progress("test-model").await;
-        assert!(!downloads.is_downloading("test-model").await);
+        downloads.remove_progress(&k("test-model")).await;
+        assert!(!downloads.is_downloading(&k("test-model")).await);
     }
 
     #[tokio::test]
@@ -632,12 +677,12 @@ mod tests {
                 .try_claim_slot(request(tmp.path(), "queued-1"))
                 .await
         ));
-        assert!(downloads.is_downloading("queued-1").await);
+        assert!(downloads.is_downloading(&k("queued-1")).await);
 
         // Finishing an active download frees its slot and promotes the
         // queued request (slot already claimed for it).
-        let next = downloads.finish("active-0").await.unwrap();
-        assert_eq!(next.model_id, "queued-1");
+        let next = downloads.finish(&k("active-0")).await.unwrap();
+        assert_eq!(next.variant.model, "queued-1");
         // Still at the cap (one finished, one promoted), so a fresh claim queues.
         assert!(queued(
             downloads.try_claim_slot(request(tmp.path(), "new")).await
@@ -655,11 +700,11 @@ mod tests {
                 .try_claim_slot(request(tmp.path(), "queued-1"))
                 .await
         ));
-        assert!(downloads.is_downloading("queued-1").await);
+        assert!(downloads.is_downloading(&k("queued-1")).await);
 
         // Cancelling a queued download frees no slot, so nothing to launch.
-        assert!(downloads.cancel("queued-1").await.unwrap().is_none());
-        assert!(!downloads.is_downloading("queued-1").await);
+        assert!(downloads.cancel(&k("queued-1")).await.unwrap().is_none());
+        assert!(!downloads.is_downloading(&k("queued-1")).await);
     }
 
     #[tokio::test]
@@ -673,7 +718,7 @@ mod tests {
         assert!(claimed(downloads.try_claim_slot(req).await));
         assert!(!flag.is_cancelled());
 
-        assert!(downloads.cancel("m").await.unwrap().is_none());
+        assert!(downloads.cancel(&k("m")).await.unwrap().is_none());
         assert!(
             flag.is_cancelled(),
             "cancel must set the shared flag so the task stops cooperatively"
@@ -688,7 +733,7 @@ mod tests {
         fill_slots(&downloads, tmp.path()).await;
 
         // No queued work, so cancel frees the slot and returns nothing to launch.
-        assert!(downloads.cancel("active-0").await.unwrap().is_none());
+        assert!(downloads.cancel(&k("active-0")).await.unwrap().is_none());
 
         // Exactly one slot is now free: the first new claim succeeds and
         // the next must queue.
@@ -715,6 +760,7 @@ mod tests {
         downloads
             .set_progress(DownloadProgress {
                 model_id: "active-0".to_string(),
+                quant: "Q8_0".to_string(),
                 status: DownloadPhase::Completed,
                 downloaded_bytes: 0,
                 total_bytes: 0,
@@ -723,11 +769,11 @@ mod tests {
                 error: None,
             })
             .await;
-        assert!(downloads.finish("active-0").await.is_none());
+        assert!(downloads.finish(&k("active-0")).await.is_none());
 
         // A cancel landing in that window is a successful no-op: the slot
         // is already free, so it must not be freed again.
-        assert!(downloads.cancel("active-0").await.unwrap().is_none());
+        assert!(downloads.cancel(&k("active-0")).await.unwrap().is_none());
 
         // Net effect of finish+cancel is exactly one freed slot. A
         // double-free would let two fresh claims through.
@@ -742,6 +788,7 @@ mod tests {
     fn terminal(id: &str, status: DownloadPhase) -> DownloadProgress {
         DownloadProgress {
             model_id: id.to_string(),
+            quant: "Q8_0".to_string(),
             status,
             downloaded_bytes: 0,
             total_bytes: 0,
@@ -765,14 +812,21 @@ mod tests {
         use crate::model::types::ModelStatus;
 
         let tmp = tempfile::tempdir().unwrap();
-        // The verified quant file is already on disk, as after a real download.
+        // The verified Variant is already on disk, as after a real download.
         let model = find_model("whisper-tiny").unwrap();
-        let filename = model.default_quant_file().filename.clone();
-        std::fs::write(tmp.path().join(&filename), b"fake").unwrap();
+        let q = model.quant("Q8_0").expect("whisper-tiny has Q8_0");
+        let file = installed::variant_path(tmp.path(), &model.id, &q.filename);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fake").unwrap();
 
         let board = ProgressBoard::new();
         let engines = EngineManager::new(EngineManagerConfig::default());
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), board.clone(), engines);
+        let db = Arc::new(
+            crate::db::database::Database::open_in_memory()
+                .await
+                .unwrap(),
+        );
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), board.clone(), engines, db);
         let downloads = DownloadManager::with_clear_delay(
             tmp.path().to_path_buf(),
             board,
@@ -788,10 +842,9 @@ mod tests {
 
         let tail = {
             let downloads = downloads.clone();
-            let dest = tmp.path().join(&filename);
             tokio::spawn(async move {
                 downloads
-                    .complete(&dest, terminal("whisper-tiny", DownloadPhase::Completed))
+                    .complete(terminal("whisper-tiny", DownloadPhase::Completed))
                     .await;
             })
         };
@@ -799,7 +852,7 @@ mod tests {
         // Wait until the Completed entry is published (inside the grace window).
         let mut lingering = None;
         for _ in 0..100 {
-            lingering = downloads.get_progress("whisper-tiny").await;
+            lingering = downloads.get_progress(&k("whisper-tiny")).await;
             if lingering
                 .as_ref()
                 .is_some_and(|p| p.status == DownloadPhase::Completed)
@@ -841,16 +894,10 @@ mod tests {
         fill_slots(&downloads, tmp.path()).await;
 
         downloads
-            .complete(
-                &tmp.path().join("active-0.bin"),
-                terminal("active-0", DownloadPhase::Failed),
-            )
+            .complete(terminal("active-0", DownloadPhase::Failed))
             .await;
         downloads
-            .complete(
-                &tmp.path().join("active-1.bin"),
-                terminal("active-1", DownloadPhase::Completed),
-            )
+            .complete(terminal("active-1", DownloadPhase::Completed))
             .await;
 
         // Slots freed: fresh claims succeed.
@@ -862,15 +909,18 @@ mod tests {
         ));
         // complete() awaited the grace window: the success is gone, the
         // failure is still there to be read.
-        assert!(downloads.get_progress("active-1").await.is_none());
+        assert!(downloads.get_progress(&k("active-1")).await.is_none());
         assert_eq!(
-            downloads.get_progress("active-0").await.map(|p| p.status),
+            downloads
+                .get_progress(&k("active-0"))
+                .await
+                .map(|p| p.status),
             Some(DownloadPhase::Failed)
         );
 
         // Dismissing it is a cancel of the finished download.
-        downloads.cancel_download("active-0").await.unwrap();
-        assert!(downloads.get_progress("active-0").await.is_none());
+        downloads.cancel_download(&k("active-0")).await.unwrap();
+        assert!(downloads.get_progress(&k("active-0")).await.is_none());
     }
 
     /// A same-model re-download admitted during the grace window owns the
@@ -892,10 +942,9 @@ mod tests {
 
         let tail = {
             let downloads = downloads.clone();
-            let dest = tmp.path().join("m.bin");
             tokio::spawn(async move {
                 downloads
-                    .complete(&dest, terminal("m", DownloadPhase::Completed))
+                    .complete(terminal("m", DownloadPhase::Completed))
                     .await;
             })
         };
@@ -909,7 +958,7 @@ mod tests {
         tail.await.unwrap();
         assert!(
             matches!(
-                downloads.get_progress("m").await.map(|p| p.status),
+                downloads.get_progress(&k("m")).await.map(|p| p.status),
                 Some(DownloadPhase::Downloading)
             ),
             "the re-download's live progress must survive the delayed clear"
@@ -934,10 +983,9 @@ mod tests {
 
         let tail = {
             let downloads = downloads.clone();
-            let dest = tmp.path().join("m.bin");
             tokio::spawn(async move {
                 downloads
-                    .complete(&dest, terminal("m", DownloadPhase::Completed))
+                    .complete(terminal("m", DownloadPhase::Completed))
                     .await;
             })
         };
@@ -948,7 +996,7 @@ mod tests {
 
         tail.await.unwrap();
         assert_eq!(
-            downloads.get_progress("m").await.map(|p| p.status),
+            downloads.get_progress(&k("m")).await.map(|p| p.status),
             Some(DownloadPhase::Failed)
         );
     }
@@ -965,7 +1013,7 @@ mod tests {
         assert!(claimed(downloads.try_claim_slot(req).await));
 
         assert!(token.commit());
-        downloads.cancel_download("m").await.unwrap();
+        downloads.cancel_download(&k("m")).await.unwrap();
 
         assert!(!token.is_cancelled());
         assert!(matches!(
@@ -987,7 +1035,7 @@ mod tests {
     async fn cancel_unknown_model_is_error() {
         let tmp = tempfile::tempdir().unwrap();
         let downloads = manager(tmp.path());
-        assert!(downloads.cancel("nope").await.is_err());
+        assert!(downloads.cancel(&k("nope")).await.is_err());
     }
 
     #[tokio::test]
@@ -1001,7 +1049,7 @@ mod tests {
         assert!(part.exists());
 
         assert!(claimed(downloads.try_claim_slot(req).await));
-        assert!(downloads.cancel("m").await.unwrap().is_none());
+        assert!(downloads.cancel(&k("m")).await.unwrap().is_none());
 
         assert!(
             !part.exists(),

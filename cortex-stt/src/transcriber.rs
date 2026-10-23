@@ -31,6 +31,7 @@ use crate::engine::pool::PoolGuard;
 use crate::engine::traits::{StreamSnapshot, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::{CreateRecord, History, TranscriptionSource};
+use crate::model::catalog::ModelCatalog;
 use crate::text::Renderer;
 
 /// Buffering ceiling for stream sessions against models with no input
@@ -64,6 +65,8 @@ pub struct TranscribeResponse {
     /// Decode stopped early (a model ceiling or a repetition loop); `text` is a valid prefix.
     pub truncated: bool,
     pub model: String,
+    /// The Variant that served the request; `None` for a Custom model.
+    pub quant: Option<String>,
     pub duration_ms: u64,
     pub inference_ms: u64,
     /// Sum of `pool_wait_ms + cold_load_ms`. Kept so older clients see
@@ -115,6 +118,7 @@ impl TranscribeResponse {
                 .unwrap_or_default(),
             truncated: result.truncated,
             model,
+            quant: None,
             duration_ms,
             inference_ms,
             model_load_ms: metrics.pool_wait_ms + metrics.cold_load_ms,
@@ -130,6 +134,8 @@ impl TranscribeResponse {
 /// engine acquisition.
 pub struct TranscribeRequest {
     pub model: String,
+    /// The Variant to use; the model's Preferred variant when `None`.
+    pub quant: Option<String>,
     pub samples: Arc<[f32]>,
     pub duration_ms: u64,
     pub options: TranscribeOptions,
@@ -148,14 +154,21 @@ pub struct TranscribeRequest {
 /// request from "decoded samples" through to "persisted history row".
 pub struct Transcriber {
     engine: Arc<EngineManager>,
+    catalog: Arc<ModelCatalog>,
     history: Arc<History>,
     db: Arc<Database>,
 }
 
 impl Transcriber {
-    pub fn new(engine: Arc<EngineManager>, history: Arc<History>, db: Arc<Database>) -> Arc<Self> {
+    pub fn new(
+        engine: Arc<EngineManager>,
+        catalog: Arc<ModelCatalog>,
+        history: Arc<History>,
+        db: Arc<Database>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             engine,
+            catalog,
             history,
             db,
         })
@@ -163,9 +176,22 @@ impl Transcriber {
 
     /// Run the pipeline to completion. Used by the sync HTTP handler
     /// and (via spawned task) by the async-job handler.
-    pub async fn transcribe(&self, req: TranscribeRequest) -> Result<TranscribeResponse, AsrError> {
+    pub async fn transcribe(
+        &self,
+        mut req: TranscribeRequest,
+    ) -> Result<TranscribeResponse, AsrError> {
         let settings = RequestSettings::load(&self.db).await;
         let started = Instant::now();
+        let engine_key = match self.resolve(&req.model, req.quant.as_deref()).await {
+            Ok((key, quant)) => {
+                req.quant = quant;
+                key
+            }
+            Err(e) => {
+                self.on_failure(&RecordMeta::from_request(&req), &e).await;
+                return Err(e);
+            }
+        };
         tracing::info!(
             model = %req.model,
             samples = req.samples.len(),
@@ -180,7 +206,7 @@ impl Transcriber {
         // bubbled up silently.
         let result = async {
             let (guard, metrics) = deadline
-                .enforce(self.acquire_engine(&req.model), &req.model)
+                .enforce(self.acquire_engine(&engine_key), &req.model)
                 .await?;
             InputLimit::of(&guard)?.check_batch(&req.model, req.duration_ms)?;
             deadline
@@ -200,7 +226,8 @@ impl Transcriber {
         .await;
 
         match result {
-            Ok(response) => {
+            Ok(mut response) => {
+                response.quant = req.quant.clone();
                 let meta = RecordMeta::from_request(&req);
                 let stats = AudioStats::of(&req.samples);
                 let samples = settings.save_audio.then_some(req.samples.as_ref());
@@ -230,11 +257,22 @@ impl Transcriber {
     /// [`StreamSession`] holds the pool slot until finalize/drop.
     pub async fn open_stream(
         self: &Arc<Self>,
-        meta: StreamMeta,
+        mut meta: StreamMeta,
         options: TranscribeOptions,
     ) -> Result<StreamSession, AsrError> {
         let settings = RequestSettings::load(&self.db).await;
         let deadline = RequestDeadline::from_now(settings.timeout_secs);
+        let engine_key = match self.resolve(&meta.model, meta.quant.as_deref()).await {
+            Ok((key, quant)) => {
+                meta.quant = quant;
+                key
+            }
+            Err(e) => {
+                self.on_failure(&RecordMeta::from_stream(&meta, 0), &e)
+                    .await;
+                return Err(e);
+            }
+        };
         tracing::info!(
             model = %meta.model,
             source = ?meta.source,
@@ -242,7 +280,7 @@ impl Transcriber {
         );
 
         let (guard, metrics) = match deadline
-            .enforce(self.acquire_engine(&meta.model), &meta.model)
+            .enforce(self.acquire_engine(&engine_key), &meta.model)
             .await
         {
             Ok(v) => v,
@@ -299,7 +337,18 @@ impl Transcriber {
     // Internal — shared by both public surfaces.
     // -----------------------------------------------------------------
 
-    /// Acquire a pool slot for `model` and attribute the elapsed time to
+    /// The engine key of the Variant a request gets, and its quant: the
+    /// named quant, else the model's Preferred variant.
+    async fn resolve(
+        &self,
+        model: &str,
+        quant: Option<&str>,
+    ) -> Result<(String, Option<String>), AsrError> {
+        let variant = self.catalog.resolve_variant(model, quant).await?;
+        Ok((variant.key.as_key(), variant.key.quant))
+    }
+
+    /// Acquire a pool slot for engine key `model` and attribute the elapsed time to
     /// `pool_wait_ms` or `cold_load_ms` based on whether the manager
     /// reports that this acquire performed the load.
     async fn acquire_engine(&self, model: &str) -> Result<(PoolGuard, AcquireMetrics), AsrError> {
@@ -395,6 +444,9 @@ impl Transcriber {
 #[derive(Debug, Clone)]
 pub struct StreamMeta {
     pub model: String,
+    /// The Variant to use; the model's Preferred variant when `None`.
+    /// Holds the resolved quant once the session is open.
+    pub quant: Option<String>,
     /// Original BCP-47 language tag (e.g. "zh-TW").
     pub language: Option<String>,
     pub source: TranscriptionSource,
@@ -410,6 +462,7 @@ pub struct StreamMeta {
 #[derive(Debug, Clone)]
 struct RecordMeta {
     model: String,
+    quant: Option<String>,
     language: Option<String>,
     source: TranscriptionSource,
     api_key_id: Option<String>,
@@ -421,6 +474,7 @@ impl RecordMeta {
     fn from_request(req: &TranscribeRequest) -> Self {
         Self {
             model: req.model.clone(),
+            quant: req.quant.clone(),
             language: req.language.clone(),
             source: req.source,
             api_key_id: req.api_key_id.clone(),
@@ -432,6 +486,7 @@ impl RecordMeta {
     fn from_stream(meta: &StreamMeta, duration_ms: u64) -> Self {
         Self {
             model: meta.model.clone(),
+            quant: meta.quant.clone(),
             language: meta.language.clone(),
             source: meta.source,
             api_key_id: meta.api_key_id.clone(),
@@ -562,7 +617,7 @@ impl StreamSession {
         match result {
             Ok(r) => {
                 let renderer = Renderer::for_language(self.options.language.as_deref());
-                let response = TranscribeResponse::from_result(
+                let mut response = TranscribeResponse::from_result(
                     r,
                     self.meta.model.clone(),
                     duration_ms,
@@ -571,6 +626,7 @@ impl StreamSession {
                     self.device.clone(),
                     renderer.as_ref(),
                 );
+                response.quant = self.meta.quant.clone();
                 let samples = std::mem::take(&mut self.buffer);
                 let stats = AudioStats::of(&samples);
                 self.transcriber
@@ -763,6 +819,7 @@ fn base_record(meta: &RecordMeta) -> CreateRecord {
         source: meta.source,
         language: meta.language.clone(),
         model_id: meta.model.clone(),
+        quant: meta.quant.clone(),
         audio_duration_ms: meta.duration_ms as i64,
         inference_ms: 0,
         model_load_ms: 0,

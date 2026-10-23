@@ -2,7 +2,7 @@
 //! (ADR 0001).
 //!
 //! Wire protocol (client → server):
-//! - text `{"type":"start", "model", "language"?, "translate"?,
+//! - text `{"type":"start", "model", "quant"?, "language"?, "translate"?,
 //!   "initial_prompt"?, "itn"?, "timestamps"?, "format"?, "sample_rate"?,
 //!   "channels"?}` — must be the first message
 //! - binary frames: PCM audio chunks (default `pcm_s16le` @ 16 kHz mono)
@@ -65,6 +65,8 @@ enum ClientMessage {
 #[derive(Debug, Deserialize)]
 struct StartMessage {
     model: String,
+    /// Quant of the Variant to use; the model's Preferred variant when omitted.
+    quant: Option<String>,
     language: Option<String>,
     #[serde(default)]
     translate: bool,
@@ -171,6 +173,7 @@ async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, api_key_id: 
     };
     let meta = StreamMeta {
         model: start.model.clone(),
+        quant: start.quant.clone(),
         language: start.language.clone(),
         source: TranscriptionSource::WsApi,
         api_key_id,

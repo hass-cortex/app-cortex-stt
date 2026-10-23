@@ -10,6 +10,9 @@ pub enum AsrError {
     #[error("model file not found: {path}")]
     ModelFileNotFound { path: PathBuf },
 
+    #[error("{model_id} has no installed variant at {quant}")]
+    VariantNotInstalled { model_id: String, quant: String },
+
     #[error("inference failed for model {model_id}: {detail}")]
     InferenceFailed { model_id: String, detail: String },
 
@@ -147,6 +150,7 @@ impl AsrError {
             // 404
             Self::ModelNotFound { .. }
             | Self::ModelFileNotFound { .. }
+            | Self::VariantNotInstalled { .. }
             | Self::RecordNotFound { .. }
             | Self::NoAudio { .. }
             | Self::JobNotFound { .. }
@@ -196,6 +200,7 @@ impl AsrError {
         match self {
             Self::ModelNotFound { .. } => "MODEL_NOT_FOUND",
             Self::ModelFileNotFound { .. } => "MODEL_FILE_NOT_FOUND",
+            Self::VariantNotInstalled { .. } => "VARIANT_NOT_INSTALLED",
             Self::InferenceFailed { .. } => "INFERENCE_FAILED",
             Self::InferenceTimeout { .. } => "INFERENCE_TIMEOUT",
             Self::EnginePanic { .. } => "ENGINE_PANIC",
@@ -244,6 +249,7 @@ impl AsrError {
     pub fn related_id(&self) -> Option<String> {
         match self {
             Self::ModelNotFound { model_id }
+            | Self::VariantNotInstalled { model_id, .. }
             | Self::EnginePanic { model_id }
             | Self::ModelNotLoaded { model_id }
             | Self::DownloadInProgress { model_id } => Some(model_id.clone()),

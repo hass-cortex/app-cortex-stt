@@ -22,6 +22,7 @@ use cortex_stt::model::catalog::ModelCatalog;
 use cortex_stt::model::catalog_data::{catalog_models, find_model};
 use cortex_stt::model::download::{DownloadConfig, download_model, validate_download_url};
 use cortex_stt::model::download_manager::{DownloadManager, QueuedDownloadRequest};
+use cortex_stt::model::installed;
 use cortex_stt::model::progress::ProgressBoard;
 use cortex_stt::model::types::ModelStatus;
 use cortex_stt::settings::Settings;
@@ -115,7 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The CLI never keeps models loaded across commands; a default manager
     // satisfies the catalog's load-state source (is_loaded stays false).
     let engines = EngineManager::new(EngineManagerConfig::default());
-    let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines);
+    // Throwaway settings: no Preferred variant is ever chosen here, so a
+    // model with several Variants installed uses its earliest-installed.
+    let db = Arc::new(Database::open_in_memory().await?);
+    let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines, db);
 
     match cli.command {
         Command::List => cmd_list(&catalog).await,
@@ -178,7 +182,12 @@ async fn cmd_list(catalog: &ModelCatalog) -> Result<(), Box<dyn std::error::Erro
 
         let status = match m.status {
             ModelStatus::Downloaded => {
-                format!("✓ {}", m.downloaded_quant.as_deref().unwrap_or("dl"))
+                let quants: Vec<&str> = m
+                    .variants
+                    .iter()
+                    .filter_map(|v| v.quant.as_deref())
+                    .collect();
+                format!("✓ {}", quants.join(","))
             }
             ModelStatus::Available => "  available".to_string(),
             ModelStatus::Queued => "⏳ queued".to_string(),
@@ -221,7 +230,7 @@ async fn cmd_download(
         None => model.default_quant_file(),
     };
 
-    let dest_path = catalog.model_dir().join(&quant_file.filename);
+    let dest_path = installed::variant_path(catalog.model_dir(), model_id, &quant_file.filename);
     if dest_path.exists() {
         println!(
             "✓ Model '{model_id}' ({}) already downloaded at {}",
@@ -240,10 +249,11 @@ async fn cmd_download(
 
     // One-shot CLI: the request's fresh cancel flag stays false.
     let request = QueuedDownloadRequest::new(
-        model_id.to_string(),
+        installed::VariantKey::new(model_id, Some(quant_file.quant.clone())),
         quant_file.url.clone(),
         dest_path.clone(),
         quant_file.sha256.clone(),
+        installed::Sidecar::for_install(model, &quant_file.quant, None),
     );
     let handle = download_model(request, downloads.clone(), DownloadConfig::default()).await?;
     let mut rx = handle.progress_rx;
@@ -306,12 +316,13 @@ fn load_wav(wav_file: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     )?)
 }
 
-/// Register `model_id` in a one-shot EngineManager (single pool slot).
+/// Register `model_id`'s Preferred variant in a one-shot EngineManager
+/// (single pool slot).
 async fn setup_engine(
     model_id: &str,
     catalog: &ModelCatalog,
 ) -> Result<Arc<EngineManager>, Box<dyn std::error::Error>> {
-    let model_path = catalog.model_path(model_id).ok_or_else(|| {
+    let variant = catalog.resolve_variant(model_id, None).await.map_err(|_| {
         format!("Model not found on disk: {model_id}. Run 'asr-cli download {model_id}' first.")
     })?;
 
@@ -323,9 +334,10 @@ async fn setup_engine(
         idle_check_interval: Duration::from_secs(60),
     });
 
-    let factory = cortex_stt::engine::register::create_factory(model_id, model_path, None)
+    let key = variant.key.as_key();
+    let factory = cortex_stt::engine::register::create_factory(&key, variant.path, None)
         .ok_or("Engine not compiled in this build — use the default `engine` feature")?;
-    engine_manager.register(model_id, factory).await;
+    engine_manager.register(&key, factory).await;
     Ok(engine_manager)
 }
 
@@ -344,7 +356,13 @@ async fn setup_transcriber(
     };
     db.save_settings(&settings).await?;
     let history = History::new(db.clone(), std::env::temp_dir().join("asr-cli-audio")).await?;
-    Ok(Transcriber::new(engine_manager, history, db))
+    let catalog = ModelCatalog::new(
+        catalog.model_dir().to_path_buf(),
+        ProgressBoard::new(),
+        engine_manager.clone(),
+        db.clone(),
+    );
+    Ok(Transcriber::new(engine_manager, catalog, history, db))
 }
 
 /// Assemble a pipeline request from decoded samples.
@@ -353,6 +371,7 @@ fn cli_request(model_id: &str, samples: Vec<f32>, language: Option<&str>) -> Tra
         samples.len() as u64 * 1000 / cortex_stt::audio::canonical::SAMPLE_RATE as u64;
     TranscribeRequest {
         model: model_id.to_string(),
+        quant: None,
         samples: samples.into(),
         duration_ms,
         options: cortex_stt::engine::traits::TranscribeOptions {
@@ -434,6 +453,7 @@ async fn cmd_stream(
     };
     let meta = StreamMeta {
         model: model_id.to_string(),
+        quant: None,
         language: language.map(String::from),
         source: TranscriptionSource::WsApi,
         api_key_id: None,
@@ -626,11 +646,12 @@ async fn cmd_verify(
     for info in &targets {
         print!("{:<40} ", info.id);
 
-        // Stage 1: File exists
-        let Some(model_path) = catalog.model_path(&info.id) else {
+        // Stage 1: File exists (the Preferred variant's)
+        let Ok(variant) = catalog.resolve_variant(&info.id, None).await else {
             println!("⏭ not downloaded");
             continue;
         };
+        let model_path = variant.path;
         downloaded += 1;
 
         // Stage 2: Plausible size
