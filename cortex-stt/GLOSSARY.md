@@ -49,8 +49,9 @@ _Avoid_: "precision variant" (that is a **Variant**)
 One **Catalog model** at one **Quant**, installed — the unit that is installed, loaded, evaluated and offered to Home Assistant. A model can have several Variants installed and in use at once.
 _Avoid_: "installed quant", "model" when one quant of it is meant
 
-**Preferred variant**:
-The **Variant** that serves a request naming a model but no **Quant**. Chosen by the user; the first Variant installed starts as it, and when it is uninstalled the earliest-installed remaining Variant takes over.
+**Variant key**:
+How a request names a **Variant**: `model:quant`, or a **Custom model**'s bare id. A bare **Catalog model** id names its Variant only while it has exactly one installed.
+_Avoid_: "model" for what a request names; "default quant" (a catalog property, never used to pick a Variant)
 
 **Retired variant**:
 An installed **Variant** whose **Quant** (or whole model) the catalog no longer offers. It keeps its identity and keeps serving; it can be uninstalled but never receives a **Model update**. A model renamed upstream is a new **Catalog model**: the old one's Variants become Retired, and nothing moves to the new name on its own.
@@ -62,8 +63,9 @@ A model file someone placed by hand, outside the catalog: no Quants to choose fr
 **Loaded model**:
 A **Variant** whose **Engine pool** exists and is resident in memory.
 
-**Default model**:
-The model used when a transcription names none; its **Preferred variant** serves the request.
+**Pre-load**:
+The **Variant** loaded when the service starts, so the first request does not wait for it; or none.
+_Avoid_: "default model" (every request names its Variant; nothing falls back to one)
 
 **Install**:
 A finished download becoming a usable **Variant**: the next use reads the new file, and Home Assistant is told. Only a completed download installs — never a failed or cancelled one — and once a download is committed to installing, cancelling it no longer applies. The model's other Variants are untouched.
@@ -142,7 +144,7 @@ _Avoid_: "score", "rating" (both suggest a number a machine computed)
 
 - The **Transcription pipeline** produces a **Transcription history record**; the History API and the retention sweep consume it.
 - **Record retention** triggers **Delete record**; **Audio retention** triggers **Drop audio**. The two are _distinct_ — conflating them leaves records pointing at audio that is gone.
-- A **Catalog model** has zero or more installed **Variants**, at most one per **Quant**; while any is installed, exactly one is its **Preferred variant**. Home Assistant sees one STT entity per Variant.
+- A **Catalog model** has zero or more installed **Variants**, at most one per **Quant**. Home Assistant sees one STT entity per Variant.
 - A **Speech engine**, a **Loaded model**, the producer of a **Transcription history record** and an **Evaluation run**'s candidate are all **Variants**.
 - **Install** and **Uninstall** are the only operations that change the installed set, and both tell Home Assistant.
 - A **Stream session** rides the same **Transcription pipeline** as sync and async transcription.
@@ -156,7 +158,7 @@ _Avoid_: "score", "rating" (both suggest a number a machine computed)
 > **Maintainer:** "No — that's **Drop audio**, not **Delete record**. The record survives without its audio, so its text and timing stay queryable."
 
 > **Dev:** "The living room pipeline should use Whisper Small at Q4, the study at Q8. Two models?"
-> **Maintainer:** "One **Catalog model**, two **Variants**. Each is its own STT entity in Home Assistant; a request that names only the model gets the **Preferred variant**."
+> **Maintainer:** "One **Catalog model**, two **Variants**. Each is its own STT entity in Home Assistant; each pipeline's requests name their own **Variant key**."
 
 ## Flagged ambiguities
 
