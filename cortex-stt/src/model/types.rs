@@ -79,8 +79,8 @@ pub struct ModelInfo {
     /// Quants the catalog offers (empty for a Custom or Retired model).
     pub quants: Vec<QuantSummary>,
     pub default_quant: String,
-    /// Size of the Preferred variant when one is installed, else of the
-    /// default quant.
+    /// Size of the installed Variant when there is exactly one, else of
+    /// the default quant.
     pub size_mb: u64,
     pub recommended: bool,
     /// `Downloaded` while any Variant is installed, so a client that knows
@@ -90,9 +90,6 @@ pub struct ModelInfo {
     pub disk_usage_bytes: u64,
     /// Whether any Variant is loaded.
     pub is_loaded: bool,
-    /// The quant a request naming only this model gets; `None` while no
-    /// Variant is installed (and for a Custom model).
-    pub preferred_quant: Option<String>,
     /// The catalog no longer offers this model; its installed Variants
     /// keep serving.
     pub retired: bool,
@@ -139,13 +136,8 @@ impl ModelInfo {
         } else {
             idle
         };
-        if let Some(preferred) = self
-            .variants
-            .iter()
-            .filter(installed)
-            .find(|v| v.quant == self.preferred_quant)
-        {
-            self.size_mb = preferred.size_mb;
+        if let [only] = self.variants.iter().filter(installed).collect::<Vec<_>>()[..] {
+            self.size_mb = only.size_mb;
         }
     }
 }

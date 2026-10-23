@@ -27,7 +27,6 @@ pub async fn test_state_full(
         engine_manager,
         model_dir.to_path_buf(),
         data_dir.to_path_buf(),
-        "whisper-small".to_string(),
         "0.0.0-test".to_string(),
         0,
     )

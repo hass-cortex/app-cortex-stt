@@ -9,6 +9,7 @@ use tower::ServiceExt;
 
 use cortex_stt::api::engine::engine_routes;
 use cortex_stt::api::models::model_routes;
+use cortex_stt::api::settings::settings_routes;
 use cortex_stt::state::AppState;
 use test_helpers::test_state_in;
 
@@ -16,6 +17,7 @@ fn test_app(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(model_routes())
         .merge(engine_routes())
+        .merge(settings_routes())
         .with_state(state)
 }
 
@@ -109,44 +111,46 @@ async fn send(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Valu
     (status, serde_json::from_slice(&body).unwrap_or_default())
 }
 
-fn put_preferred(model: &str, quant: &str) -> Request<Body> {
+fn put_preload(preload: &str) -> Request<Body> {
+    let mut settings = serde_json::to_value(cortex_stt::settings::Settings::default()).unwrap();
+    settings["preload"] = preload.into();
     Request::builder()
         .method("PUT")
-        .uri(format!("/api/models/{model}/preferred"))
+        .uri("/api/settings")
         .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::json!({ "quant": quant }).to_string(),
-        ))
+        .body(Body::from(settings.to_string()))
         .unwrap()
 }
 
-/// The Preferred variant can only be set to an installed quant, and the
-/// choice shows on the model; a client that knows nothing of Variants
-/// still sees the model as downloaded.
+/// The Pre-load must name one installed Variant: with two quants of a
+/// model installed, its bare id is refused and the error names the keys;
+/// a full key is saved. A client that knows nothing of Variants still sees
+/// the model as downloaded.
 #[tokio::test]
-async fn the_preferred_variant_is_chosen_among_installed_quants() {
+async fn the_preload_names_one_installed_variant() {
     use cortex_stt::model::catalog_data::find_model;
     use cortex_stt::model::installed::{Sidecar, variant_path, write_sidecar};
 
     let tmp = tempfile::tempdir().unwrap();
     let model = find_model("whisper-tiny").unwrap();
     let (first, second) = (&model.quants[0], &model.quants[1]);
-    for (i, q) in [first, second].into_iter().enumerate() {
+    for q in [first, second] {
         let file = variant_path(tmp.path(), &model.id, &q.filename);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, b"fake").unwrap();
-        let mut sidecar = Sidecar::for_install(model, &q.quant, None);
-        sidecar.installed_at = 100 + i as i64;
-        write_sidecar(&file, &sidecar).await;
+        write_sidecar(&file, &Sidecar::for_install(model, &q.quant, None)).await;
     }
     let app = test_app(test_state_in(tmp.path()).await);
 
-    let (status, body) = send(&app, put_preferred(&model.id, "not-a-quant")).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["code"], "VARIANT_NOT_INSTALLED");
+    let (status, body) = send(&app, put_preload(&model.id)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "VARIANT_REQUIRED");
+    let second_key = format!("{}:{}", model.id, second.quant);
+    assert!(body["message"].as_str().unwrap().contains(&second_key));
 
-    let (status, _) = send(&app, put_preferred(&model.id, &second.quant)).await;
+    let (status, saved) = send(&app, put_preload(&second_key)).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["preload"], second_key.as_str());
 
     let list = Request::builder()
         .uri("/api/models")
@@ -160,6 +164,5 @@ async fn the_preferred_variant_is_chosen_among_installed_quants() {
         .find(|m| m["id"] == model.id.as_str())
         .unwrap();
     assert_eq!(tiny["status"], "downloaded");
-    assert_eq!(tiny["preferred_quant"], second.quant.as_str());
     assert_eq!(tiny["variants"].as_array().unwrap().len(), 2);
 }

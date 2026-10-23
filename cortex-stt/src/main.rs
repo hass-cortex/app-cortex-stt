@@ -36,7 +36,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         http_port = config.http_port,
-        default_model = %config.default_model,
         "Starting cortex-stt"
     );
 
@@ -52,8 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::open(&db_path).await?);
     tracing::info!(?db_path, "Database opened");
 
-    // Load stored settings once; reused below for the default model,
-    // engine config, and preload flag.
+    // Load stored settings once; reused below for the engine config and
+    // the pre-load.
     let db_settings = match db.load_stored_settings().await {
         Ok(stored) => stored,
         Err(e) => {
@@ -67,13 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (see EffectiveConfig::resolve for the precedence matrix, incl. the
     // idle_timeout null-means-forever subtlety).
     let effective = cortex_stt::config::EffectiveConfig::resolve(&config, db_settings.as_ref());
-    let default_model = effective.default_model.clone();
     tracing::info!(
-        default_model = %effective.default_model,
         pool_size = effective.pool_size,
         max_loaded_models = effective.max_loaded_models,
         idle_timeout = ?effective.idle_timeout,
-        preload = effective.preload,
+        preload = ?effective.preload,
         "Startup config resolved (stored settings take precedence)"
     );
 
@@ -130,18 +127,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         engine_manager,
         model_dir,
         config.data_dir.clone(),
-        default_model,
         env!("CARGO_PKG_VERSION").to_string(),
         config.http_port,
     )
     .await?;
 
-    // Pre-load the default model's Preferred variant if the resolved
-    // config asks (CLI flag OR DB).
-    if effective.preload {
-        let default_model = &state.startup_default_model;
-        tracing::info!(model = %default_model, "Pre-loading default model");
-        let loaded = match state.catalog.resolve_variant(default_model, None).await {
+    // Pre-Variant releases stored a default model and a pre-load flag;
+    // fold them into the Pre-load once, now that Variants are known. The
+    // Variant is the one those releases served: the earliest installed.
+    let mut preload = effective.preload.clone();
+    if let Some(mut stored) = db_settings.clone()
+        && stored.migrate_legacy_preload(|model| {
+            let installed = state.catalog.installed();
+            cortex_stt::model::installed::of_model(&installed, model)
+                .into_iter()
+                .min_by_key(|v| v.installed_at)
+                .map(|v| v.key.as_key())
+        })
+    {
+        tracing::info!(preload = ?stored.preload, "Moved the default model to the pre-load");
+        preload = preload.or_else(|| stored.preload.clone());
+        if let Err(e) = db.save_settings(&stored).await {
+            tracing::warn!(error = %e, "Failed to save the migrated settings");
+        }
+    }
+
+    if let Some(key) = preload {
+        tracing::info!(variant = %key, "Pre-loading");
+        let loaded = match state.catalog.resolve_variant(&key) {
             Ok(variant) => state
                 .engine_manager
                 .acquire(&variant.key.as_key())
@@ -150,10 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => Err(e),
         };
         match loaded {
-            Ok(()) => tracing::info!(model = %default_model, "Default model pre-loaded"),
-            Err(e) => {
-                tracing::warn!(model = %default_model, error = %e, "Failed to pre-load default model")
-            }
+            Ok(()) => tracing::info!(variant = %key, "Pre-loaded"),
+            Err(e) => tracing::warn!(variant = %key, error = %e, "Failed to pre-load"),
         }
     }
 

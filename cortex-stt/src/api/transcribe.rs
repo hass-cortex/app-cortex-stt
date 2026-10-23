@@ -31,10 +31,9 @@ use crate::transcriber::{TranscribeRequest, TranscribeResponse};
 /// Query parameters for the transcribe endpoints.
 #[derive(Debug, Deserialize)]
 pub struct TranscribeQuery {
-    /// Model ID to use for transcription.
+    /// The **Variant key** (`model:quant`; a bare model id while that
+    /// model has exactly one quant installed).
     pub model: String,
-    /// Quant of the Variant to use; the model's Preferred variant when omitted.
-    pub quant: Option<String>,
     /// Language hint (BCP-47 code).
     pub language: Option<String>,
     /// Whether to translate to English.
@@ -125,7 +124,6 @@ fn prepare(
 
     Ok(TranscribeRequest {
         model: query.model,
-        quant: query.quant,
         samples: Arc::from(samples),
         duration_ms,
         options,

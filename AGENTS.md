@@ -109,10 +109,10 @@ src/
 ├── model/                  model installation
 │   ├── catalog_data.rs     vendored catalog (include_str catalog.json; slug/quants/capabilities)
 │   ├── catalog.json        converted Handy catalog snapshot (sync-catalog.py output)
-│   ├── catalog.rs          ModelCatalog: list / get / resolve_variant (named quant or Preferred) / delete_variant / scan custom *.gguf
+│   ├── catalog.rs          ModelCatalog: list / get / resolve_variant (a Variant key; a bare id only when unambiguous) / delete_variant / scan custom *.gguf
 │   ├── download_manager.rs DownloadManager facade: start / cancel_download + queue + slots + completion tail
 │   ├── download.rs         async download pipeline (HTTP + SHA-256; single-file GGUF)
-│   ├── installed.rs        installed Variants (ADR 0007): VariantKey, `<file>.json` sidecars (identity + sha256 + install time + display snapshot), scan, Preferred, startup layout migration + sha backfill
+│   ├── installed.rs        installed Variants (ADR 0007): VariantKey, `<file>.json` sidecars (identity + sha256 + install time + display snapshot), scan, startup layout migration + sha backfill
 │   ├── progress.rs         ProgressBoard: shared download-progress snapshots (manager writes, catalog reads)
 │   ├── install.rs          ModelInstaller: Install (register + unload + notify) / Uninstall, per Variant
 │   ├── maintenance.rs      startup-once model-dir cleanup (legacy .bin/ONNX/.part artifacts)
@@ -142,7 +142,7 @@ src/
 - **`state::AppState::assemble` is the single assembly point of the service object graph** (`ProgressBoard → ModelCatalog → History → Transcriber → ModelInstaller → DownloadManager → Eval → EvalRunner`): `main.rs` and the test harness (`tests/test_helpers.rs`) both call it, so adding a dependency is a one-place change. `api::build_router` is the analogous seam for the route + middleware stack — `tests/api_router_test.rs` exercises the shipped router including auth. `asr-cli` deliberately wires a documented subset (no installer, throwaway history).
 - **`History::metrics_snapshot` owns the metrics aggregate** — one SQL pass computes every history-derived figure; `api/metrics.rs` is a shell that joins in the engine/catalog/key counts. Storage figures likewise come from their owners (`History::audio_disk_usage_bytes`, `Database::disk_usage_bytes`) — handlers never re-derive another module's disk layout.
 - **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed set (GLOSSARY.md), both per **Variant** (ADR 0007). Install (engine re-registration → unload of that Variant → HA notify; the model's other Variants are untouched) is fired by the download task itself on `Completed`, before its slot is released, so a same-Variant re-download stays blocked throughout; it never fires for Failed/Cancelled, and once the task commits to it a cancel is a no-op (`CancelToken`). Uninstall (delete file → unload → drop a kept failure → HA notify) backs `DELETE /api/models/{id}?quant=`; without `quant` it removes every Variant, refusing before touching any if one is downloading.
-- **Identity is the sidecar, never the filename.** `model::installed::scan` reads each catalog file's `<file>.json` (model, quant, sha256, install time, catalog display snapshot) — that is what lets a file outlive its catalog entry as a **Retired variant** and keeps an upstream rename from moving files to a new id. The download task writes the sidecar after the rename, with the sha256 only when it verified. Engine pools, download slots and progress entries are keyed by `VariantKey::as_key` (`model:quant`, or the bare id of a Custom model). A request resolves `model` + optional `quant` to a Variant once, in `Transcriber` (`ModelCatalog::resolve_variant`): the named quant, else the model's **Preferred variant** (`Settings.preferred_quants`, else earliest installed).
+- **Identity is the sidecar, never the filename.** `model::installed::scan` reads each catalog file's `<file>.json` (model, quant, sha256, install time, catalog display snapshot) — that is what lets a file outlive its catalog entry as a **Retired variant** and keeps an upstream rename from moving files to a new id. The download task writes the sidecar after the rename, with the sha256 only when it verified. Engine pools, download slots and progress entries are keyed by `VariantKey::as_key` (`model:quant`, or the bare id of a Custom model). A request names a **Variant key** in `model` and resolves it once, in `Transcriber` (`ModelCatalog::resolve_variant`): `model:quant` names that Variant; a bare model id is accepted only while the model has exactly one Variant installed, else 409 `VARIANT_REQUIRED` listing the keys. Nothing picks a quant on the caller's behalf. The response's `model` is the full key that served.
 
 See [`cortex-stt/GLOSSARY.md`](cortex-stt/GLOSSARY.md) for the domain
 vocabulary (Transcription history record, Delete record vs Drop audio,
@@ -209,7 +209,7 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 
 | Method      | Path                                 | Description                                                                   |
 | ----------- | ------------------------------------ | ----------------------------------------------------------------------------- |
-| POST        | `/api/transcribe`                    | Sync transcription (JSON; `model` + optional `quant`)                         |
+| POST        | `/api/transcribe`                    | Sync transcription (`model` = Variant key)                                    |
 | GET         | `/api/transcribe/stream`             | WebSocket streaming session (see ADR 0001)                                    |
 | POST        | `/api/transcribe/async`              | Async job submission                                                          |
 | GET         | `/api/transcribe/jobs/{id}`          | Job status                                                                    |
@@ -221,13 +221,11 @@ on first run via `--api-key` env or auto-generated `discovery_api_key`.
 | DELETE      | `/api/models/{id}/download`          | Cancel download / dismiss a failure (`?quant=`)                               |
 | GET         | `/api/models/{id}/download/progress` | Download progress (SSE, `?quant=`)                                            |
 | DELETE      | `/api/models/{id}`                   | Uninstall one Variant (`?quant=`) or the whole model                          |
-| PUT         | `/api/models/{id}/preferred`         | Choose the Preferred variant (`{quant}`, must be installed)                   |
-| GET         | `/api/engine`                        | Engine status (`loaded_models` by model, `loaded_variants`)                   |
+| GET         | `/api/engine`                        | Engine status (`loaded_models` by model, `loaded_variants` by key)            |
 | GET         | `/api/engine/live`                   | Load-state changes (SSE; empty payload, refetch models + engine)              |
-| POST        | `/api/engine/load`                   | Load a Variant into memory (`{model_id, quant?}`)                             |
-| POST        | `/api/engine/unload`                 | Unload a Variant (`{model_id, quant?}`)                                       |
-| PUT         | `/api/engine/default`                | Set default model                                                             |
-| GET / PUT   | `/api/settings`                      | Runtime settings                                                              |
+| POST        | `/api/engine/load`                   | Load a Variant into memory (`{model}` = Variant key)                          |
+| POST        | `/api/engine/unload`                 | Unload a Variant (`{model}` = Variant key)                                    |
+| GET / PUT   | `/api/settings`                      | Runtime settings (`preload` = Variant key loaded at startup, or null)         |
 | GET         | `/api/keys`                          | List API keys                                                                 |
 | POST        | `/api/keys`                          | Create API key                                                                |
 | DELETE      | `/api/keys/{id}`                     | Revoke key                                                                    |

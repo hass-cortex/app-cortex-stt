@@ -821,12 +821,7 @@ mod tests {
 
         let board = ProgressBoard::new();
         let engines = EngineManager::new(EngineManagerConfig::default());
-        let db = Arc::new(
-            crate::db::database::Database::open_in_memory()
-                .await
-                .unwrap(),
-        );
-        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), board.clone(), engines, db);
+        let catalog = ModelCatalog::new(tmp.path().to_path_buf(), board.clone(), engines);
         let downloads = DownloadManager::with_clear_delay(
             tmp.path().to_path_buf(),
             board,

@@ -2,13 +2,12 @@
 //! models. Combines the vendored catalog, the installed Variants on disk
 //! (ADR 0007), live download status, and engine load state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tracing::info;
 
-use crate::db::database::Database;
 use crate::engine::manager::EngineManager;
 use crate::error::AsrError;
 use crate::model::catalog_data::{CatalogModel, catalog_models, find_model};
@@ -27,7 +26,6 @@ pub struct ModelCatalog {
     model_dir: PathBuf,
     progress: Arc<ProgressBoard>,
     engines: Arc<EngineManager>,
-    db: Arc<Database>,
 }
 
 impl ModelCatalog {
@@ -35,13 +33,11 @@ impl ModelCatalog {
         model_dir: PathBuf,
         progress: Arc<ProgressBoard>,
         engines: Arc<EngineManager>,
-        db: Arc<Database>,
     ) -> Arc<Self> {
         Arc::new(Self {
             model_dir,
             progress,
             engines,
-            db,
         })
     }
 
@@ -54,14 +50,6 @@ impl ModelCatalog {
         installed::scan(&self.model_dir)
     }
 
-    async fn preferred_choices(&self) -> HashMap<String, String> {
-        self.db
-            .load_settings()
-            .await
-            .map(|s| s.preferred_quants)
-            .unwrap_or_default()
-    }
-
     /// List all models: catalog entries, models the catalog no longer
     /// offers that still have Variants installed (Retired), and Custom
     /// models. A Variant on disk reports `Downloaded` whatever its
@@ -69,7 +57,6 @@ impl ModelCatalog {
     /// one verifies, and the HA reconcile must never see it disappear.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
         let installed = self.installed();
-        let choices = self.preferred_choices().await;
         let loaded: HashSet<String> = self.engines.loaded_models().await.into_iter().collect();
         let mut models = Vec::new();
 
@@ -78,7 +65,6 @@ impl ModelCatalog {
             let progress = self.progress.of_model(&model.id).await;
             let mut info = ModelInfo::from_catalog(model);
             info.variants = variant_infos(Some(model), &mine, &progress, &loaded);
-            info.preferred_quant = preferred_quant(&mine, &choices, &model.id);
             info.summarise(ModelStatus::Available);
             models.push(info);
         }
@@ -96,7 +82,6 @@ impl ModelCatalog {
             };
             let mut info = ModelInfo::retired(id, snapshot);
             info.variants = variant_infos(None, &mine, &[], &loaded);
-            info.preferred_quant = preferred_quant(&mine, &choices, id);
             info.summarise(ModelStatus::Available);
             models.push(info);
         }
@@ -122,33 +107,39 @@ impl ModelCatalog {
         find_model(id).is_some() || self.installed().iter().any(|v| v.key.model == id)
     }
 
-    /// The Variant a request for `model_id` (and optionally `quant`) gets:
-    /// that quant, or the model's **Preferred variant** when none is named.
-    /// `ModelNotFound` when the model has nothing installed;
-    /// `VariantNotInstalled` when the named quant is not installed.
-    pub async fn resolve_variant(
-        &self,
-        model_id: &str,
-        quant: Option<&str>,
-    ) -> Result<InstalledVariant, AsrError> {
+    /// The Variant a **Variant key** names (`model:quant`, or a bare id).
+    /// A bare id names a model's Variant only while it has exactly one
+    /// installed. `ModelNotFound` when the model has nothing installed,
+    /// `VariantNotInstalled` when the named quant is not installed,
+    /// `VariantRequired` when a bare id names a model with several.
+    pub fn resolve_variant(&self, key: &str) -> Result<InstalledVariant, AsrError> {
+        let key = VariantKey::parse(key);
         let installed = self.installed();
-        let mine = installed::of_model(&installed, model_id);
+        let mine = installed::of_model(&installed, &key.model);
         if mine.is_empty() {
             return Err(AsrError::ModelNotFound {
-                model_id: model_id.to_string(),
+                model_id: key.model,
             });
         }
-        let found = match quant {
-            Some(q) => mine.into_iter().find(|v| v.key.quant.as_deref() == Some(q)),
-            None => {
-                let choices = self.preferred_choices().await;
-                installed::preferred(&mine, choices.get(model_id).map(String::as_str))
-            }
-        };
-        found.cloned().ok_or_else(|| AsrError::VariantNotInstalled {
-            model_id: model_id.to_string(),
-            quant: quant.unwrap_or_default().to_string(),
-        })
+        match (&key.quant, mine.as_slice()) {
+            (Some(q), _) => mine
+                .iter()
+                .find(|v| v.key.quant.as_deref() == Some(q.as_str()))
+                .map(|v| (*v).clone())
+                .ok_or_else(|| AsrError::VariantNotInstalled {
+                    model_id: key.model.clone(),
+                    quant: q.clone(),
+                }),
+            (None, [only]) => Ok((*only).clone()),
+            (None, several) => Err(AsrError::VariantRequired {
+                model_id: key.model.clone(),
+                keys: several
+                    .iter()
+                    .map(|v| v.key.as_key())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }),
+        }
     }
 
     /// Delete one Variant's file and sidecar. Refuses a Variant with a
@@ -202,15 +193,6 @@ impl ModelCatalog {
             })
             .collect()
     }
-}
-
-fn preferred_quant(
-    mine: &[&InstalledVariant],
-    choices: &HashMap<String, String>,
-    model_id: &str,
-) -> Option<String> {
-    installed::preferred(mine, choices.get(model_id).map(String::as_str))
-        .and_then(|v| v.key.quant.clone())
 }
 
 /// One model's Variants as shown to clients: every installed one, plus
@@ -309,7 +291,6 @@ impl ModelInfo {
             status: ModelStatus::Available,
             disk_usage_bytes: 0,
             is_loaded: false,
-            preferred_quant: None,
             retired: false,
             variants: Vec::new(),
         }
@@ -332,7 +313,6 @@ impl ModelInfo {
             status: ModelStatus::Available,
             disk_usage_bytes: 0,
             is_loaded: false,
-            preferred_quant: None,
             retired: true,
             variants: Vec::new(),
         }
@@ -360,7 +340,6 @@ impl ModelInfo {
             status: ModelStatus::Custom,
             disk_usage_bytes: 0,
             is_loaded: false,
-            preferred_quant: None,
             retired: false,
             variants: Vec::new(),
         }
@@ -381,8 +360,7 @@ mod tests {
         progress: Arc<ProgressBoard>,
         engines: Arc<EngineManager>,
     ) -> Arc<ModelCatalog> {
-        let db = Arc::new(Database::open_in_memory().await.unwrap());
-        ModelCatalog::new(model_dir.to_path_buf(), progress, engines, db)
+        ModelCatalog::new(model_dir.to_path_buf(), progress, engines)
     }
 
     fn engines() -> Arc<EngineManager> {
@@ -467,11 +445,6 @@ mod tests {
         assert_eq!(tiny.status, ModelStatus::Downloaded);
         assert_eq!(variant(&tiny, &a).status, VariantStatus::Downloaded);
         assert_eq!(variant(&tiny, &b).status, VariantStatus::Downloaded);
-        assert_eq!(
-            tiny.preferred_quant.as_deref(),
-            Some(a.as_str()),
-            "earliest installed"
-        );
         assert!(tiny.disk_usage_bytes > 0);
     }
 
@@ -603,7 +576,7 @@ mod tests {
         assert!(!installed::sidecar_path(&file_a).exists());
         let tiny = catalog.get_model("whisper-tiny").await.unwrap();
         assert_eq!(tiny.status, ModelStatus::Downloaded);
-        assert_eq!(tiny.preferred_quant.as_deref(), Some(b.as_str()));
+        assert_eq!(tiny.variants.len(), 1);
     }
 
     #[tokio::test]
@@ -642,55 +615,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_request_gets_the_named_quant_or_the_preferred_variant() {
+    async fn a_key_names_its_variant_and_a_bare_id_only_when_unambiguous() {
         let tmp = tempfile::tempdir().unwrap();
         let (a, b) = two_quants();
         install(tmp.path(), &a, 100).await;
-        install(tmp.path(), &b, 200).await;
         let catalog = make_catalog(tmp.path()).await;
+        let quant_of = |key: &str| catalog.resolve_variant(key).unwrap().key.quant.unwrap();
 
-        let quant_of = |v: InstalledVariant| v.key.quant.unwrap();
-        assert_eq!(
-            quant_of(catalog.resolve_variant("whisper-tiny", None).await.unwrap()),
-            a
-        );
-        assert_eq!(
-            quant_of(
-                catalog
-                    .resolve_variant("whisper-tiny", Some(&b))
-                    .await
-                    .unwrap()
-            ),
-            b
-        );
+        // One quant installed: the bare id names it.
+        assert_eq!(quant_of("whisper-tiny"), a);
 
-        catalog
-            .db
-            .set_preferred_quant("whisper-tiny", &b)
-            .await
-            .unwrap();
-        assert_eq!(
-            quant_of(catalog.resolve_variant("whisper-tiny", None).await.unwrap()),
-            b
-        );
-        assert_eq!(
-            catalog
-                .get_model("whisper-tiny")
-                .await
-                .unwrap()
-                .preferred_quant
-                .as_deref(),
-            Some(b.as_str())
-        );
+        // Two installed: only a full key does; the bare id lists the keys.
+        install(tmp.path(), &b, 200).await;
+        assert_eq!(quant_of(&format!("whisper-tiny:{b}")), b);
+        match catalog.resolve_variant("whisper-tiny") {
+            Err(AsrError::VariantRequired { keys, .. }) => {
+                assert!(keys.contains(&format!("whisper-tiny:{a}")));
+                assert!(keys.contains(&format!("whisper-tiny:{b}")));
+            }
+            other => panic!("expected VariantRequired, got {other:?}"),
+        }
 
         assert!(matches!(
-            catalog
-                .resolve_variant("whisper-tiny", Some("F32-not-installed"))
-                .await,
+            catalog.resolve_variant("whisper-tiny:F32-not-installed"),
             Err(AsrError::VariantNotInstalled { .. })
         ));
         assert!(matches!(
-            catalog.resolve_variant("whisper-small", None).await,
+            catalog.resolve_variant("whisper-small"),
             Err(AsrError::ModelNotFound { .. })
         ));
     }
@@ -714,7 +665,7 @@ mod tests {
         assert_eq!(gone.name, "Gone Upstream");
         assert_eq!(gone.status, ModelStatus::Downloaded);
         assert!(variant(&gone, "Q8_0").retired);
-        assert!(catalog.resolve_variant("gone-upstream", None).await.is_ok());
+        assert!(catalog.resolve_variant("gone-upstream").is_ok());
     }
 
     #[tokio::test]
@@ -727,10 +678,7 @@ mod tests {
         let custom = models.iter().find(|m| m.id == "my-custom-model").unwrap();
         assert_eq!(custom.status, ModelStatus::Custom);
         assert!(catalog.exists("my-custom-model"));
-        let v = catalog
-            .resolve_variant("my-custom-model", None)
-            .await
-            .unwrap();
+        let v = catalog.resolve_variant("my-custom-model").unwrap();
         assert_eq!(v.key.quant, None);
     }
 

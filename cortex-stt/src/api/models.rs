@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use serde::Deserialize;
 use tokio_stream::Stream;
 
@@ -50,30 +50,6 @@ async fn delete_model(
         .uninstall(&model_id, query.quant.as_deref())
         .await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Debug, Deserialize)]
-struct PreferredRequest {
-    quant: String,
-}
-
-/// PUT /api/models/{model_id}/preferred — choose the model's Preferred
-/// variant (the quant a request naming only the model gets). The quant
-/// must be installed.
-async fn set_preferred(
-    State(state): State<Arc<AppState>>,
-    Path(model_id): Path<String>,
-    axum::Json(body): axum::Json<PreferredRequest>,
-) -> Result<impl IntoResponse, AsrError> {
-    state
-        .catalog
-        .resolve_variant(&model_id, Some(&body.quant))
-        .await?;
-    state.db.set_preferred_quant(&model_id, &body.quant).await?;
-    Ok(axum::Json(serde_json::json!({
-        "model_id": model_id,
-        "preferred_quant": body.quant,
-    })))
 }
 
 /// POST /api/models/scan — rescan for custom models on disk.
@@ -183,7 +159,6 @@ pub fn model_routes() -> Router<Arc<AppState>> {
         .route("/api/models", get(list_models))
         .route("/api/models/scan", post(scan_models))
         .route("/api/models/{model_id}", delete(delete_model))
-        .route("/api/models/{model_id}/preferred", put(set_preferred))
         .route(
             "/api/models/{model_id}/download",
             post(start_download).delete(cancel_download_handler),

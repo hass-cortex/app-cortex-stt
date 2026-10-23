@@ -32,6 +32,7 @@ use crate::engine::traits::{StreamSnapshot, TranscribeOptions};
 use crate::error::AsrError;
 use crate::history::{CreateRecord, History, TranscriptionSource};
 use crate::model::catalog::ModelCatalog;
+use crate::model::installed::VariantKey;
 use crate::text::Renderer;
 
 /// Buffering ceiling for stream sessions against models with no input
@@ -64,9 +65,8 @@ pub struct TranscribeResponse {
     pub words: Vec<SegmentResponse>,
     /// Decode stopped early (a model ceiling or a repetition loop); `text` is a valid prefix.
     pub truncated: bool,
+    /// The **Variant key** that served the request.
     pub model: String,
-    /// The Variant that served the request; `None` for a Custom model.
-    pub quant: Option<String>,
     pub duration_ms: u64,
     pub inference_ms: u64,
     /// Sum of `pool_wait_ms + cold_load_ms`. Kept so older clients see
@@ -118,7 +118,6 @@ impl TranscribeResponse {
                 .unwrap_or_default(),
             truncated: result.truncated,
             model,
-            quant: None,
             duration_ms,
             inference_ms,
             model_load_ms: metrics.pool_wait_ms + metrics.cold_load_ms,
@@ -133,9 +132,9 @@ impl TranscribeResponse {
 /// 16 kHz mono `f32` samples by the caller — the pipeline starts at
 /// engine acquisition.
 pub struct TranscribeRequest {
+    /// The **Variant key** as the client sent it; the pipeline replaces it
+    /// with the full key of the Variant it resolves to.
     pub model: String,
-    /// The Variant to use; the model's Preferred variant when `None`.
-    pub quant: Option<String>,
     pub samples: Arc<[f32]>,
     pub duration_ms: u64,
     pub options: TranscribeOptions,
@@ -182,16 +181,14 @@ impl Transcriber {
     ) -> Result<TranscribeResponse, AsrError> {
         let settings = RequestSettings::load(&self.db).await;
         let started = Instant::now();
-        let engine_key = match self.resolve(&req.model, req.quant.as_deref()).await {
-            Ok((key, quant)) => {
-                req.quant = quant;
-                key
-            }
+        let engine_key = match self.catalog.resolve_variant(&req.model) {
+            Ok(variant) => variant.key.as_key(),
             Err(e) => {
                 self.on_failure(&RecordMeta::from_request(&req), &e).await;
                 return Err(e);
             }
         };
+        req.model = engine_key.clone();
         tracing::info!(
             model = %req.model,
             samples = req.samples.len(),
@@ -226,8 +223,7 @@ impl Transcriber {
         .await;
 
         match result {
-            Ok(mut response) => {
-                response.quant = req.quant.clone();
+            Ok(response) => {
                 let meta = RecordMeta::from_request(&req);
                 let stats = AudioStats::of(&req.samples);
                 let samples = settings.save_audio.then_some(req.samples.as_ref());
@@ -262,17 +258,15 @@ impl Transcriber {
     ) -> Result<StreamSession, AsrError> {
         let settings = RequestSettings::load(&self.db).await;
         let deadline = RequestDeadline::from_now(settings.timeout_secs);
-        let engine_key = match self.resolve(&meta.model, meta.quant.as_deref()).await {
-            Ok((key, quant)) => {
-                meta.quant = quant;
-                key
-            }
+        let engine_key = match self.catalog.resolve_variant(&meta.model) {
+            Ok(variant) => variant.key.as_key(),
             Err(e) => {
                 self.on_failure(&RecordMeta::from_stream(&meta, 0), &e)
                     .await;
                 return Err(e);
             }
         };
+        meta.model = engine_key.clone();
         tracing::info!(
             model = %meta.model,
             source = ?meta.source,
@@ -336,17 +330,6 @@ impl Transcriber {
     // -----------------------------------------------------------------
     // Internal — shared by both public surfaces.
     // -----------------------------------------------------------------
-
-    /// The engine key of the Variant a request gets, and its quant: the
-    /// named quant, else the model's Preferred variant.
-    async fn resolve(
-        &self,
-        model: &str,
-        quant: Option<&str>,
-    ) -> Result<(String, Option<String>), AsrError> {
-        let variant = self.catalog.resolve_variant(model, quant).await?;
-        Ok((variant.key.as_key(), variant.key.quant))
-    }
 
     /// Acquire a pool slot for engine key `model` and attribute the elapsed time to
     /// `pool_wait_ms` or `cold_load_ms` based on whether the manager
@@ -443,10 +426,9 @@ impl Transcriber {
 /// so there is no upfront samples buffer).
 #[derive(Debug, Clone)]
 pub struct StreamMeta {
+    /// The **Variant key** as the client sent it; the full key of the
+    /// resolved Variant once the session is open.
     pub model: String,
-    /// The Variant to use; the model's Preferred variant when `None`.
-    /// Holds the resolved quant once the session is open.
-    pub quant: Option<String>,
     /// Original BCP-47 language tag (e.g. "zh-TW").
     pub language: Option<String>,
     pub source: TranscriptionSource,
@@ -472,9 +454,10 @@ struct RecordMeta {
 
 impl RecordMeta {
     fn from_request(req: &TranscribeRequest) -> Self {
+        let key = VariantKey::parse(&req.model);
         Self {
-            model: req.model.clone(),
-            quant: req.quant.clone(),
+            model: key.model,
+            quant: key.quant,
             language: req.language.clone(),
             source: req.source,
             api_key_id: req.api_key_id.clone(),
@@ -484,9 +467,10 @@ impl RecordMeta {
     }
 
     fn from_stream(meta: &StreamMeta, duration_ms: u64) -> Self {
+        let key = VariantKey::parse(&meta.model);
         Self {
-            model: meta.model.clone(),
-            quant: meta.quant.clone(),
+            model: key.model,
+            quant: key.quant,
             language: meta.language.clone(),
             source: meta.source,
             api_key_id: meta.api_key_id.clone(),
@@ -617,7 +601,7 @@ impl StreamSession {
         match result {
             Ok(r) => {
                 let renderer = Renderer::for_language(self.options.language.as_deref());
-                let mut response = TranscribeResponse::from_result(
+                let response = TranscribeResponse::from_result(
                     r,
                     self.meta.model.clone(),
                     duration_ms,
@@ -626,7 +610,6 @@ impl StreamSession {
                     self.device.clone(),
                     renderer.as_ref(),
                 );
-                response.quant = self.meta.quant.clone();
                 let samples = std::mem::take(&mut self.buffer);
                 let stats = AudioStats::of(&samples);
                 self.transcriber

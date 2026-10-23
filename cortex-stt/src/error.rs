@@ -13,6 +13,9 @@ pub enum AsrError {
     #[error("{model_id} has no installed variant at {quant}")]
     VariantNotInstalled { model_id: String, quant: String },
 
+    #[error("{model_id} has several quants installed; name one of {keys}")]
+    VariantRequired { model_id: String, keys: String },
+
     #[error("inference failed for model {model_id}: {detail}")]
     InferenceFailed { model_id: String, detail: String },
 
@@ -160,6 +163,7 @@ impl AsrError {
             Self::InferenceTimeout { .. } => StatusCode::REQUEST_TIMEOUT,
             // 409
             Self::DownloadInProgress { .. }
+            | Self::VariantRequired { .. }
             | Self::JobNotComplete { .. }
             | Self::EvalSampleExists { .. }
             | Self::EvalRunInProgress
@@ -201,6 +205,7 @@ impl AsrError {
             Self::ModelNotFound { .. } => "MODEL_NOT_FOUND",
             Self::ModelFileNotFound { .. } => "MODEL_FILE_NOT_FOUND",
             Self::VariantNotInstalled { .. } => "VARIANT_NOT_INSTALLED",
+            Self::VariantRequired { .. } => "VARIANT_REQUIRED",
             Self::InferenceFailed { .. } => "INFERENCE_FAILED",
             Self::InferenceTimeout { .. } => "INFERENCE_TIMEOUT",
             Self::EnginePanic { .. } => "ENGINE_PANIC",
@@ -250,6 +255,7 @@ impl AsrError {
         match self {
             Self::ModelNotFound { model_id }
             | Self::VariantNotInstalled { model_id, .. }
+            | Self::VariantRequired { model_id, .. }
             | Self::EnginePanic { model_id }
             | Self::ModelNotLoaded { model_id }
             | Self::DownloadInProgress { model_id } => Some(model_id.clone()),

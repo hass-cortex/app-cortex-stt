@@ -9,14 +9,8 @@ use tower::ServiceExt;
 
 use cortex_stt::api::health::health_routes;
 use cortex_stt::api::system::system_routes;
-use cortex_stt::engine::manager::SharedEngineFactory;
-use cortex_stt::engine::testing::FakeEngine;
 use cortex_stt::state::AppState;
 use test_helpers::test_state;
-
-fn mock_factory() -> SharedEngineFactory {
-    FakeEngine::new().factory()
-}
 
 fn test_app(state: Arc<AppState>) -> Router {
     Router::new()
@@ -25,39 +19,11 @@ fn test_app(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// A fresh install has nothing installed; it must still read as ready,
+/// not wait forever for a model that will never be registered.
 #[tokio::test]
-async fn test_health_check_starting_when_default_model_not_registered() {
+async fn test_health_check_ok_with_nothing_installed() {
     let (state, _tmp) = test_state().await;
-    let app = test_app(state);
-
-    let req = Request::builder()
-        .uri("/health")
-        .body(Body::empty())
-        .unwrap();
-
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-
-    assert_eq!(json["status"], "starting");
-    assert!(json["version"].is_string());
-    assert_eq!(json["version"], "0.0.0-test");
-}
-
-#[tokio::test]
-async fn test_health_check_ok_when_default_model_registered() {
-    let (state, _tmp) = test_state().await;
-
-    // Register the default model so health reports "ok".
-    state
-        .engine_manager
-        .register("whisper-small", mock_factory())
-        .await;
-
     let app = test_app(state);
 
     let req = Request::builder()
@@ -74,38 +40,7 @@ async fn test_health_check_ok_when_default_model_registered() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["status"], "ok");
-    assert!(json["version"].is_string());
     assert_eq!(json["version"], "0.0.0-test");
-}
-
-/// Readiness must follow a runtime default-model change (the DB is the
-/// single home; the startup snapshot must not be consulted once a
-/// default has been persisted).
-#[tokio::test]
-async fn test_health_check_tracks_runtime_default_model_change() {
-    let (state, _tmp) = test_state().await;
-
-    // Startup default ("whisper-small") is registered → ok.
-    state
-        .engine_manager
-        .register("whisper-small", mock_factory())
-        .await;
-
-    // User switches the default to a model that is not registered.
-    state.db.set_default_model("parakeet-v3").await.unwrap();
-
-    let app = test_app(state);
-    let req = Request::builder()
-        .uri("/health")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-
-    assert_eq!(json["status"], "starting");
 }
 
 #[tokio::test]

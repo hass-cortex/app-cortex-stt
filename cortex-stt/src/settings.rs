@@ -17,19 +17,15 @@ use crate::retention::RetentionPolicy;
 /// Application settings persisted in the DB and exposed via the REST API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// The user's explicit default-model choice, or `None` if never set —
-    /// startup then falls back to the CLI/env/addon-option value. Written
-    /// ONLY by `PUT /api/engine/default` (validated); `PUT /api/settings`
-    /// preserves the stored value, so a whole-blob save can't clobber it.
+    /// The **Pre-load**: the Variant key loaded at startup, or `None`.
     #[serde(default)]
-    pub default_model: Option<String>,
-    /// Each model's chosen **Preferred variant** quant, keyed by model id.
-    /// Written ONLY by `PUT /api/models/{id}/preferred`; preserved by
-    /// `PUT /api/settings` like `default_model`. A model absent here, or
-    /// whose chosen quant is not installed, falls back to its
-    /// earliest-installed Variant.
-    #[serde(default)]
-    pub preferred_quants: HashMap<String, String>,
+    pub preload: Option<String>,
+    /// Pre-Variant settings, read once by [`Settings::migrate_legacy_preload`]
+    /// and never written back.
+    #[serde(default, rename = "default_model", skip_serializing)]
+    pub legacy_default_model: Option<String>,
+    #[serde(default, rename = "preload_default_model", skip_serializing)]
+    pub legacy_preload_default_model: bool,
     pub pool_size: usize,
     pub max_loaded_models: usize,
     /// None = keep models loaded forever; Some(n) = unload after n seconds idle.
@@ -39,8 +35,6 @@ pub struct Settings {
     pub save_audio: bool,
     pub audio_retention: RetentionPolicy,
     pub record_retention: RetentionPolicy,
-    #[serde(default)]
-    pub preload_default_model: bool,
     /// Timezone for display. "auto" = browser detection, or IANA timezone (e.g., "Asia/Taipei")
     #[serde(default = "default_timezone")]
     pub timezone: String,
@@ -62,6 +56,25 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// Fold the pre-Variant default model into the **Pre-load**: it was
+    /// only ever used when `preload_default_model` was on. `resolve` turns
+    /// the model id into the key of the Variant it served (`None` when
+    /// nothing is installed). Returns whether the stored blob still holds
+    /// legacy fields and must be rewritten.
+    pub fn migrate_legacy_preload(&mut self, resolve: impl FnOnce(&str) -> Option<String>) -> bool {
+        let legacy = self.legacy_default_model.take();
+        let wanted = std::mem::take(&mut self.legacy_preload_default_model);
+        if self.preload.is_none()
+            && wanted
+            && let Some(model) = &legacy
+        {
+            self.preload = resolve(model);
+        }
+        legacy.is_some() || wanted
+    }
+}
+
 fn default_timezone() -> String {
     "auto".into()
 }
@@ -69,14 +82,14 @@ fn default_timezone() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            default_model: None,
-            preferred_quants: HashMap::new(),
+            preload: None,
+            legacy_default_model: None,
+            legacy_preload_default_model: false,
             pool_size: 1,
             max_loaded_models: 1,
             idle_timeout_secs: None,
             transcription_timeout_secs: Some(300),
             save_audio: true,
-            preload_default_model: false,
             audio_retention: RetentionPolicy::Days(7),
             record_retention: RetentionPolicy::Days(30),
             timezone: default_timezone(),
@@ -94,6 +107,33 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.audio_retention, RetentionPolicy::Days(7));
         assert_eq!(settings.record_retention, RetentionPolicy::Days(30));
+    }
+
+    #[test]
+    fn a_preloaded_default_model_becomes_the_preload_variant() {
+        // A blob as a pre-Variant release wrote it.
+        let mut stored = serde_json::to_value(Settings::default()).unwrap();
+        stored["default_model"] = "SenseVoiceSmall".into();
+        stored["preload_default_model"] = true.into();
+        let mut settings: Settings = serde_json::from_value(stored).unwrap();
+
+        assert!(settings.migrate_legacy_preload(|m| Some(format!("{m}:Q8_0"))));
+        assert_eq!(settings.preload.as_deref(), Some("SenseVoiceSmall:Q8_0"));
+        let written = serde_json::to_value(&settings).unwrap();
+        assert!(written.get("default_model").is_none());
+        assert!(written.get("preload_default_model").is_none());
+        // Once rewritten there is nothing left to migrate.
+        assert!(!settings.migrate_legacy_preload(|_| unreachable!()));
+    }
+
+    #[test]
+    fn a_default_model_that_was_not_preloaded_preloads_nothing() {
+        let mut settings = Settings {
+            legacy_default_model: Some("SenseVoiceSmall".into()),
+            ..Default::default()
+        };
+        assert!(settings.migrate_legacy_preload(|m| Some(format!("{m}:Q8_0"))));
+        assert_eq!(settings.preload, None);
     }
 
     #[test]

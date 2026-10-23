@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
@@ -21,23 +21,16 @@ struct EngineStatusResponse {
     /// Models with any Variant loaded — what a client that knows nothing
     /// of Variants reads.
     loaded_models: Vec<String>,
-    loaded_variants: Vec<VariantKey>,
-    /// Loaded Variants.
+    /// Loaded Variants by key (`model:quant`).
+    loaded_variants: Vec<String>,
     loaded_count: usize,
-}
-
-/// Request body for PUT /api/engine/default.
-#[derive(Debug, Deserialize)]
-struct SetDefaultRequest {
-    model_id: String,
 }
 
 /// Request body for POST /api/engine/load and /api/engine/unload.
 #[derive(Debug, Deserialize)]
 struct ModelActionRequest {
-    model_id: String,
-    /// The Variant's quant; the model's Preferred variant when omitted.
-    quant: Option<String>,
+    /// The Variant key (`model:quant`; a bare id when unambiguous).
+    model: String,
 }
 
 /// GET /api/engine — current engine status.
@@ -48,44 +41,20 @@ async fn engine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         .await
         .into_iter()
         .collect();
-    let loaded_variants: Vec<VariantKey> = state
+    let loaded_keys: Vec<VariantKey> = state
         .catalog
         .installed()
         .into_iter()
         .map(|v| v.key)
         .filter(|k| loaded.contains(&k.as_key()))
         .collect();
-    let mut loaded_models: Vec<String> = loaded_variants.iter().map(|k| k.model.clone()).collect();
+    let mut loaded_models: Vec<String> = loaded_keys.iter().map(|k| k.model.clone()).collect();
     loaded_models.dedup();
     axum::Json(EngineStatusResponse {
         loaded_models,
-        loaded_count: loaded_variants.len(),
-        loaded_variants,
+        loaded_count: loaded_keys.len(),
+        loaded_variants: loaded_keys.iter().map(VariantKey::as_key).collect(),
     })
-}
-
-/// PUT /api/engine/default — validate the model exists, then persist the
-/// default to the settings DB (read back at startup and per request).
-async fn set_default_model(
-    State(state): State<Arc<AppState>>,
-    axum::Json(body): axum::Json<SetDefaultRequest>,
-) -> Result<impl IntoResponse, AsrError> {
-    // Verify the model exists.
-    if !state.catalog.exists(&body.model_id) {
-        return Err(AsrError::ModelNotFound {
-            model_id: body.model_id,
-        });
-    }
-
-    // Persist to database.
-    state.db.set_default_model(&body.model_id).await?;
-
-    Ok((
-        StatusCode::OK,
-        axum::Json(serde_json::json!({
-            "default_model": body.model_id,
-        })),
-    ))
 }
 
 /// POST /api/engine/load — trigger lazy load of a Variant.
@@ -93,18 +62,14 @@ async fn load_model(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<ModelActionRequest>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let variant = state
-        .catalog
-        .resolve_variant(&body.model_id, body.quant.as_deref())
-        .await?;
+    let variant = state.catalog.resolve_variant(&body.model)?;
     // Acquire and immediately drop to trigger lazy loading.
     state.engine_manager.acquire(&variant.key.as_key()).await?;
 
     Ok((
         StatusCode::OK,
         axum::Json(serde_json::json!({
-            "model_id": body.model_id,
-            "quant": variant.key.quant,
+            "model": variant.key.as_key(),
             "loaded": true,
         })),
     ))
@@ -115,14 +80,10 @@ async fn unload_model(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<ModelActionRequest>,
 ) -> Result<impl IntoResponse, AsrError> {
-    let variant = state
-        .catalog
-        .resolve_variant(&body.model_id, body.quant.as_deref())
-        .await?;
+    let variant = state.catalog.resolve_variant(&body.model)?;
     let was_loaded = state.engine_manager.unload(&variant.key.as_key()).await;
     Ok(axum::Json(serde_json::json!({
-        "model_id": body.model_id,
-        "quant": variant.key.quant,
+        "model": variant.key.as_key(),
         "was_loaded": was_loaded,
     })))
 }
@@ -156,7 +117,6 @@ pub fn engine_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/engine", get(engine_status))
         .route("/api/engine/live", get(engine_live))
-        .route("/api/engine/default", put(set_default_model))
         .route("/api/engine/load", post(load_model))
         .route("/api/engine/unload", post(unload_model))
 }

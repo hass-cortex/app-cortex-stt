@@ -54,6 +54,7 @@ enum Command {
 
     /// Transcribe a WAV file with a specific model
     Transcribe {
+        /// Variant key (`model:quant`; a bare model id while it has one quant installed)
         model_id: String,
         wav_file: PathBuf,
         /// Language hint (e.g., "zh", "en", "ja")
@@ -116,10 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The CLI never keeps models loaded across commands; a default manager
     // satisfies the catalog's load-state source (is_loaded stays false).
     let engines = EngineManager::new(EngineManagerConfig::default());
-    // Throwaway settings: no Preferred variant is ever chosen here, so a
-    // model with several Variants installed uses its earliest-installed.
-    let db = Arc::new(Database::open_in_memory().await?);
-    let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines, db);
+    let catalog = ModelCatalog::new(cli.model_dir.clone(), progress, engines);
 
     match cli.command {
         Command::List => cmd_list(&catalog).await,
@@ -316,15 +314,15 @@ fn load_wav(wav_file: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     )?)
 }
 
-/// Register `model_id`'s Preferred variant in a one-shot EngineManager
-/// (single pool slot).
+/// Register the Variant `key` names in a one-shot EngineManager (single
+/// pool slot).
 async fn setup_engine(
     model_id: &str,
     catalog: &ModelCatalog,
 ) -> Result<Arc<EngineManager>, Box<dyn std::error::Error>> {
-    let variant = catalog.resolve_variant(model_id, None).await.map_err(|_| {
-        format!("Model not found on disk: {model_id}. Run 'asr-cli download {model_id}' first.")
-    })?;
+    let variant = catalog
+        .resolve_variant(model_id)
+        .map_err(|e| format!("{e}. Run 'asr-cli download <model>' first, or name a quant."))?;
 
     let engine_manager = EngineManager::new(EngineManagerConfig {
         pool_size: 1,
@@ -360,7 +358,6 @@ async fn setup_transcriber(
         catalog.model_dir().to_path_buf(),
         ProgressBoard::new(),
         engine_manager.clone(),
-        db.clone(),
     );
     Ok(Transcriber::new(engine_manager, catalog, history, db))
 }
@@ -371,7 +368,6 @@ fn cli_request(model_id: &str, samples: Vec<f32>, language: Option<&str>) -> Tra
         samples.len() as u64 * 1000 / cortex_stt::audio::canonical::SAMPLE_RATE as u64;
     TranscribeRequest {
         model: model_id.to_string(),
-        quant: None,
         samples: samples.into(),
         duration_ms,
         options: cortex_stt::engine::traits::TranscribeOptions {
@@ -453,7 +449,6 @@ async fn cmd_stream(
     };
     let meta = StreamMeta {
         model: model_id.to_string(),
-        quant: None,
         language: language.map(String::from),
         source: TranscriptionSource::WsApi,
         api_key_id: None,
@@ -643,46 +638,49 @@ async fn cmd_verify(
     let mut pass_count = 0usize;
     let mut downloaded = 0usize;
 
+    let installed = catalog.installed();
     for info in &targets {
-        print!("{:<40} ", info.id);
-
-        // Stage 1: File exists (the Preferred variant's)
-        let Ok(variant) = catalog.resolve_variant(&info.id, None).await else {
-            println!("⏭ not downloaded");
-            continue;
-        };
-        let model_path = variant.path;
-        downloaded += 1;
-
-        // Stage 2: Plausible size
-        let size_ok = std::fs::metadata(&model_path)
-            .map(|m| m.len() > 1_000_000)
-            .unwrap_or(false);
-        if !size_ok {
-            println!("✗ implausibly small file");
+        // Stage 1: File exists — every installed Variant of the model.
+        let variants = installed::of_model(&installed, &info.id);
+        if variants.is_empty() {
+            println!("{:<40} ⏭ not downloaded", info.id);
             continue;
         }
+        for variant in variants {
+            let key = variant.key.as_key();
+            print!("{key:<40} ");
+            downloaded += 1;
 
-        // Stage 3 + 4: Engine loads and transcribes silence — through the
-        // same pipeline the server uses.
-        let transcriber = match setup_transcriber(&info.id, catalog).await {
-            Ok(t) => t,
-            Err(e) => {
-                println!("✗ register failed: {e}");
+            // Stage 2: Plausible size
+            let size_ok = std::fs::metadata(&variant.path)
+                .map(|m| m.len() > 1_000_000)
+                .unwrap_or(false);
+            if !size_ok {
+                println!("✗ implausibly small file");
                 continue;
             }
-        };
 
-        let silence = vec![0.0f32; cortex_stt::audio::canonical::SAMPLE_RATE as usize];
-        match transcriber
-            .transcribe(cli_request(&info.id, silence, None))
-            .await
-        {
-            Ok(r) => {
-                println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
-                pass_count += 1;
+            // Stage 3 + 4: Engine loads and transcribes silence — through
+            // the same pipeline the server uses.
+            let transcriber = match setup_transcriber(&key, catalog).await {
+                Ok(t) => t,
+                Err(e) => {
+                    println!("✗ register failed: {e}");
+                    continue;
+                }
+            };
+
+            let silence = vec![0.0f32; cortex_stt::audio::canonical::SAMPLE_RATE as usize];
+            match transcriber
+                .transcribe(cli_request(&key, silence, None))
+                .await
+            {
+                Ok(r) => {
+                    println!("✓ ok (\"{}\")", &r.text[..r.text.len().min(40)]);
+                    pass_count += 1;
+                }
+                Err(e) => println!("✗ verify failed: {e}"),
             }
-            Err(e) => println!("✗ verify failed: {e}"),
         }
     }
 

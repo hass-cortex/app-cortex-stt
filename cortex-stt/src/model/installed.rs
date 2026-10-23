@@ -35,6 +35,15 @@ impl VariantKey {
         }
     }
 
+    /// Read a **Variant key** as a request names it: `model:quant`, or a
+    /// bare model id (`quant` then `None`, to be resolved by the catalog).
+    pub fn parse(key: &str) -> Self {
+        match key.split_once(':') {
+            Some((model, quant)) => Self::new(model, Some(quant.to_string())),
+            None => Self::new(key, None),
+        }
+    }
+
     /// The flat string form, used wherever one key is needed (engine
     /// pools, download slots): `model:quant`, or `model` without a quant.
     pub fn as_key(&self) -> String {
@@ -284,6 +293,11 @@ pub fn scan(model_dir: &Path) -> Vec<InstalledVariant> {
         if find_by_filename(&name).is_some() {
             continue;
         }
+        // A `:` would make its id read as `model:quant`.
+        if name.contains(':') {
+            warn!(file = %name, "skipping a Custom model whose name contains ':'");
+            continue;
+        }
         out.push(InstalledVariant {
             key: VariantKey::new(name.trim_end_matches(".gguf"), None),
             installed_at: mtime_secs(&file),
@@ -304,27 +318,6 @@ pub fn of_model<'a>(
         .iter()
         .filter(|v| v.key.model == model_id)
         .collect()
-}
-
-/// The model's **Preferred variant**: the user's choice while it is
-/// installed, otherwise the earliest-installed Variant.
-pub fn preferred<'a>(
-    variants: &[&'a InstalledVariant],
-    chosen: Option<&str>,
-) -> Option<&'a InstalledVariant> {
-    if let Some(q) = chosen
-        && let Some(v) = variants.iter().find(|v| v.key.quant.as_deref() == Some(q))
-    {
-        return Some(v);
-    }
-    variants
-        .iter()
-        .min_by(|a, b| {
-            a.installed_at
-                .cmp(&b.installed_at)
-                .then_with(|| a.key.quant.cmp(&b.key.quant))
-        })
-        .copied()
 }
 
 /// Startup-once move to the ADR 0007 layout: each top-level catalog file
@@ -509,6 +502,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_custom_file_named_like_a_variant_key_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("whisper-small:Q8_0.gguf"), b"weights").unwrap();
+
+        assert!(scan(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
     async fn two_quants_of_one_model_are_two_variants() {
         let dir = tempfile::tempdir().unwrap();
         let model = catalog_models()
@@ -524,29 +525,5 @@ mod tests {
         let quants: Vec<_> = found.iter().filter_map(|v| v.key.quant.clone()).collect();
         assert!(quants.contains(&model.quants[0].quant));
         assert!(quants.contains(&model.quants[1].quant));
-    }
-
-    fn variant(quant: &str, installed_at: i64) -> InstalledVariant {
-        InstalledVariant {
-            key: VariantKey::new("m", Some(quant.into())),
-            path: PathBuf::from(quant),
-            sha256: None,
-            installed_at,
-            snapshot: None,
-        }
-    }
-
-    #[test]
-    fn the_preferred_variant_is_the_users_choice_else_the_earliest_installed() {
-        let q8 = variant("Q8_0", 100);
-        let q4 = variant("Q4_K_M", 200);
-        let both = vec![&q8, &q4];
-
-        let pick = |chosen| preferred(&both, chosen).and_then(|v| v.key.quant.clone());
-        assert_eq!(pick(None).as_deref(), Some("Q8_0"));
-        assert_eq!(pick(Some("Q4_K_M")).as_deref(), Some("Q4_K_M"));
-        // A choice that is no longer installed falls back, it does not fail.
-        assert_eq!(pick(Some("F16")).as_deref(), Some("Q8_0"));
-        assert!(preferred(&[], Some("Q8_0")).is_none());
     }
 }

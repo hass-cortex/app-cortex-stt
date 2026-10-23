@@ -23,12 +23,6 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub job_store: Arc<JobStore>,
     pub data_dir: PathBuf,
-    /// Startup-resolved default model, kept only as the readiness-check
-    /// fallback for a fresh install. The authoritative value is
-    /// `Settings.default_model` in the DB (written via
-    /// `PUT /api/engine/default`) — read that, not this, for anything
-    /// that must reflect runtime changes.
-    pub startup_default_model: String,
     pub version: String,
     pub http_port: u16,
     pub started_at: Instant,
@@ -63,19 +57,14 @@ impl AppState {
         engine_manager: Arc<EngineManager>,
         model_dir: PathBuf,
         data_dir: PathBuf,
-        startup_default_model: String,
         version: String,
         http_port: u16,
     ) -> Result<Arc<Self>, AsrError> {
         // Shared download-progress board (written by DownloadManager, read
         // by ModelCatalog) — keeps the construction graph acyclic.
         let progress = ProgressBoard::new();
-        let catalog = ModelCatalog::new(
-            model_dir.clone(),
-            progress.clone(),
-            engine_manager.clone(),
-            db.clone(),
-        );
+        let catalog =
+            ModelCatalog::new(model_dir.clone(), progress.clone(), engine_manager.clone());
         let history = History::new(db.clone(), data_dir.join("audio")).await?;
         let transcriber = Transcriber::new(
             engine_manager.clone(),
@@ -112,7 +101,6 @@ impl AppState {
             db,
             job_store: Arc::new(JobStore::with_defaults()),
             data_dir,
-            startup_default_model,
             version,
             http_port,
             started_at: Instant::now(),

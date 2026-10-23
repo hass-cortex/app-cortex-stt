@@ -34,10 +34,6 @@ pub struct AppConfig {
     #[arg(long, env = "MODEL_DIR")]
     pub model_dir: Option<PathBuf>,
 
-    /// Default model ID
-    #[arg(long, env = "DEFAULT_MODEL", default_value = "whisper-small")]
-    pub default_model: String,
-
     /// Model pool size per model
     #[arg(long, env = "POOL_SIZE", default_value_t = 1)]
     pub pool_size: usize,
@@ -66,9 +62,10 @@ pub struct AppConfig {
     #[arg(long, env = "STATIC_DIR")]
     pub static_dir: Option<PathBuf>,
 
-    /// Pre-load the default model on startup so the first request is fast.
-    #[arg(long, env = "PRELOAD_MODEL", default_value_t = false)]
-    pub preload_model: bool,
+    /// Variant key (`model:quant`) to load on startup so the first request
+    /// is fast. A setting saved from the UI takes precedence.
+    #[arg(long, env = "PRELOAD")]
+    pub preload: Option<String>,
 
     /// Pre-configured API key (created on startup if not already in DB).
     /// Useful for development, testing, and CI. Skips the bootstrap dance.
@@ -85,14 +82,13 @@ pub struct FileConfig {
     pub http_port: Option<u16>,
     pub data_dir: Option<PathBuf>,
     pub model_dir: Option<PathBuf>,
-    pub default_model: Option<String>,
     pub pool_size: Option<usize>,
     pub max_loaded_models: Option<usize>,
     pub idle_timeout_secs: Option<u64>,
     pub transcription_timeout_secs: Option<u64>,
     pub pool_acquire_timeout_secs: Option<u64>,
     pub log_level: Option<String>,
-    pub preload_model: Option<bool>,
+    pub preload: Option<String>,
     pub static_dir: Option<PathBuf>,
     pub api_key: Option<String>,
 }
@@ -122,9 +118,6 @@ impl FileConfig {
         if let Some(ref v) = self.model_dir {
             set_if_unset("MODEL_DIR", &v.to_string_lossy());
         }
-        if let Some(ref v) = self.default_model {
-            set_if_unset("DEFAULT_MODEL", v);
-        }
         if let Some(v) = self.pool_size {
             set_if_unset("POOL_SIZE", &v.to_string());
         }
@@ -143,8 +136,8 @@ impl FileConfig {
         if let Some(ref v) = self.log_level {
             set_if_unset("RUST_LOG", v);
         }
-        if let Some(v) = self.preload_model {
-            set_if_unset("PRELOAD_MODEL", &v.to_string());
+        if let Some(ref v) = self.preload {
+            set_if_unset("PRELOAD", v);
         }
         if let Some(ref v) = self.static_dir {
             set_if_unset("STATIC_DIR", &v.to_string_lossy());
@@ -277,12 +270,12 @@ impl AppConfig {
 /// hand-inlined field-by-field at the composition root.
 #[derive(Debug, Clone)]
 pub struct EffectiveConfig {
-    pub default_model: String,
     pub pool_size: usize,
     pub max_loaded_models: usize,
     /// `None` = keep models loaded forever; `Some(d)` = unload after idle.
     pub idle_timeout: Option<Duration>,
-    pub preload: bool,
+    /// The **Pre-load** Variant key, if any.
+    pub preload: Option<String>,
     pub backend_overrides: HashMap<String, BackendOverride>,
 }
 
@@ -290,11 +283,6 @@ impl EffectiveConfig {
     /// Resolve the effective startup configuration. Pure: no I/O, no env
     /// reads — the caller loads `config` and `stored` and passes them in.
     pub fn resolve(config: &AppConfig, stored: Option<&Settings>) -> Self {
-        // Explicit persisted default wins; else CLI/env/addon-option value.
-        let default_model = stored
-            .and_then(|s| s.default_model.clone())
-            .unwrap_or_else(|| config.default_model.clone());
-
         // idle_timeout precedence, with the null-means-forever subtlety:
         //   DB settings present → Settings::engine_idle_timeout (the single
         //     home for "0 or null means keep forever"; do NOT use CLI)
@@ -306,15 +294,15 @@ impl EffectiveConfig {
         };
 
         Self {
-            default_model,
             pool_size: stored.map(|s| s.pool_size).unwrap_or(config.pool_size),
             max_loaded_models: stored
                 .map(|s| s.max_loaded_models)
                 .unwrap_or(config.max_loaded_models),
             idle_timeout,
-            // Preload if EITHER the CLI flag or the persisted flag asks.
-            preload: config.preload_model
-                || stored.map(|s| s.preload_default_model).unwrap_or(false),
+            // A persisted choice wins; else the CLI/env/config-file value.
+            preload: stored
+                .and_then(|s| s.preload.clone())
+                .or_else(|| config.preload.clone()),
             backend_overrides: stored
                 .map(|s| s.backend_overrides.clone())
                 .unwrap_or_default(),
@@ -330,12 +318,12 @@ mod tests {
     fn file_config_deserializes_partial_toml() {
         let toml_str = r#"
             http_port = 10401
-            default_model = "whisper-tiny-int8"
+            preload = "whisper-tiny:Q8_0"
             log_level = "debug"
         "#;
         let fc: FileConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(fc.http_port, Some(10401));
-        assert_eq!(fc.default_model.as_deref(), Some("whisper-tiny-int8"));
+        assert_eq!(fc.preload.as_deref(), Some("whisper-tiny:Q8_0"));
         assert_eq!(fc.log_level.as_deref(), Some("debug"));
         assert!(fc.http_host.is_none());
     }
@@ -364,38 +352,22 @@ mod tests {
     fn resolve_uses_cli_defaults_when_no_stored_settings() {
         let cfg = base_config();
         let eff = EffectiveConfig::resolve(&cfg, None);
-        assert_eq!(eff.default_model, cfg.default_model);
         assert_eq!(eff.pool_size, cfg.pool_size);
         assert_eq!(eff.max_loaded_models, cfg.max_loaded_models);
-        assert!(!eff.preload);
+        assert_eq!(eff.preload, None);
     }
 
     #[test]
     fn resolve_lets_stored_values_win_over_cli() {
         let cfg = base_config();
         let stored = Settings {
-            default_model: Some("whisper-large".into()),
             pool_size: 4,
             max_loaded_models: 3,
             ..Default::default()
         };
         let eff = EffectiveConfig::resolve(&cfg, Some(&stored));
-        assert_eq!(eff.default_model, "whisper-large");
         assert_eq!(eff.pool_size, 4);
         assert_eq!(eff.max_loaded_models, 3);
-    }
-
-    #[test]
-    fn resolve_falls_back_to_cli_default_model_when_stored_field_is_none() {
-        // A settings blob saved for unrelated fields must not shadow the
-        // configured default_model.
-        let cfg = base_config();
-        let stored = Settings {
-            default_model: None,
-            ..Default::default()
-        };
-        let eff = EffectiveConfig::resolve(&cfg, Some(&stored));
-        assert_eq!(eff.default_model, cfg.default_model);
     }
 
     #[test]
@@ -454,22 +426,26 @@ mod tests {
     }
 
     #[test]
-    fn resolve_preload_is_cli_or_stored() {
+    fn resolve_preload_prefers_the_stored_choice_over_the_cli() {
         let mut cfg = base_config();
-        // Neither.
-        assert!(!EffectiveConfig::resolve(&cfg, None).preload);
-        // Stored asks.
-        let stored = Settings {
-            preload_default_model: true,
+        cfg.preload = Some("whisper-tiny:Q8_0".into());
+        // A blob saved for unrelated fields does not shadow the CLI value.
+        let unrelated = Settings::default();
+        assert_eq!(
+            EffectiveConfig::resolve(&cfg, Some(&unrelated))
+                .preload
+                .as_deref(),
+            Some("whisper-tiny:Q8_0")
+        );
+        let chosen = Settings {
+            preload: Some("SenseVoiceSmall:Q4_K_M".into()),
             ..Default::default()
         };
-        assert!(EffectiveConfig::resolve(&cfg, Some(&stored)).preload);
-        // CLI asks, stored doesn't.
-        cfg.preload_model = true;
-        let stored_no = Settings {
-            preload_default_model: false,
-            ..Default::default()
-        };
-        assert!(EffectiveConfig::resolve(&cfg, Some(&stored_no)).preload);
+        assert_eq!(
+            EffectiveConfig::resolve(&cfg, Some(&chosen))
+                .preload
+                .as_deref(),
+            Some("SenseVoiceSmall:Q4_K_M")
+        );
     }
 }

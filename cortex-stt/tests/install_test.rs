@@ -94,12 +94,7 @@ async fn fixture() -> Fixture {
     let engine_manager = EngineManager::new(EngineManagerConfig::default());
     let db = Arc::new(Database::open_in_memory().await.unwrap());
     let progress = cortex_stt::model::progress::ProgressBoard::new();
-    let catalog = ModelCatalog::new(
-        model_dir.clone(),
-        progress.clone(),
-        engine_manager.clone(),
-        db.clone(),
-    );
+    let catalog = ModelCatalog::new(model_dir.clone(), progress.clone(), engine_manager.clone());
     let installer = ModelInstaller::new(
         model_dir.clone(),
         engine_manager.clone(),

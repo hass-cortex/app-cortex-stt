@@ -87,12 +87,7 @@ async fn fixture_with_factory(model_id: &str, factory: Factory) -> Fixture {
     let models = tmp.path().join("models");
     std::fs::create_dir_all(&models).unwrap();
     std::fs::write(models.join(format!("{model_id}.gguf")), b"fake").unwrap();
-    let catalog = ModelCatalog::new(
-        models,
-        ProgressBoard::new(),
-        engine_manager.clone(),
-        db.clone(),
-    );
+    let catalog = ModelCatalog::new(models, ProgressBoard::new(), engine_manager.clone());
     let transcriber = Transcriber::new(engine_manager, catalog, history.clone(), db.clone());
 
     Fixture {
@@ -114,7 +109,6 @@ fn one_second_samples() -> Arc<[f32]> {
 fn request_for(model: &str) -> TranscribeRequest {
     TranscribeRequest {
         model: model.to_string(),
-        quant: None,
         samples: one_second_samples(),
         duration_ms: 1000,
         options: TranscribeOptions::default(),
@@ -128,7 +122,6 @@ fn request_for(model: &str) -> TranscribeRequest {
 fn stream_meta(model: &str) -> StreamMeta {
     StreamMeta {
         model: model.to_string(),
-        quant: None,
         language: None,
         source: TranscriptionSource::WsApi,
         api_key_id: None,
@@ -225,7 +218,6 @@ async fn transcribe_rejects_input_over_max_audio_ms() {
     // 2 s of audio against the engine's advertised 1 s ceiling.
     let req = TranscribeRequest {
         model: "limited-model".to_string(),
-        quant: None,
         samples: Arc::from(vec![0.0f32; 32_000]),
         duration_ms: 2000,
         options: TranscribeOptions::default(),
@@ -406,11 +398,12 @@ async fn stream_persists_aborted_row_on_drop() {
     );
 }
 
-/// Two Variants of one catalog model serve side by side: a request that
-/// names a quant gets it, one that does not gets the Preferred variant,
-/// and the response and history record say which one served.
+/// Two Variants of one catalog model serve side by side: a request naming
+/// a Variant key gets that Variant, a bare model id is refused rather than
+/// served by a guess, and the response and history record say which
+/// Variant served.
 #[tokio::test]
-async fn a_request_is_served_by_the_named_quant_or_the_preferred_variant() {
+async fn a_request_is_served_by_the_variant_its_key_names() {
     use cortex_stt::model::catalog_data::find_model;
     use cortex_stt::model::installed::{Sidecar, VariantKey, variant_path, write_sidecar};
 
@@ -434,44 +427,25 @@ async fn a_request_is_served_by_the_named_quant_or_the_preferred_variant() {
     let history = History::new(db.clone(), tmp.path().join("audio"))
         .await
         .unwrap();
-    let catalog = ModelCatalog::new(
-        models,
-        ProgressBoard::new(),
-        engine_manager.clone(),
-        db.clone(),
-    );
+    let catalog = ModelCatalog::new(models, ProgressBoard::new(), engine_manager.clone());
     let transcriber = Transcriber::new(engine_manager, catalog, history.clone(), db.clone());
 
-    let unnamed = transcriber
-        .transcribe(request_for(&model.id))
+    let key_of = |q: &str| format!("{}:{q}", model.id);
+    let served = transcriber
+        .transcribe(request_for(&key_of(&second.quant)))
         .await
         .unwrap();
-    assert_eq!(unnamed.text, first.quant, "earliest installed is Preferred");
-    assert_eq!(unnamed.quant.as_deref(), Some(first.quant.as_str()));
+    assert_eq!(served.text, second.quant);
+    assert_eq!(served.model, key_of(&second.quant));
 
-    let mut named = request_for(&model.id);
-    named.quant = Some(second.quant.clone());
-    let named = transcriber.transcribe(named).await.unwrap();
-    assert_eq!(named.text, second.quant);
-    assert_eq!(named.quant.as_deref(), Some(second.quant.as_str()));
-
-    db.set_preferred_quant(&model.id, &second.quant)
-        .await
-        .unwrap();
-    let preferred = transcriber
-        .transcribe(request_for(&model.id))
-        .await
-        .unwrap();
-    assert_eq!(preferred.text, second.quant);
+    let bare = transcriber.transcribe(request_for(&model.id)).await;
+    assert!(matches!(bare, Err(AsrError::VariantRequired { .. })));
 
     let records = history.list(&ListRecordsFilter::default()).await.unwrap();
-    let mut quants: Vec<_> = records.iter().filter_map(|r| r.quant.clone()).collect();
-    quants.sort();
-    let mut expected = vec![
-        first.quant.clone(),
-        second.quant.clone(),
-        second.quant.clone(),
-    ];
-    expected.sort();
-    assert_eq!(quants, expected);
+    let ok = records.iter().find(|r| !r.has_error).unwrap();
+    assert_eq!(ok.model_id, model.id);
+    assert_eq!(ok.quant.as_deref(), Some(second.quant.as_str()));
+    let refused = records.iter().find(|r| r.has_error).unwrap();
+    assert_eq!(refused.model_id, model.id);
+    assert_eq!(refused.quant, None);
 }

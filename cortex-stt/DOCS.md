@@ -68,15 +68,13 @@ first choice. See the
 [transcribe.cpp model docs](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models)
 for per-model cards with sizes, supported languages, and use-case notes.
 
-### 2. Configure default model and lifecycle (Optional)
+### 2. Configure pre-loading and lifecycle (Optional)
 
 Switch to the **Settings** tab and configure:
 
-- **Default Model** — select the model you just downloaded and click
-  **Apply**. The companion integration uses this when no explicit model
-  is specified.
-- **Pre-load on startup** — check this so the default model is loaded
-  into memory at server start, eliminating cold-start latency on the
+- **Pre-load on startup** — pick the model and quant your voice pipeline
+  uses and click **Save**. It is loaded into memory at server start, so
+  the first request does not wait for it. Everything else loads on its
   first request.
 - **Keep models loaded (no auto-unload)** — leave this **checked**
   (the default). Models stay resident in RAM until manually unloaded or
@@ -156,7 +154,7 @@ inherits that ruling.
 **API Keys** — issue and revoke keys for direct API access. The
 system-managed discovery key cannot be deleted here.
 
-**Settings** — default model, pre-loading, how many models stay resident,
+**Settings** — pre-loading, how many models stay resident,
 idle timeout, history retention, and timezone.
 
 ## Configuration
@@ -168,7 +166,7 @@ idle timeout, history retention, and timezone.
 | `discovery_api_key` | _(auto)_  | Leave empty and the app generates a key on first start. Override only if you've already configured the integration with a specific key and don't want to re-pair.                                                   |
 
 The app exposes its HTTP API on port `8769`. Most runtime settings
-(default model, pre-load, idle timeout, history retention, timezone)
+(pre-load, idle timeout, history retention, timezone)
 live in the **admin UI → Settings**, not in addon options.
 
 ## Discovery

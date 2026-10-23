@@ -25,8 +25,10 @@ async fn update_settings(
     // spuriously treat every backend override as changed (and unload
     // the models) on a transient DB error.
     let old = state.db.load_settings().await?;
-    // NOTE: save_settings preserves the stored default_model — that field
-    // is written only by PUT /api/engine/default.
+    // The Pre-load must name an installed Variant unambiguously.
+    if let Some(key) = &settings.preload {
+        state.catalog.resolve_variant(key)?;
+    }
     state.db.save_settings(&settings).await?;
 
     apply_engine_settings(
@@ -37,8 +39,6 @@ async fn update_settings(
     )
     .await;
 
-    // Echo what was actually persisted (default_model preserved), not
-    // the client's request body.
     Ok(Json(state.db.load_settings().await?))
 }
 
