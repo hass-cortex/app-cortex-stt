@@ -1,7 +1,7 @@
 //! Model evaluation — comparing candidate models on recordings whose
 //! correct transcription a human has typed in.
 //!
-//! See `CONTEXT.md` for the vocabulary (Evaluation sample, Reference
+//! See `GLOSSARY.md` for the vocabulary (Evaluation sample, Reference
 //! transcript, Pending capture, Evaluation run, Judgement) and
 //! `docs/adr/0005` for why samples own a lossless copy of their audio
 //! instead of pointing at a Transcription history record.

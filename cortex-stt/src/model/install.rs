@@ -1,5 +1,5 @@
 //! Install / Uninstall: the only two operations that change the installed
-//! model set (see CONTEXT.md).
+//! model set (see GLOSSARY.md).
 //!
 //! An **Install** is the transition "download reached Completed → model
 //! usable": remove any other quant (one quant per model), refresh the

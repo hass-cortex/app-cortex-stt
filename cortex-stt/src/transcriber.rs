@@ -454,7 +454,7 @@ enum SessionState {
     Closed,
 }
 
-/// One live stream transcription (a **Stream session** in CONTEXT.md
+/// One live stream transcription (a **Stream session** in GLOSSARY.md
 /// terms). Holds a pool slot from open to finalize/drop.
 ///
 /// Audio is buffered regardless of mode: buffered mode needs it for the

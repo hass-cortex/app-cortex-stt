@@ -10,7 +10,7 @@ only lossless audio is eligible.
 Referencing would require both retention policies to grow an exception:
 `record_retention` (`Days(30)`) deletes the row and `audio_retention`
 (`Days(14)`) deletes the file, so a referenced sample dies twice over.
-`CONTEXT.md` defines a **Retention policy** as pure data over
+`GLOSSARY.md` defines a **Retention policy** as pure data over
 `{id, created_at, size_bytes?}` that performs no I/O; teaching it "except the
 pinned ones" inverts the dependency — retention would have to know about
 evaluation.
@@ -34,7 +34,7 @@ points at nothing and the sample is unharmed.
 
 They earn their place by enabling two things that need no data from history:
 the import picker greys out records already taken, and evaluation results can be
-sliced by microphone — which is what `CONTEXT.md` says `capture_device` exists
+sliced by microphone — which is what `GLOSSARY.md` says `capture_device` exists
 for.
 
 ## Why lossless only
@@ -69,5 +69,5 @@ future lossless format is a new predicate rather than a changed rule.
   reference transcripts cannot be regenerated.
 - History records written before 0.4.0 hold Ogg Opus and can never become
   Evaluation samples. They are not migrated; retention reclaims them.
-- Retention, and the `CONTEXT.md` vocabulary around it, is untouched by this
+- Retention, and the `GLOSSARY.md` vocabulary around it, is untouched by this
   feature.

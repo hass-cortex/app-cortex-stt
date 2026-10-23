@@ -1,4 +1,4 @@
-//! Async transcription jobs (the **Async job** concept in CONTEXT.md).
+//! Async transcription jobs (the **Async job** concept in GLOSSARY.md).
 //!
 //! In-memory records of long-running requests submitted via
 //! `POST /api/transcribe/async` — never persisted. [`JobStore`] owns the

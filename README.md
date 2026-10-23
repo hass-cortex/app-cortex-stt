@@ -81,7 +81,7 @@ Issues and pull requests are welcome.
   checks, and the PR flow.
 - [`AGENTS.md`](AGENTS.md) — the module tree, cross-module guarantees and the
   API endpoint reference.
-- [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — the domain vocabulary both
+- [`cortex-stt/GLOSSARY.md`](cortex-stt/GLOSSARY.md) — the domain vocabulary both
   of those use.
 - [`cortex-stt/docs/adr/`](cortex-stt/docs/adr) — the decisions behind the
   runtime, the vendored catalog and the evaluation store.

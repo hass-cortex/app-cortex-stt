@@ -12,7 +12,7 @@ use crate::history::History;
 /// repeats hourly.
 ///
 /// `record_retention` drives Delete record; `audio_retention` drives
-/// Drop audio. The two policies are independent — see CONTEXT.md. The
+/// Drop audio. The two policies are independent — see GLOSSARY.md. The
 /// gather → select → apply flow lives on `History::run_retention_sweep`;
 /// this task only owns the schedule and settings load.
 pub fn spawn_retention_cleanup(db: Arc<Database>, history: Arc<History>) -> JoinHandle<()> {

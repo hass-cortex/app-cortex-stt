@@ -94,7 +94,7 @@ cargo test -- --nocapture
 ## Architecture
 
 See [`AGENTS.md`](../AGENTS.md) for the full module tree, cross-module
-invariants, and the API endpoint reference. [`CONTEXT.md`](CONTEXT.md)
+invariants, and the API endpoint reference. [`GLOSSARY.md`](GLOSSARY.md)
 defines the domain vocabulary those docs use.
 
 Top-level modules:

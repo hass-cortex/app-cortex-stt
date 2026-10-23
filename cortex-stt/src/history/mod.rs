@@ -1,5 +1,5 @@
 //! Transcription history — the unified concept of a DB row paired with
-//! an optional audio file on disk. See `CONTEXT.md` for the domain
+//! an optional audio file on disk. See `GLOSSARY.md` for the domain
 //! vocabulary (Delete record vs Drop audio, Retention candidate, …).
 //!
 //! New audio files are written as 16-bit PCM WAV (`.wav`): history
@@ -276,7 +276,7 @@ impl History {
     /// The single home for the gather → `select_to_delete` → apply flow:
     /// the hourly sweep (`cleanup.rs`) and `POST /api/history/cleanup`
     /// both call this instead of re-wiring the ingredients. The two
-    /// policies are independent (see CONTEXT.md) and both branches run
+    /// policies are independent (see GLOSSARY.md) and both branches run
     /// even if one fails — a record-retention error never suppresses
     /// audio retention. Best-effort: a failed branch logs a warning and
     /// contributes 0 to the outcome.

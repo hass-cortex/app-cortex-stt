@@ -14,7 +14,7 @@ struct CatalogRoot {
     models: Vec<CatalogModel>,
 }
 
-/// One downloadable model (a **Catalog model** in CONTEXT.md terms).
+/// One downloadable model (a **Catalog model** in GLOSSARY.md terms).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogModel {
     /// Upstream slug; the model's stable identity everywhere.

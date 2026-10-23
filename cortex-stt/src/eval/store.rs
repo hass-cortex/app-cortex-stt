@@ -4,7 +4,7 @@
 //!
 //! Six tables, all owned here. `eval_samples.reference_transcript` is
 //! `NOT NULL` on purpose: an Evaluation sample without a reference
-//! transcript is not a sample (see `CONTEXT.md`), so the schema, not a
+//! transcript is not a sample (see `GLOSSARY.md`), so the schema, not a
 //! remembered `WHERE` clause, is what keeps unlabelled audio out of a run.
 
 use std::collections::HashSet;

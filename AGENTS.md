@@ -13,7 +13,7 @@ and rootfs.
 ## Quick Links
 
 - **Supported models**: [transcribe.cpp supported-models table](https://github.com/handy-computer/transcribe.cpp#supported-models) + per-model cards under [`docs/models/`](https://github.com/handy-computer/transcribe.cpp/tree/main/docs/models); the installable subset is the vendored `cortex-stt/src/model/catalog.json` (synced by `cortex-stt/scripts/sync-catalog.py`).
-- **Domain vocabulary**: [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) — what is a _Transcription history record_? _Drop audio_ vs _Delete record_? _Retention candidate_? _Evaluation sample_ vs _Pending capture_?
+- **Domain vocabulary**: [`cortex-stt/GLOSSARY.md`](cortex-stt/GLOSSARY.md) — what is a _Transcription history record_? _Drop audio_ vs _Delete record_? _Retention candidate_? _Evaluation sample_ vs _Pending capture_?
 - **Contributor guide**: [`cortex-stt/CONTRIBUTING.md`](cortex-stt/CONTRIBUTING.md) — fork → branch → PR flow.
 - **Release runbook**: workspace-level [`docs/release/`](../docs/release/README.md) — pipeline diagram, beta/stable cuts, troubleshooting.
 - **Primary consumer**: [`cortex-stt`](https://github.com/hass-cortex/cortex-stt) HACS integration (HA STT platform). The HA app is the only supported distribution form — there is no standalone Docker / LXC / systemd packaging.
@@ -46,7 +46,7 @@ and rootfs.
     ├── Cargo.toml/.lock       Rust workspace root (single crate)
     ├── rust-toolchain.toml    pinned Rust version
     ├── clippy.toml, deny.toml, rustfmt.toml
-    ├── CONTEXT.md             domain vocabulary
+    ├── GLOSSARY.md            domain vocabulary
     ├── CONTRIBUTING.md
     ├── src/                   Rust backend (see Architecture)
     ├── tests/                 integration tests (real DB, mocked engines)
@@ -141,9 +141,9 @@ src/
 - **`model::ModelCatalog` is the single assembly point for model state**: registry + disk scan + live download status (via the shared `ProgressBoard`) + engine load state (via `EngineManager`) — `list_models`/`get_model` return the complete state, so no caller re-joins it. `DownloadManager` is the download facade: `start(model, quant)` and `cancel_download` own path resolution, slot claiming/compensation, and the completion tail (`complete`: Install → slot release → next-launch → delayed clear of a Completed entry; a Failed entry stays, surfacing as `download_error` until a retry or a dismiss via `cancel_download`); the `ModelInstaller` is injected at construction.
 - **`state::AppState::assemble` is the single assembly point of the service object graph** (`ProgressBoard → ModelCatalog → History → Transcriber → ModelInstaller → DownloadManager → Eval → EvalRunner`): `main.rs` and the test harness (`tests/test_helpers.rs`) both call it, so adding a dependency is a one-place change. `api::build_router` is the analogous seam for the route + middleware stack — `tests/api_router_test.rs` exercises the shipped router including auth. `asr-cli` deliberately wires a documented subset (no installer, throwaway history).
 - **`History::metrics_snapshot` owns the metrics aggregate** — one SQL pass computes every history-derived figure; `api/metrics.rs` is a shell that joins in the engine/catalog/key counts. Storage figures likewise come from their owners (`History::audio_disk_usage_bytes`, `Database::disk_usage_bytes`) — handlers never re-derive another module's disk layout.
-- **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (CONTEXT.md). Install (quant switch → engine re-registration → unload → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled, and once the task commits to it a cancel is a no-op (`CancelToken`). Uninstall (delete files → unload → drop a kept failure → HA notify) backs `DELETE /api/models/{id}`.
+- **`model::install::ModelInstaller` owns Install and Uninstall** — the only two operations that change the installed model set (GLOSSARY.md). Install (quant switch → engine re-registration → unload → HA notify) is fired by the download task itself on `Completed`, before its slot is released, so a same-model re-download stays blocked throughout; it never fires for Failed/Cancelled, and once the task commits to it a cancel is a no-op (`CancelToken`). Uninstall (delete files → unload → drop a kept failure → HA notify) backs `DELETE /api/models/{id}`.
 
-See [`cortex-stt/CONTEXT.md`](cortex-stt/CONTEXT.md) for the domain
+See [`cortex-stt/GLOSSARY.md`](cortex-stt/GLOSSARY.md) for the domain
 vocabulary (Transcription history record, Delete record vs Drop audio,
 Retention candidate, …) used in these names.
 

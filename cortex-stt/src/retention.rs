@@ -4,7 +4,7 @@
 //! No I/O. Callers (typically the `history` module) gather candidates,
 //! pass them to [`select_to_delete`], and act on the returned ids.
 //!
-//! See `CONTEXT.md` for the surrounding domain language.
+//! See `GLOSSARY.md` for the surrounding domain language.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};

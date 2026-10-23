@@ -78,7 +78,7 @@ pub struct CreateRecord {
     pub device: String,
     /// Capture device (microphone / satellite) that recorded the audio,
     /// as reported by the client. Distinct from `device` (compute
-    /// backend) — see CONTEXT.md.
+    /// backend) — see GLOSSARY.md.
     pub capture_device: Option<String>,
     /// Input-signal level stats (see `audio::stats`). None on failure
     /// rows and for clients that predate the fields.
