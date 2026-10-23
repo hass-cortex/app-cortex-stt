@@ -10,6 +10,7 @@ import {
 	X,
 } from "lucide-react";
 import { type ChangeEvent, type DragEvent, useCallback, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { type TranscribeResponse, transcribeClip } from "@/api/transcribe";
 import type { ModelInfo } from "@/api/types";
 import { ClipPlayer } from "@/components/audio/clip-player";
@@ -81,7 +82,12 @@ export function TranscribePage() {
 	const [clip, setClip] = useState<Clip | null>(null);
 	const [decoding, setDecoding] = useState(false);
 	const [language, setLanguage] = useState("");
-	const [selected, setSelected] = useState<string[]>([]);
+	// `?model=<Variant key>` is how a model's menu links here: that Variant starts selected.
+	const [params] = useSearchParams();
+	const [selected, setSelected] = useState<string[]>(() => {
+		const key = params.get("model");
+		return key ? [key] : [];
+	});
 	const [runs, setRuns] = useState<RunState[]>([]);
 	const [focused, setFocused] = useState<string | null>(null);
 

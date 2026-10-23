@@ -43,7 +43,8 @@ function Section({
 				<h2 className="text-[13px] font-semibold text-text-primary whitespace-nowrap">{title}</h2>
 				<span className="num text-[11px] text-text-faint min-w-0">
 					{count}
-					{note ? ` · ${note}` : ""}
+					{/* A phone has no room for the note; the rows say the rest. */}
+					{note && <span className="hidden sm:inline"> · {note}</span>}
 				</span>
 			</div>
 			{head}
@@ -126,38 +127,49 @@ export function ModelList() {
 	return (
 		<div className="flex flex-col gap-5">
 			<div className="flex flex-col sm:flex-row gap-2.5">
-				<div className="flex-1 flex items-center gap-2.5 h-9 px-3 bg-surface-2 border border-border rounded-lg">
+				<div className="flex-1 flex items-center gap-2.5 h-11 sm:h-9 px-3 bg-surface-2 border border-border rounded-lg">
 					<Search size={15} strokeWidth={1.8} className="text-text-muted shrink-0" />
 					<input
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder={`Search ${models?.length ?? 0} models by name, family or language…`}
-						className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-muted focus:outline-none"
+						aria-label="Search models"
+						className="w-full min-w-0 bg-transparent text-[14px] sm:text-[12.5px] text-text-primary placeholder:text-text-muted focus:outline-none"
 					/>
 				</div>
-				<Select
-					options={familyOptions}
-					value={familyFilter}
-					onChange={(e) => setFamilyFilter(e.target.value)}
-					className="sm:w-36"
-				/>
-				<Select
-					options={languageOptions}
-					value={languageFilter}
-					onChange={(e) => setLanguageFilter(e.target.value)}
-					className="sm:w-36"
-				/>
-				<button
-					type="button"
-					onClick={() => setInstalledOnly((v) => !v)}
-					className={`h-9 px-3 rounded-lg text-[12px] border transition-colors cursor-pointer whitespace-nowrap ${
-						installedOnly
-							? "bg-accent-wash border-accent-quiet text-text-primary"
-							: "bg-surface-2 border-border text-text-muted hover:text-text-primary"
-					}`}
-				>
-					On disk only
-				</button>
+				{/* On a phone the filters are one row of chips that scrolls sideways. */}
+				<div className="flex gap-2 overflow-x-auto sm:overflow-visible pb-0.5 sm:pb-0">
+					<div className="shrink-0 w-32 sm:w-36">
+						<Select
+							options={familyOptions}
+							value={familyFilter}
+							onChange={(e) => setFamilyFilter(e.target.value)}
+							aria-label="Family"
+							className="max-sm:h-9 max-sm:rounded-full"
+						/>
+					</div>
+					<div className="shrink-0 w-36">
+						<Select
+							options={languageOptions}
+							value={languageFilter}
+							onChange={(e) => setLanguageFilter(e.target.value)}
+							aria-label="Language"
+							className="max-sm:h-9 max-sm:rounded-full"
+						/>
+					</div>
+					<button
+						type="button"
+						aria-pressed={installedOnly}
+						onClick={() => setInstalledOnly((v) => !v)}
+						className={`shrink-0 h-9 px-3 rounded-full sm:rounded-lg text-[12px] border transition-colors cursor-pointer whitespace-nowrap ${
+							installedOnly
+								? "bg-accent-wash border-accent-quiet text-text-primary"
+								: "bg-surface-2 border-border text-text-muted hover:text-text-primary"
+						}`}
+					>
+						On disk only
+					</button>
+				</div>
 			</div>
 
 			{filtered.length === 0 ? (

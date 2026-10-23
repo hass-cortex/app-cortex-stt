@@ -50,7 +50,16 @@ export function ModelRow({ model }: { model: ModelInfo }) {
 		<div className="px-3.5 py-2.5 lg:py-2 border-b border-border-soft last:border-0 lg:border-0">
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-2 lg:flex-nowrap">
 				<div className="flex items-center gap-2.5 min-w-0 basis-full lg:basis-auto lg:flex-1">
-					<span className="text-[12.5px] text-text-primary truncate">{model.name}</span>
+					<div className="flex flex-col gap-0.5 min-w-0">
+						<span className="text-[14px] lg:text-[12.5px] text-text-primary truncate">
+							{model.name}
+						</span>
+						<span className="lg:hidden num text-[11px] text-text-muted truncate">
+							{model.family}
+							{model.languages.length > 0 &&
+								` · ${model.languages.length} ${model.languages.length === 1 ? "language" : "languages"}`}
+						</span>
+					</div>
 					{model.description && (
 						<Hint
 							label={model.name}
@@ -62,7 +71,7 @@ export function ModelRow({ model }: { model: ModelInfo }) {
 					)}
 					{model.status === "error" && <Badge variant="error">error</Badge>}
 				</div>
-				<span className={`${cell} lg:w-24 truncate`}>{model.family}</span>
+				<span className={`${cell} hidden lg:block w-24 truncate`}>{model.family}</span>
 				<span className={`${cell} w-[42px] text-right hidden xl:block`}>
 					{model.languages.length}
 				</span>
@@ -73,7 +82,7 @@ export function ModelRow({ model }: { model: ModelInfo }) {
 							value={quant}
 							onChange={(e) => setQuant(e.target.value)}
 							aria-label={`Quant of ${model.name} to download`}
-							className="num w-[150px] h-8 px-2 bg-surface-3 border border-border rounded-[7px] text-[11.5px] text-text-primary cursor-pointer"
+							className="num flex-1 min-w-0 lg:flex-none lg:w-[150px] h-11 lg:h-8 px-2 bg-surface-3 border border-border rounded-[7px] text-[11.5px] text-text-primary cursor-pointer"
 						>
 							{model.quants.map((q) => (
 								<option key={q.quant} value={q.quant}>
@@ -85,9 +94,10 @@ export function ModelRow({ model }: { model: ModelInfo }) {
 						<span className={`${cell} lg:w-[72px] lg:text-right whitespace-nowrap`}>
 							{formatMB(model.quants.find((q) => q.quant === quant)?.size_mb ?? model.size_mb)}
 						</span>
-						<div className="flex justify-end ml-auto lg:ml-0 lg:w-[110px]">
+						<div className="flex justify-end lg:w-[110px]">
 							<Button
 								size="sm"
+								className="max-lg:h-11 max-lg:px-4 max-lg:text-[13.5px]"
 								icon={<Download size={13} strokeWidth={1.8} />}
 								onClick={() => runDownload({ modelId: model.id, quant })}
 								loading={downloadMutation.isPending}
