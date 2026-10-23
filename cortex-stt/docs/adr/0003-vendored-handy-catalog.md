@@ -31,9 +31,8 @@ the generated `MODELS.md` was removed in favor of linking there.)
 
 ## Consequences
 
-- Model identity is the upstream `slug`; exactly one quant of a model exists on
-  disk (chosen at download, default `default_quant`), so ids never carry a
-  quant dimension.
+- Model identity is the upstream `slug`. What is installed is a Variant — a
+  model at one quant — and a model can have several (ADR 0007).
 - Catalog freshness depends on a script run (manual, or the weekly drift PR) —
   acceptable, since new models require validation before being offered anyway.
   A stale snapshot only misses newer files; it never stops installing.
