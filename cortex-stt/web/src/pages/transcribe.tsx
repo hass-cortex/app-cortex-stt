@@ -24,11 +24,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import { useSetDefaultModel } from "@/hooks/use-engine";
 import { useUploadCapture } from "@/hooks/use-eval";
-import { useModels } from "@/hooks/use-models";
+import { useModels, useSetPreferredQuant } from "@/hooks/use-models";
 import { useRecorder } from "@/hooks/use-recorder";
 import { type DecodedClip, decodeClip, encodeWav } from "@/lib/audio";
 import { copyToClipboard } from "@/lib/clipboard";
 import { clipFileName, formatBytes, formatDuration } from "@/lib/format";
+import { variantKey } from "@/lib/variant";
 
 /** So a run started here is identifiable in history later. */
 const CAPTURE_DEVICE = "web-transcribe";
@@ -48,8 +49,28 @@ interface Clip extends DecodedClip {
 	url: string;
 }
 
-function installed(models: ModelInfo[] | undefined): ModelInfo[] {
-	return (models ?? []).filter((m) => m.status === "downloaded" || m.status === "custom");
+/** One installed Variant to compare: two quants of a model are two. */
+interface Candidate {
+	/** Variant key — the selection id. */
+	key: string;
+	model: ModelInfo;
+	quant: string | null;
+	label: string;
+	isLoaded: boolean;
+}
+
+function installed(models: ModelInfo[] | undefined): Candidate[] {
+	return (models ?? []).flatMap((m) =>
+		m.variants
+			.filter((v) => v.status === "downloaded")
+			.map((v) => ({
+				key: variantKey(m.id, v.quant),
+				model: m,
+				quant: v.quant,
+				label: v.quant ? `${m.name} ${v.quant}` : m.name,
+				isLoaded: v.is_loaded,
+			})),
+	);
 }
 
 export function TranscribePage() {
@@ -57,6 +78,7 @@ export function TranscribePage() {
 	const { toast } = useToast();
 	const recorder = useRecorder();
 	const setDefault = useSetDefaultModel();
+	const setPreferred = useSetPreferredQuant();
 	const uploadCapture = useUploadCapture();
 	const fileInput = useRef<HTMLInputElement>(null);
 
@@ -122,9 +144,11 @@ export function TranscribePage() {
 
 		for (const modelId of selected) {
 			setRuns((prev) => prev.map((r) => (r.modelId === modelId ? { ...r, status: "running" } : r)));
+			const candidate = pool.find((c) => c.key === modelId);
 			try {
 				const result = await transcribeClip(clip.wav, {
-					model: modelId,
+					model: candidate?.model.id ?? modelId,
+					quant: candidate?.quant ?? undefined,
 					language: language.trim() || undefined,
 					captureDevice: CAPTURE_DEVICE,
 				});
@@ -146,8 +170,8 @@ export function TranscribePage() {
 	const baseline = runs.find((r) => r.result)?.result?.text;
 
 	const modelName = useMemo(() => {
-		const byId = new Map(pool.map((m) => [m.id, m.name]));
-		return (id: string) => byId.get(id) ?? id;
+		const byKey = new Map(pool.map((c) => [c.key, c.label]));
+		return (key: string) => byKey.get(key) ?? key;
 	}, [pool]);
 
 	return (
@@ -311,21 +335,21 @@ export function TranscribePage() {
 											No models on disk. Download one first.
 										</span>
 									)}
-									{pool.map((model) => {
-										const on = selected.includes(model.id);
+									{pool.map((candidate) => {
+										const on = selected.includes(candidate.key);
 										return (
 											<button
-												key={model.id}
+												key={candidate.key}
 												type="button"
-												onClick={() => toggleModel(model.id)}
+												onClick={() => toggleModel(candidate.key)}
 												className={`px-2.5 py-1.5 rounded-md text-[11.5px] border transition-colors cursor-pointer ${
 													on
 														? "bg-accent-wash border-accent-quiet text-text-primary"
 														: "bg-surface-3 border-border text-text-secondary hover:text-text-primary"
 												}`}
 											>
-												{model.name}
-												{model.is_loaded && <span className="ml-1.5 text-success">•</span>}
+												{candidate.label}
+												{candidate.isLoaded && <span className="ml-1.5 text-success">•</span>}
 											</button>
 										);
 									})}
@@ -467,8 +491,19 @@ export function TranscribePage() {
 											variant="outline"
 											icon={<Check size={14} strokeWidth={1.8} />}
 											onClick={() => {
-												setDefault.mutate(state.modelId, {
-													onSuccess: () => toast(`${modelName(state.modelId)} is now the default`),
+												const candidate = pool.find((c) => c.key === state.modelId);
+												if (!candidate) return;
+												// The default names a model; its Preferred variant picks the
+												// quant, so making this Variant the default sets both.
+												setDefault.mutate(candidate.model.id, {
+													onSuccess: () => {
+														if (candidate.quant)
+															setPreferred.mutate({
+																modelId: candidate.model.id,
+																quant: candidate.quant,
+															});
+														toast(`${candidate.label} is now the default`);
+													},
 												});
 											}}
 										>

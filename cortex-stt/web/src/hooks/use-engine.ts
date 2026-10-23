@@ -46,15 +46,16 @@ export function useSetDefaultModel() {
 
 export function useLoadModel() {
 	return useInvalidatingMutation({
-		mutationFn: ({ modelId, poolSize }: { modelId: string; poolSize?: number }) =>
-			loadModel(modelId, poolSize),
+		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
+			loadModel(modelId, quant),
 		invalidates: [queryKeys.engine.all, queryKeys.models.all],
 	});
 }
 
 export function useUnloadModel() {
 	return useInvalidatingMutation({
-		mutationFn: (modelId: string) => unloadModel(modelId),
+		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
+			unloadModel(modelId, quant),
 		invalidates: [queryKeys.engine.all, queryKeys.models.all],
 	});
 }

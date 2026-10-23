@@ -7,6 +7,7 @@ import {
 	downloadModel,
 	listModels,
 	scanCustomModels,
+	setPreferredQuant,
 } from "@/api/models";
 import type { DownloadProgress } from "@/api/types";
 import { useEngineLive } from "@/hooks/use-engine";
@@ -23,7 +24,9 @@ export function useModels() {
 		queryFn: listModels,
 		refetchInterval: (query) => {
 			const data = query.state.data;
-			return data?.some((m) => m.status === "downloading" || m.status === "queued" || m.updating)
+			return data?.some((m) =>
+				m.variants.some((v) => v.status === "downloading" || v.status === "queued" || v.updating),
+			)
 				? 2000
 				: false;
 		},
@@ -38,17 +41,33 @@ export function useDownloadModel() {
 	});
 }
 
+/** A Variant of a model: `quant` null for a custom model. */
+export interface VariantRef {
+	modelId: string;
+	quant: string | null;
+}
+
 export function useCancelDownload() {
 	return useInvalidatingMutation({
-		mutationFn: (modelId: string) => cancelDownload(modelId),
+		mutationFn: ({ modelId, quant }: VariantRef) => cancelDownload(modelId, quant),
 		invalidates: [queryKeys.models.all],
 	});
 }
 
+/** Uninstall one Variant (or, with `quant: undefined`, the whole model). */
 export function useDeleteModel() {
 	return useInvalidatingMutation({
-		mutationFn: (modelId: string) => deleteModel(modelId),
+		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
+			deleteModel(modelId, quant),
 		invalidates: [queryKeys.models.all, queryKeys.engine.all],
+	});
+}
+
+export function useSetPreferredQuant() {
+	return useInvalidatingMutation({
+		mutationFn: ({ modelId, quant }: { modelId: string; quant: string }) =>
+			setPreferredQuant(modelId, quant),
+		invalidates: [queryKeys.models.all],
 	});
 }
 
@@ -59,8 +78,11 @@ export function useScanCustomModels() {
 	});
 }
 
-/** Subscribe to download progress for a specific model via SSE */
-export function useDownloadProgress(modelId: string | null): DownloadProgress | null {
+/** Subscribe to one Variant's download progress via SSE */
+export function useDownloadProgress(
+	modelId: string | null,
+	quant: string | null,
+): DownloadProgress | null {
 	const [progress, setProgress] = useState<DownloadProgress | null>(null);
 	const cleanupRef = useRef<(() => void) | null>(null);
 
@@ -70,8 +92,9 @@ export function useDownloadProgress(modelId: string | null): DownloadProgress | 
 			return;
 		}
 
+		const query = quant ? `?quant=${encodeURIComponent(quant)}` : "";
 		cleanupRef.current = subscribeSSE(
-			`/api/models/${encodeURIComponent(modelId)}/download/progress`,
+			`/api/models/${encodeURIComponent(modelId)}/download/progress${query}`,
 			(data) => setProgress(data as DownloadProgress),
 			() => setProgress(null),
 		);
@@ -80,7 +103,7 @@ export function useDownloadProgress(modelId: string | null): DownloadProgress | 
 			cleanupRef.current?.();
 			cleanupRef.current = null;
 		};
-	}, [modelId]);
+	}, [modelId, quant]);
 
 	return progress;
 }

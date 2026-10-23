@@ -69,6 +69,28 @@ export interface QuantSummary {
 	size_mb: number;
 }
 
+export type VariantStatus = "queued" | "downloading" | "downloaded" | "error";
+
+/** One Variant (the model at one quant): installed, or on its way. */
+export interface VariantInfo {
+	/** Null for a custom model. */
+	quant: string | null;
+	status: VariantStatus;
+	size_mb: number;
+	disk_usage_bytes: number;
+	is_loaded: boolean;
+	/** Upstream republished the installed file; re-downloading this quant updates it. */
+	update_available: boolean;
+	/** A download is replacing the installed file, which stays in service until it verifies. */
+	updating: boolean;
+	/** The catalog no longer offers this Variant; it keeps serving. */
+	retired: boolean;
+	/** Unix seconds; null until installed. */
+	installed_at: number | null;
+	/** Why the last download failed; kept until a retry or a dismiss. */
+	download_error: string | null;
+}
+
 export interface ModelInfo {
 	id: string;
 	name: string;
@@ -77,26 +99,29 @@ export interface ModelInfo {
 	family: string;
 	languages: string[];
 	capabilities: ModelCapabilities;
+	/** Quants the catalog offers; empty for a custom or retired model. */
 	quants: QuantSummary[];
 	default_quant: string;
-	/** Installed quant, or null when not downloaded. */
-	downloaded_quant: string | null;
-	/** Size of the downloaded (or default) quant, in MB. */
+	/** Size of the Preferred variant when installed, else of the default quant, in MB. */
 	size_mb: number;
 	recommended: boolean;
+	/** `downloaded` while any Variant is installed. */
 	status: ModelStatus;
+	/** All installed Variants together. */
 	disk_usage_bytes: number;
+	/** Any Variant loaded. */
 	is_loaded: boolean;
-	/** Upstream republished the installed file; re-downloading the installed quant updates it. */
-	update_available: boolean;
-	/** A download is replacing the installed file, which stays in service until it verifies. */
-	updating: boolean;
-	/** Why the last download failed; kept until a retry or a dismiss. */
-	download_error: string | null;
+	/** The quant a request naming only this model gets; null while nothing is installed. */
+	preferred_quant: string | null;
+	/** The catalog no longer offers this model; its Variants keep serving. */
+	retired: boolean;
+	/** Installed Variants, plus quants with a download in flight or a kept failure. */
+	variants: VariantInfo[];
 }
 
 export interface DownloadProgress {
 	model_id: string;
+	quant: string;
 	downloaded_bytes: number;
 	total_bytes: number;
 	speed_bps: number;
@@ -116,8 +141,15 @@ export interface StorageInfo {
 
 // --- Engine ---
 
+export interface VariantKey {
+	model: string;
+	quant: string | null;
+}
+
 export interface EngineStatus {
+	/** Models with any Variant loaded. */
 	loaded_models: string[];
+	loaded_variants: VariantKey[];
 	loaded_count: number;
 }
 
@@ -131,6 +163,8 @@ export interface TranscriptionRecord {
 	source: TranscriptionSource;
 	language: string | null;
 	model_id: string;
+	/** The Variant's quant; null for a custom model and for records older than Variants. */
+	quant: string | null;
 	audio_duration_ms: number;
 	inference_ms: number;
 	model_load_ms: number;

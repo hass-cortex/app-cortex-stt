@@ -565,7 +565,10 @@ function ExpandedDetail({ record, timezone }: { record: TranscriptionRecord; tim
 					<div className="grid grid-cols-3 gap-x-3.5 gap-y-3">
 						{/* The model column is hidden on narrow screens, so without
 						    this the expanded row cannot say what produced the text. */}
-						<Meta label="MODEL" value={record.model_id} />
+						<Meta
+							label="MODEL"
+							value={record.quant ? `${record.model_id} ${record.quant}` : record.model_id}
+						/>
 						<Meta label="LANGUAGE" value={record.language ?? "auto"} />
 						<Meta label="TIMESTAMP" value={formatTimestamp(record.timestamp, timezone)} />
 						<Meta label="AUDIO" value={formatDuration(record.audio_duration_ms)} />

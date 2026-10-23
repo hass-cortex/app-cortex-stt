@@ -1,25 +1,38 @@
-import { del, get, post } from "./client";
+import { del, get, post, put } from "./client";
 import type { ModelInfo } from "./types";
 
-/** List all models (registry + custom + status) */
+function quantQuery(quant?: string | null): string {
+	return quant ? `?quant=${encodeURIComponent(quant)}` : "";
+}
+
+function modelPath(modelId: string): string {
+	return `/api/models/${encodeURIComponent(modelId)}`;
+}
+
+/** List all models (catalog + retired + custom, each with its Variants) */
 export function listModels(): Promise<ModelInfo[]> {
 	return get<ModelInfo[]>("/api/models");
 }
 
-/** Start downloading a model. Omitting `quant` installs the model's default quant. */
+/** Download a quant of a model: adds that Variant (or updates it when
+ *  already installed). Omitting `quant` installs the model's default quant. */
 export function downloadModel(modelId: string, quant?: string): Promise<{ status: string }> {
-	const query = quant ? `?quant=${encodeURIComponent(quant)}` : "";
-	return post<{ status: string }>(`/api/models/${encodeURIComponent(modelId)}/download${query}`);
+	return post<{ status: string }>(`${modelPath(modelId)}/download${quantQuery(quant)}`);
 }
 
-/** Cancel an in-progress download */
-export function cancelDownload(modelId: string): Promise<void> {
-	return del(`/api/models/${encodeURIComponent(modelId)}/download`);
+/** Cancel a Variant's download, or dismiss its kept failure */
+export function cancelDownload(modelId: string, quant: string | null): Promise<void> {
+	return del(`${modelPath(modelId)}/download${quantQuery(quant)}`);
 }
 
-/** Delete a downloaded model */
-export function deleteModel(modelId: string): Promise<void> {
-	return del(`/api/models/${encodeURIComponent(modelId)}`);
+/** Uninstall one Variant, or every Variant of the model when `quant` is omitted */
+export function deleteModel(modelId: string, quant?: string | null): Promise<void> {
+	return del(`${modelPath(modelId)}${quantQuery(quant)}`);
+}
+
+/** Choose the model's Preferred variant (must be installed) */
+export function setPreferredQuant(modelId: string, quant: string): Promise<void> {
+	return put(`${modelPath(modelId)}/preferred`, { quant });
 }
 
 /** Rescan custom model directory */

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ModelInfo } from "@/api/types";
+import type { ModelInfo, VariantInfo } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/toast";
 import { useRuns, useSamples, useStartRun } from "@/hooks/use-eval";
 import { useModels } from "@/hooks/use-models";
 import { formatBytes, formatDuration, formatRelativeTime } from "@/lib/format";
+import { variantKey, variantName } from "@/lib/variant";
 
 interface NewRunDialogProps {
 	open: boolean;
@@ -33,6 +34,13 @@ interface NewRunDialogProps {
  * and emits Thai has to stay on the table — hiding it would remove the
  * evidence the run exists to produce.
  */
+interface Candidate {
+	/** The Variant key a run names it by. */
+	key: string;
+	model: ModelInfo;
+	variant: VariantInfo;
+}
+
 export function NewRunDialog({
 	open,
 	onClose,
@@ -60,8 +68,14 @@ export function NewRunDialog({
 	const [modelQuery, setModelQuery] = useState("");
 	const [sampleQuery, setSampleQuery] = useState("");
 
+	// A candidate is a Variant: two quants of one model are two rows.
 	const installed = useMemo(
-		() => models.filter((m: ModelInfo) => m.status === "downloaded" || m.status === "custom"),
+		() =>
+			models.flatMap((m: ModelInfo) =>
+				m.variants
+					.filter((v) => v.status === "downloaded")
+					.map((v): Candidate => ({ key: variantKey(m.id, v.quant), model: m, variant: v })),
+			),
 		[models],
 	);
 	// Declared languages match too: "zh" is how you reach the candidates
@@ -70,8 +84,8 @@ export function NewRunDialog({
 		const q = modelQuery.trim().toLowerCase();
 		if (!q) return installed;
 		return installed.filter(
-			(m: ModelInfo) =>
-				m.id.toLowerCase().includes(q) ||
+			({ key, model: m }) =>
+				key.toLowerCase().includes(q) ||
 				m.name.toLowerCase().includes(q) ||
 				m.family.toLowerCase().includes(q) ||
 				m.languages.some((l) => l.toLowerCase().includes(q)),
@@ -130,11 +144,11 @@ export function NewRunDialog({
 	// All/None act on the rows in view, so they mean what they look like
 	// while a search is active. Rows filtered out are left alone.
 	const selectAllModels = () =>
-		setSelected((prev) => new Set([...prev, ...shownModels.map((m: ModelInfo) => m.id)]));
+		setSelected((prev) => new Set([...prev, ...shownModels.map((c) => c.key)]));
 	const selectNoModels = () =>
 		setSelected((prev) => {
 			const next = new Set(prev);
-			for (const m of shownModels) next.delete(m.id);
+			for (const c of shownModels) next.delete(c.key);
 			return next;
 		});
 	const includeAllSamples = () =>
@@ -217,7 +231,7 @@ export function NewRunDialog({
 					<section className="space-y-2 min-w-0">
 						<PickerHead
 							title="Models"
-							chosen={shownModels.filter((m: ModelInfo) => selected.has(m.id)).length}
+							chosen={shownModels.filter((c) => selected.has(c.key)).length}
 							shown={shownModels.length}
 							total={installed.length}
 							onAll={selectAllModels}
@@ -238,24 +252,27 @@ export function NewRunDialog({
 									No installed model matches “{modelQuery}”.
 								</p>
 							) : (
-								shownModels.map((m: ModelInfo) => (
+								shownModels.map(({ key, model: m, variant: v }) => (
 									<div
-										key={m.id}
+										key={key}
 										className="w-full flex items-center gap-3 py-2 px-1 hover:bg-surface-3"
 									>
 										<button
 											type="button"
-											onClick={() => toggle(m.id)}
+											onClick={() => toggle(key)}
 											className="flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer"
 										>
 											<span className="w-4 shrink-0 text-center font-mono text-xs">
-												{selected.has(m.id) ? "\u2611" : "\u2610"}
+												{selected.has(key) ? "\u2611" : "\u2610"}
 											</span>
 											<span className="flex-1 min-w-0 truncate text-sm text-text-primary">
 												{m.id}
+												<span className="ml-1.5 font-mono text-xs text-text-muted">
+													{variantName(v.quant)}
+												</span>
 											</span>
 											<span className="text-xs text-text-muted font-mono tabular-nums">
-												{m.size_mb}MB
+												{v.size_mb}MB
 											</span>
 										</button>
 										<Hint
@@ -266,7 +283,7 @@ export function NewRunDialog({
 										>
 											<span className="truncate">{languageCell(m.languages, language)}</span>
 										</Hint>
-										{m.is_loaded && <span className="text-xs text-accent shrink-0">loaded</span>}
+										{v.is_loaded && <span className="text-xs text-accent shrink-0">loaded</span>}
 									</div>
 								))
 							)}

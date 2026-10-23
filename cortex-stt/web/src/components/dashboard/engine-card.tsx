@@ -22,7 +22,8 @@ export function EngineCard() {
 		);
 	}
 
-	const loaded = engine?.loaded_models ?? [];
+	const loaded = engine?.loaded_variants ?? [];
+	const loadedModels = engine?.loaded_models ?? [];
 	const defaultModel = settings?.default_model;
 	const ramUsed = system ? system.total_memory_mb - system.available_memory_mb : null;
 	const ramPercent =
@@ -45,14 +46,17 @@ export function EngineCard() {
 						Nothing resident. The first request loads the default model.
 					</p>
 				)}
-				{loaded.map((modelId) => (
-					<div key={modelId} className="flex items-center gap-2.5">
+				{loaded.map((v) => (
+					<div key={`${v.model}:${v.quant ?? ""}`} className="flex items-center gap-2.5">
 						<span className="w-[7px] h-[7px] rounded-full bg-success shrink-0" />
-						<span className="text-[12.5px] text-text-primary truncate">{modelId}</span>
-						{modelId === defaultModel && <Badge variant="accent">default</Badge>}
+						<span className="text-[12.5px] text-text-primary truncate">
+							{v.model}
+							{v.quant && <span className="num text-text-muted"> {v.quant}</span>}
+						</span>
+						{v.model === defaultModel && <Badge variant="accent">default</Badge>}
 					</div>
 				))}
-				{defaultModel && !loaded.includes(defaultModel) && (
+				{defaultModel && !loadedModels.includes(defaultModel) && (
 					<div className="flex items-center gap-2.5">
 						<span className="w-[7px] h-[7px] rounded-full border border-border shrink-0" />
 						<span className="text-[12.5px] text-text-secondary truncate">{defaultModel}</span>

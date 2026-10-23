@@ -91,6 +91,7 @@ export function RecordCells({
 			</span>
 			<span className="num w-36 text-[11px] text-text-muted truncate hidden lg:block">
 				{record.model_id}
+				{record.quant && <span className="text-text-faint"> {record.quant}</span>}
 			</span>
 			<span className="num w-[52px] text-right text-[11px] text-text-muted hidden sm:block">
 				{formatDuration(record.audio_duration_ms)}

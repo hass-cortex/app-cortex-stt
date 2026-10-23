@@ -5,10 +5,11 @@ import { formatBytes, formatDuration } from "@/lib/format";
 
 interface DownloadProgressProps {
 	modelId: string;
+	quant: string | null;
 }
 
-export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
-	const progress = useDownloadProgress(modelId);
+export function DownloadProgressBar({ modelId, quant }: DownloadProgressProps) {
+	const progress = useDownloadProgress(modelId, quant);
 	const cancelMutation = useCancelDownload();
 
 	if (!progress) return null;
@@ -48,14 +49,14 @@ export function DownloadProgressBar({ modelId }: DownloadProgressProps) {
 							)}
 						</>
 					)}
-					{/* Queued too: a queued update keeps its row "downloaded", so this
-					    bar is its only cancel. */}
+					{/* Queued too: a queued update keeps its Variant "downloaded", so
+					    this bar is its only cancel. */}
 					{(progress.status === "queued" ||
 						progress.status === "downloading" ||
 						progress.status === "verifying") && (
 						<button
 							type="button"
-							onClick={() => cancelMutation.mutate(modelId)}
+							onClick={() => cancelMutation.mutate({ modelId, quant })}
 							className="p-0.5 text-text-muted hover:text-error transition-colors cursor-pointer"
 							aria-label="Cancel download"
 						>

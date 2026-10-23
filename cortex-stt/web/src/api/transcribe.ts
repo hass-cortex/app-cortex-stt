@@ -11,6 +11,8 @@ export interface TranscribeResponse {
 	words?: TranscriptionSegment[];
 	truncated: boolean;
 	model: string;
+	/** The Variant that served the request; null for a custom model. */
+	quant: string | null;
 	duration_ms: number;
 	inference_ms: number;
 	model_load_ms: number;
@@ -21,6 +23,8 @@ export interface TranscribeResponse {
 
 export interface TranscribeParams {
 	model: string;
+	/** The Variant to use; the model's Preferred variant when omitted. */
+	quant?: string;
 	/** BCP-47. The base subtag is the engine hint; the rest selects an
 	 *  output rendering (ADR 0006). */
 	language?: string;
@@ -35,9 +39,10 @@ export interface TranscribeParams {
  *  explicitly fails outright on families that cannot produce it. */
 export function transcribeClip(
 	wav: Blob,
-	{ model, language, captureDevice }: TranscribeParams,
+	{ model, quant, language, captureDevice }: TranscribeParams,
 ): Promise<TranscribeResponse> {
 	const params: Record<string, string> = { model };
+	if (quant) params.quant = quant;
 	if (language) params.language = language;
 	if (captureDevice) params.capture_device = captureDevice;
 	return postBinary<TranscribeResponse>("/api/transcribe", wav, "audio/wav", params);
