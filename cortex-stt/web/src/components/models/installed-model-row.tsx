@@ -59,8 +59,8 @@ export function InstalledModelRow({ model, measured }: InstalledModelRowProps) {
 	const evalKeys = installed.map((v) => variantKey(model.id, v.quant));
 
 	return (
-		<section className="rounded-[10px] border border-border bg-surface-1 overflow-hidden">
-			<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-h-12 px-4 py-1.5 bg-surface-3 border-b border-border">
+		<section className="rounded-[10px] border border-border bg-surface-1">
+			<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-h-12 px-4 py-1.5 bg-surface-3 border-b border-border rounded-t-[10px]">
 				<h3 className="text-[13px] font-semibold text-text-primary">{model.name}</h3>
 				{model.description && (
 					<Hint
@@ -373,7 +373,7 @@ function FailedRow({ model, variant }: { model: ModelInfo; variant: VariantInfo 
 	const downloadMutation = useDownloadModel();
 	const cancelMutation = useCancelDownload();
 	return (
-		<div className="flex flex-wrap items-center gap-2 min-h-11 px-4 bg-error-wash text-[12px] text-error">
+		<div className="flex flex-wrap items-center gap-2 min-h-11 px-4 bg-error-wash last:rounded-b-[10px] text-[12px] text-error">
 			<span className="min-w-0 flex-1 break-words">
 				<span className="num">{variantName(variant.quant)}</span>{" "}
 				{isInstalled(variant) ? "update failed" : "download failed"}: {variant.download_error}
