@@ -132,7 +132,12 @@ async fn run_api_pipeline(model_id: &str, audio_file: &str, lang: &str) {
         "{model_id}: transcription should not be empty"
     );
     assert!(result["inference_ms"].as_u64().unwrap() > 0);
-    assert_eq!(result["model"].as_str().unwrap(), model_id);
+    // The response names the Variant that served: the full key.
+    let served = result["model"].as_str().unwrap();
+    assert!(
+        served == model_id || served.starts_with(&variant_prefix),
+        "{model_id}: served by {served}"
+    );
     println!(
         "[OK] {model_id} → \"{}\" ({}ms)",
         text, result["inference_ms"]
