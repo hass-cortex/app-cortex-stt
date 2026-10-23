@@ -15,8 +15,17 @@ bashio::log.info \
   "Service ${service} exited with code ${exit_code_service}" \
   "(by signal ${exit_code_signal})"
 
+# s6 asked the service down (the app is stopping): exiting 0, or by the
+# SIGTERM s6 sent, is a clean stop. uvicorn re-raises SIGTERM after its own
+# graceful shutdown, so a Python app ends "by signal 15" even when it
+# stopped cleanly. finish runs in the service directory.
+if [[ "$(/command/s6-svstat -o wantedup . 2>/dev/null)" == "false" ]] \
+  && { [[ "${exit_code_service}" -eq 0 ]] \
+    || { [[ "${exit_code_service}" -eq 256 ]] && [[ "${exit_code_signal}" -eq 15 ]]; }; }; then
+  bashio::log.info "Service ${service} stopped"
+
 # Received a signal
-if [[ "${exit_code_service}" -eq 256 ]]; then
+elif [[ "${exit_code_service}" -eq 256 ]]; then
   if [[ "${exit_code_container}" -eq 0 ]]; then
     echo $((128 + exit_code_signal)) > /run/s6-linux-init-container-results/exitcode
   fi
@@ -29,11 +38,7 @@ elif [[ "${exit_code_service}" -ne 0 ]]; then
   fi
   exec /run/s6/basedir/bin/halt
 
-# Zero exit: a clean shutdown when s6 asked the service down (the app
-# exits 0 on SIGTERM), otherwise s6 restarts it. finish runs in the
-# service directory.
-elif [[ "$(/command/s6-svstat -o wantedup . 2>/dev/null)" == "false" ]]; then
-  bashio::log.info "Service ${service} stopped"
+# Zero exit — let s6 restart it
 else
   bashio::log.info "Service ${service} restarting..."
 fi
