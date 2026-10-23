@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { subscribeSSE } from "@/api/client";
-import { getEngineStatus, loadModel, setDefaultModel, unloadModel } from "@/api/engine";
+import { getEngineStatus, loadModel, unloadModel } from "@/api/engine";
 import { useInvalidatingMutation } from "@/hooks/use-invalidating-mutation";
 import { POLL_INTERVALS, queryKeys } from "@/lib/constants";
 
@@ -37,25 +37,16 @@ export function useEngineStatus() {
 	});
 }
 
-export function useSetDefaultModel() {
-	return useInvalidatingMutation({
-		mutationFn: (modelId: string) => setDefaultModel(modelId),
-		invalidates: [queryKeys.engine.all, queryKeys.settings.all],
-	});
-}
-
 export function useLoadModel() {
 	return useInvalidatingMutation({
-		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
-			loadModel(modelId, quant),
+		mutationFn: (key: string) => loadModel(key),
 		invalidates: [queryKeys.engine.all, queryKeys.models.all],
 	});
 }
 
 export function useUnloadModel() {
 	return useInvalidatingMutation({
-		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
-			unloadModel(modelId, quant),
+		mutationFn: (key: string) => unloadModel(key),
 		invalidates: [queryKeys.engine.all, queryKeys.models.all],
 	});
 }

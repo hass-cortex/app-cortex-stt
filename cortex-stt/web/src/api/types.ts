@@ -102,7 +102,7 @@ export interface ModelInfo {
 	/** Quants the catalog offers; empty for a custom or retired model. */
 	quants: QuantSummary[];
 	default_quant: string;
-	/** Size of the Preferred variant when installed, else of the default quant, in MB. */
+	/** Size of the installed Variant when there is exactly one, else of the default quant, in MB. */
 	size_mb: number;
 	recommended: boolean;
 	/** `downloaded` while any Variant is installed. */
@@ -111,8 +111,6 @@ export interface ModelInfo {
 	disk_usage_bytes: number;
 	/** Any Variant loaded. */
 	is_loaded: boolean;
-	/** The quant a request naming only this model gets; null while nothing is installed. */
-	preferred_quant: string | null;
 	/** The catalog no longer offers this model; its Variants keep serving. */
 	retired: boolean;
 	/** Installed Variants, plus quants with a download in flight or a kept failure. */
@@ -141,15 +139,11 @@ export interface StorageInfo {
 
 // --- Engine ---
 
-export interface VariantKey {
-	model: string;
-	quant: string | null;
-}
-
 export interface EngineStatus {
 	/** Models with any Variant loaded. */
 	loaded_models: string[];
-	loaded_variants: VariantKey[];
+	/** Loaded Variants by key (`model:quant`). */
+	loaded_variants: string[];
 	loaded_count: number;
 }
 
@@ -250,14 +244,13 @@ export interface RetentionPolicy {
 }
 
 export interface AppSettings {
-	/** Explicit default-model choice; null = server falls back to its configured default. Written only via PUT /api/engine/default. */
-	default_model: string | null;
+	/** Variant key loaded at startup; null for none. */
+	preload: string | null;
 	pool_size: number;
 	max_loaded_models: number;
 	idle_timeout_secs: number | null;
 	transcription_timeout_secs: number | null;
 	save_audio: boolean;
-	preload_default_model: boolean;
 	audio_retention: RetentionPolicy;
 	record_retention: RetentionPolicy;
 	timezone: string;

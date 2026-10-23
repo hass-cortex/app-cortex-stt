@@ -1,5 +1,4 @@
 import {
-	Check,
 	ChevronDown,
 	ChevronRight,
 	Copy,
@@ -22,9 +21,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
-import { useSetDefaultModel } from "@/hooks/use-engine";
 import { useUploadCapture } from "@/hooks/use-eval";
-import { useModels, useSetPreferredQuant } from "@/hooks/use-models";
+import { useModels } from "@/hooks/use-models";
 import { useRecorder } from "@/hooks/use-recorder";
 import { type DecodedClip, decodeClip, encodeWav } from "@/lib/audio";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -77,8 +75,6 @@ export function TranscribePage() {
 	const { data: models } = useModels();
 	const { toast } = useToast();
 	const recorder = useRecorder();
-	const setDefault = useSetDefaultModel();
-	const setPreferred = useSetPreferredQuant();
 	const uploadCapture = useUploadCapture();
 	const fileInput = useRef<HTMLInputElement>(null);
 
@@ -147,8 +143,7 @@ export function TranscribePage() {
 			const candidate = pool.find((c) => c.key === modelId);
 			try {
 				const result = await transcribeClip(clip.wav, {
-					model: candidate?.model.id ?? modelId,
-					quant: candidate?.quant ?? undefined,
+					model: candidate?.key ?? modelId,
 					language: language.trim() || undefined,
 					captureDevice: CAPTURE_DEVICE,
 				});
@@ -487,28 +482,6 @@ export function TranscribePage() {
 
 								{state.result && (
 									<div className="px-4 pt-2.5 pb-3.5 flex items-center gap-2 flex-wrap">
-										<Button
-											variant="outline"
-											icon={<Check size={14} strokeWidth={1.8} />}
-											onClick={() => {
-												const candidate = pool.find((c) => c.key === state.modelId);
-												if (!candidate) return;
-												// The default names a model; its Preferred variant picks the
-												// quant, so making this Variant the default sets both.
-												setDefault.mutate(candidate.model.id, {
-													onSuccess: () => {
-														if (candidate.quant)
-															setPreferred.mutate({
-																modelId: candidate.model.id,
-																quant: candidate.quant,
-															});
-														toast(`${candidate.label} is now the default`);
-													},
-												});
-											}}
-										>
-											Set as default
-										</Button>
 										<Button
 											variant="outline"
 											icon={<FlaskConical size={14} strokeWidth={1.8} />}

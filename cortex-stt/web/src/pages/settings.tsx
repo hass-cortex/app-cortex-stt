@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DangerZone } from "@/components/settings/danger-zone";
-import { DefaultModelSettings } from "@/components/settings/default-model-settings";
 import { EngineSettings } from "@/components/settings/engine-settings";
 import { HomeAssistantSettings } from "@/components/settings/home-assistant-settings";
+import { PreloadSettings } from "@/components/settings/preload-settings";
 import { RetentionSettings } from "@/components/settings/retention-settings";
 import { TimezoneSettings } from "@/components/settings/timezone-settings";
 import { Spinner } from "@/components/ui/spinner";
@@ -18,16 +18,16 @@ interface Section {
 
 export function SettingsPage() {
 	const { data: settings, isLoading } = useSettings();
-	const [active, setActive] = useState("default-model");
+	const [active, setActive] = useState("preload");
 	const navRef = useRef<HTMLElement>(null);
 
 	const sections: Section[] = useMemo(
 		() => [
 			{
-				id: "default-model",
-				label: "Default model",
-				note: settings?.default_model ?? "not set",
-				element: <DefaultModelSettings />,
+				id: "preload",
+				label: "Pre-load",
+				note: settings?.preload ?? "none",
+				element: <PreloadSettings />,
 			},
 			{
 				id: "engine",

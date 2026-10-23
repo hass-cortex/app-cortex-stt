@@ -1,14 +1,12 @@
 import { Package, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ModelInfo } from "@/api/types";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useModels } from "@/hooks/use-models";
-import { useSettings } from "@/hooks/use-settings";
 import { useMeasuredLatency } from "@/hooks/use-stats";
-import type { ModelLatency } from "@/lib/stats";
-import { ModelRow } from "./model-row";
+import { InstalledModelHead, InstalledModelRow } from "./installed-model-row";
+import { CatalogHead, ModelRow } from "./model-row";
 
 // The catalog's `recommended` flag (Handy's `curated`) is not shown. It is
 // Handy's opinion, it cannot be checked here, and several curated models
@@ -23,66 +21,40 @@ function isInProgress(status: string): boolean {
 	return status === "downloading" || status === "queued";
 }
 
-const headCell = "num text-[10px] tracking-[0.06em] text-text-faint";
-
-function TableHead() {
-	return (
-		<div className="hidden lg:flex items-center gap-3 px-3.5 pb-1.5">
-			<span className="w-[9px]" />
-			<span className={`${headCell} flex-1`}>MODEL</span>
-			<span className={`${headCell} w-24 hidden lg:block`}>FAMILY</span>
-			<span className={`${headCell} w-[62px] hidden lg:block`}>QUANT</span>
-			<span className={`${headCell} w-[62px] text-right`}>SIZE</span>
-			<span className={`${headCell} w-[42px] text-right hidden xl:block`}>LANG</span>
-			<span className={`${headCell} w-24 text-right`}>MEASURED p50</span>
-			<span className={`${headCell} w-12 text-right hidden xl:block`}>RUNS</span>
-			<span className="w-[190px]" />
-		</div>
-	);
-}
-
 function Section({
 	title,
 	note,
-	models,
-	measured,
-	defaultModel,
+	count,
+	head,
+	spaced = false,
+	children,
 }: {
 	title: string;
 	note?: string;
-	models: ModelInfo[];
-	measured: Map<string, ModelLatency>;
-	defaultModel?: string | null;
+	count: string;
+	head: React.ReactNode;
+	/** Children are cards, set apart rather than ruled. */
+	spaced?: boolean;
+	children: React.ReactNode;
 }) {
-	if (models.length === 0) return null;
 	return (
 		<div>
 			<div className="flex items-baseline gap-2.5 mb-2">
-				<h2 className="text-[12px] font-semibold text-text-secondary whitespace-nowrap">{title}</h2>
+				<h2 className="text-[13px] font-semibold text-text-primary whitespace-nowrap">{title}</h2>
 				<span className="num text-[11px] text-text-faint min-w-0">
-					{models.length}
+					{count}
 					{note ? ` · ${note}` : ""}
 				</span>
 			</div>
-			<TableHead />
-			<div className="flex flex-col gap-px">
-				{models.map((model) => (
-					<ModelRow
-						key={model.id}
-						model={model}
-						measured={measured.get(model.id)}
-						isDefault={model.id === defaultModel}
-					/>
-				))}
-			</div>
+			{head}
+			<div className={`flex flex-col ${spaced ? "gap-2.5" : "gap-px"}`}>{children}</div>
 		</div>
 	);
 }
 
 export function ModelList() {
 	const { data: models, isLoading, error } = useModels();
-	const { data: settings } = useSettings();
-	const { byModel } = useMeasuredLatency();
+	const { byVariant } = useMeasuredLatency(models);
 	const [search, setSearch] = useState("");
 	const [familyFilter, setFamilyFilter] = useState("");
 	const [languageFilter, setLanguageFilter] = useState("");
@@ -146,6 +118,10 @@ export function ModelList() {
 		.filter((m) => isOnDisk(m.status) && !isInProgress(m.status))
 		.sort((a, b) => Number(b.is_loaded) - Number(a.is_loaded) || a.name.localeCompare(b.name));
 	const catalog = filtered.filter((m) => !isOnDisk(m.status) && !isInProgress(m.status));
+	const installedCount = onDisk.reduce(
+		(n, m) => n + m.variants.filter((v) => v.status === "downloaded").length,
+		0,
+	);
 
 	return (
 		<div className="flex flex-col gap-5">
@@ -192,15 +168,38 @@ export function ModelList() {
 				/>
 			) : (
 				<>
-					<Section title="Downloading" models={inProgress} measured={byModel} />
-					<Section
-						title="On disk"
-						note="p50 measured from your own history, last 7 days — never from the catalog"
-						models={onDisk}
-						measured={byModel}
-						defaultModel={settings?.default_model}
-					/>
-					<Section title="Catalog" note="not on disk" models={catalog} measured={byModel} />
+					{inProgress.length > 0 && (
+						<Section title="Downloading" count={`${inProgress.length}`} head={<CatalogHead />}>
+							{inProgress.map((model) => (
+								<ModelRow key={model.id} model={model} />
+							))}
+						</Section>
+					)}
+					{onDisk.length > 0 && (
+						<Section
+							title="On disk"
+							count={`${onDisk.length} models · ${installedCount} quants`}
+							note="p50 measured from your own history, last 7 days, per quant"
+							head={<InstalledModelHead />}
+							spaced
+						>
+							{onDisk.map((model) => (
+								<InstalledModelRow key={model.id} model={model} measured={byVariant} />
+							))}
+						</Section>
+					)}
+					{catalog.length > 0 && (
+						<Section
+							title="Catalog"
+							count={`${catalog.length}`}
+							note="not on disk"
+							head={<CatalogHead />}
+						>
+							{catalog.map((model) => (
+								<ModelRow key={model.id} model={model} />
+							))}
+						</Section>
+					)}
 				</>
 			)}
 		</div>

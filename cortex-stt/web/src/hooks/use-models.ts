@@ -7,7 +7,6 @@ import {
 	downloadModel,
 	listModels,
 	scanCustomModels,
-	setPreferredQuant,
 } from "@/api/models";
 import type { DownloadProgress } from "@/api/types";
 import { useEngineLive } from "@/hooks/use-engine";
@@ -60,14 +59,6 @@ export function useDeleteModel() {
 		mutationFn: ({ modelId, quant }: { modelId: string; quant?: string | null }) =>
 			deleteModel(modelId, quant),
 		invalidates: [queryKeys.models.all, queryKeys.engine.all],
-	});
-}
-
-export function useSetPreferredQuant() {
-	return useInvalidatingMutation({
-		mutationFn: ({ modelId, quant }: { modelId: string; quant: string }) =>
-			setPreferredQuant(modelId, quant),
-		invalidates: [queryKeys.models.all],
 	});
 }
 

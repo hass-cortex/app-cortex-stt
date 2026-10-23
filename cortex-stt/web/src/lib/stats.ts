@@ -139,16 +139,21 @@ export interface ModelLatency {
 }
 
 /**
- * Per-model median inference time, measured on this machine. This is the
- * only latency number the UI is allowed to present as fact — the catalog's
- * speed score is a vendor claim about other hardware.
+ * Median inference time per group (a Variant, by `keyOf`), measured on
+ * this machine. This is the only latency number the UI is allowed to
+ * present as fact — the catalog's speed score is a vendor claim about
+ * other hardware.
  */
-export function medianByModel(records: TranscriptionRecord[]): Map<string, ModelLatency> {
+export function medianBy(
+	records: TranscriptionRecord[],
+	keyOf: (record: TranscriptionRecord) => string,
+): Map<string, ModelLatency> {
 	const grouped = new Map<string, number[]>();
 	for (const record of timed(records)) {
-		const list = grouped.get(record.model_id);
+		const key = keyOf(record);
+		const list = grouped.get(key);
 		if (list) list.push(record.inference_ms);
-		else grouped.set(record.model_id, [record.inference_ms]);
+		else grouped.set(key, [record.inference_ms]);
 	}
 	const out = new Map<string, ModelLatency>();
 	for (const [modelId, values] of grouped) {

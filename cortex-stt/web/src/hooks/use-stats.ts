@@ -1,15 +1,16 @@
 import { useMemo } from "react";
-import type { TranscriptionRecord } from "@/api/types";
+import type { ModelInfo, TranscriptionRecord } from "@/api/types";
 import { useHistoryList } from "@/hooks/use-history";
 import {
 	bucketByHour,
 	type HourBucket,
 	type LatencySummary,
 	type ModelLatency,
-	medianByModel,
+	medianBy,
 	medianRtf,
 	summariseLatency,
 } from "@/lib/stats";
+import { variantKey } from "@/lib/variant";
 import { parseUTC } from "@/utils/time";
 
 /** Records are pulled in one window and aggregated in the browser; a
@@ -77,11 +78,26 @@ export function useDashboardStats(): DashboardStats {
 }
 
 /**
- * Median inference time per model over the last week, measured here. The
- * catalog's speed score describes someone else's hardware and is not a
- * substitute — a model with no runs reports nothing rather than a guess.
+ * Median inference time per Variant key over the last week, measured
+ * here. The catalog's speed score describes someone else's hardware and
+ * is not a substitute — a Variant with no runs reports nothing rather
+ * than a guess.
  */
-export function useMeasuredLatency(): { byModel: Map<string, ModelLatency>; isLoading: boolean } {
+export function useMeasuredLatency(models: ModelInfo[] | undefined): {
+	byVariant: Map<string, ModelLatency>;
+	isLoading: boolean;
+} {
 	const { records, isLoading } = useWindow(24 * 7);
-	return useMemo(() => ({ byModel: medianByModel(records), isLoading }), [records, isLoading]);
+	return useMemo(() => {
+		// A record from before Variants names no quant; it counts toward the
+		// model's Variant while the model has only one installed.
+		const sole = new Map<string, string>();
+		for (const m of models ?? []) {
+			const [only, ...rest] = m.variants.filter((v) => v.status === "downloaded");
+			if (only && rest.length === 0) sole.set(m.id, variantKey(m.id, only.quant));
+		}
+		const keyOf = (r: TranscriptionRecord) =>
+			r.quant ? variantKey(r.model_id, r.quant) : (sole.get(r.model_id) ?? r.model_id);
+		return { byVariant: medianBy(records, keyOf), isLoading };
+	}, [records, models, isLoading]);
 }

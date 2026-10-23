@@ -1,4 +1,4 @@
-import { get, post, put } from "./client";
+import { get, post } from "./client";
 import type { EngineStatus } from "./types";
 
 /** Get current engine status */
@@ -6,17 +6,12 @@ export function getEngineStatus(): Promise<EngineStatus> {
 	return get<EngineStatus>("/api/engine");
 }
 
-/** Set the default model */
-export function setDefaultModel(modelId: string): Promise<void> {
-	return put("/api/engine/default", { model_id: modelId });
+/** Load a Variant into the engine pool, by its key (`model:quant`) */
+export function loadModel(key: string): Promise<void> {
+	return post("/api/engine/load", { model: key });
 }
 
-/** Pre-load a Variant into the engine pool (the Preferred one when `quant` is omitted) */
-export function loadModel(modelId: string, quant?: string | null): Promise<void> {
-	return post("/api/engine/load", { model_id: modelId, quant: quant ?? null });
-}
-
-/** Unload a Variant from the engine pool */
-export function unloadModel(modelId: string, quant?: string | null): Promise<void> {
-	return post("/api/engine/unload", { model_id: modelId, quant: quant ?? null });
+/** Unload a Variant from the engine pool, by its key */
+export function unloadModel(key: string): Promise<void> {
+	return post("/api/engine/unload", { model: key });
 }

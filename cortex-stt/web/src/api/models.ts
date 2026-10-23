@@ -1,4 +1,4 @@
-import { del, get, post, put } from "./client";
+import { del, get, post } from "./client";
 import type { ModelInfo } from "./types";
 
 function quantQuery(quant?: string | null): string {
@@ -28,11 +28,6 @@ export function cancelDownload(modelId: string, quant: string | null): Promise<v
 /** Uninstall one Variant, or every Variant of the model when `quant` is omitted */
 export function deleteModel(modelId: string, quant?: string | null): Promise<void> {
 	return del(`${modelPath(modelId)}${quantQuery(quant)}`);
-}
-
-/** Choose the model's Preferred variant (must be installed) */
-export function setPreferredQuant(modelId: string, quant: string): Promise<void> {
-	return put(`${modelPath(modelId)}/preferred`, { quant });
 }
 
 /** Rescan custom model directory */
