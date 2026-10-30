@@ -83,10 +83,9 @@ Switch to the **Settings** tab and configure:
 
 ### 3. Install the companion integration
 
-[![Open your Home Assistant instance and add the Cortex STT integration via HACS.][hacs-badge]][hacs]
+[![Open your Home Assistant instance and add the Cortex STT integration via the Marketplace.][hacs-badge]][hacs]
 
-Press **Add**, then restart Home Assistant. (Requires
-[HACS](https://hacs.xyz) installed.)
+Press **Open link**, install the integration from the Marketplace, then restart Home Assistant.
 
 ### 4. Pair with the running app
 
@@ -252,7 +251,7 @@ and pinyin similarity-matching pipeline.
 
 - Source: <https://github.com/hass-cortex/app-cortex-stt>
 - Issues: <https://github.com/hass-cortex/app-cortex-stt/issues>
-- Integration (HACS): <https://github.com/hass-cortex/cortex-stt>
+- Integration: <https://github.com/hass-cortex/cortex-stt>
 
 [app]: https://my.home-assistant.io/redirect/supervisor_addon/?addon=24127962_cortex_stt&repository_url=https%3A%2F%2Fgithub.com%2Fhass-cortex%2Frepository
 [app-badge]: https://my.home-assistant.io/badges/supervisor_addon.svg
