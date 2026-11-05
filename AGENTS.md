@@ -392,9 +392,10 @@ pipeline:
 1. **`release.yml`** builds the x86_64 binary and the web bundle and
    creates a GitHub Release. Tags containing `-` (e.g. `0.1.4-beta.1`)
    are auto-marked prerelease.
-2. **`deploy.yaml`** (its own jobs, the same file as app-cortex-tts)
+2. **`deploy.yaml`** (`home-assistant/builder` actions, the same file as app-cortex-tts)
    builds the image, pushes
-   `ghcr.io/hass-cortex/cortex_stt/amd64:<tag>`, and dispatches
+   `ghcr.io/hass-cortex/amd64-cortex_stt:<tag>` and the multi-arch
+   `ghcr.io/hass-cortex/cortex_stt:<tag>`, and dispatches
    `repository_dispatch` to one or both catalogs:
    - Stable tags → both **`hass-cortex/repository`** and
      **`hass-cortex/repository-beta`**.

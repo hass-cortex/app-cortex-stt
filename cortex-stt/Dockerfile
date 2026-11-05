@@ -57,8 +57,6 @@ RUN chmod +x /app/cortex-stt
 COPY --from=web-builder /web/dist /app/web/dist
 
 ARG BUILD_ARCH
-ARG BUILD_DATE
-ARG BUILD_REF
 ARG BUILD_VERSION
 
 LABEL \
@@ -73,6 +71,4 @@ LABEL \
     org.opencontainers.image.vendor="hass-cortex" \
     org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.source="https://github.com/hass-cortex/app-cortex-stt" \
-    org.opencontainers.image.created="${BUILD_DATE}" \
-    org.opencontainers.image.revision="${BUILD_REF}" \
     org.opencontainers.image.version="${BUILD_VERSION}"
