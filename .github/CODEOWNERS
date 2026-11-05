@@ -14,7 +14,6 @@
 /cortex-stt/Dockerfile @parkghost
 /cortex-stt/rootfs/ @parkghost
 /cortex-stt/config.yaml @parkghost
-/cortex-stt/build.yaml @parkghost
 
 # CI/CD
 /.github/ @parkghost
