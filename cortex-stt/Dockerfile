@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Build Rust binary
 # ==============================================================================
-FROM rust:1.88-slim-trixie AS rust-builder
+FROM rust:1.93-slim-trixie AS rust-builder
 WORKDIR /build
 
 # hadolint ignore=DL3008
