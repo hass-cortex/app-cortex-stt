@@ -32,7 +32,7 @@ jobs:
 
       # Pinned by digest, so the channel the ref used to carry is now an input.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -57,7 +57,7 @@ jobs:
         run: cargo test
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@0dcca9be325b38394ffad535ddbf9c9792ee32e2 # cargo-deny
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-deny
 
