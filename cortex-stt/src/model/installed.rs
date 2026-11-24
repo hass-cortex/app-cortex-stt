@@ -103,7 +103,7 @@ impl Sidecar {
             model: model.id.clone(),
             quant: quant.to_string(),
             sha256,
-            installed_at: chrono::Utc::now().timestamp(),
+            installed_at: jiff::Timestamp::now().as_second(),
             snapshot: Snapshot::of(model),
         }
     }

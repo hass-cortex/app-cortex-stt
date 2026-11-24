@@ -4,7 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::routing::get;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AsrError;
@@ -46,7 +46,7 @@ async fn get_metrics(
     let tz = display_timezone(&settings.timezone, q.tz.as_deref());
     let snapshot = state
         .history
-        .metrics_snapshot(start_of_day(Utc::now(), tz))
+        .metrics_snapshot(start_of_day(Timestamp::now(), &tz))
         .await?;
 
     let loaded_models = state.engine_manager.loaded_count().await;

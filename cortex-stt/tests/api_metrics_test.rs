@@ -5,8 +5,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use chrono::{Duration, NaiveTime, TimeZone, Utc};
-use chrono_tz::Tz;
+use jiff::{Span, Timestamp, civil::time, tz::TimeZone};
 use tower::ServiceExt;
 
 use cortex_stt::api::metrics::metrics_routes;
@@ -40,14 +39,18 @@ fn record() -> CreateRecord {
 }
 
 /// Insert one record stamped at local `hour`:00 in `tz`, `days_ago` local days back.
-async fn insert_at_local(state: &Arc<AppState>, tz: Tz, days_ago: i64, hour: u32) {
-    let day = Utc::now().with_timezone(&tz).date_naive() - Duration::days(days_ago);
-    let local = day.and_time(NaiveTime::from_hms_opt(hour, 0, 0).unwrap());
-    let stamp = tz
-        .from_local_datetime(&local)
+async fn insert_at_local(state: &Arc<AppState>, tz: &TimeZone, days_ago: i64, hour: i8) {
+    let day = Timestamp::now()
+        .to_zoned_datetime(tz.clone())
+        .date()
+        .checked_sub(Span::new().days(days_ago))
+        .unwrap();
+    let stamp = day
+        .to_datetime(time(hour, 0, 0, 0))
+        .to_zoned_datetime(tz.clone())
         .unwrap()
-        .with_timezone(&Utc)
-        .format("%Y-%m-%d %H:%M:%S")
+        .timestamp()
+        .strftime("%Y-%m-%d %H:%M:%S")
         .to_string();
     let id = state.history.create(record(), None).await.unwrap();
     state
@@ -80,9 +83,9 @@ async fn get_metrics(state: Arc<AppState>, uri: &str) -> serde_json::Value {
 /// wall clock says: 02:00 Taipei is 18:00 UTC the day before, 23:00
 /// Taipei yesterday is 15:00 UTC.
 async fn seed_taipei_day_edges(state: &Arc<AppState>) {
-    let tz: Tz = "Asia/Taipei".parse().unwrap();
-    insert_at_local(state, tz, 0, 2).await;
-    insert_at_local(state, tz, 1, 23).await;
+    let tz = TimeZone::get("Asia/Taipei").unwrap();
+    insert_at_local(state, &tz, 0, 2).await;
+    insert_at_local(state, &tz, 1, 23).await;
 }
 
 #[tokio::test]

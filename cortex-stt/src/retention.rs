@@ -6,7 +6,7 @@
 //!
 //! See `GLOSSARY.md` for the surrounding domain language.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use jiff::{SignedDuration, Timestamp, civil::DateTime, tz::Offset};
 use serde::{Deserialize, Serialize};
 
 /// A rule for selecting which candidates to drop.
@@ -50,7 +50,7 @@ pub struct RetentionCandidate {
 /// Apply `policy` to `candidates` and return the ids to drop.
 ///
 /// Pure: no I/O, no allocations beyond the result. Time-dependent
-/// policies (`Days`) consult [`Utc::now`] internally.
+/// policies (`Days`) consult [`Timestamp::now`] internally.
 pub fn select_to_delete(
     candidates: &[RetentionCandidate],
     policy: &RetentionPolicy,
@@ -68,7 +68,9 @@ pub fn select_to_delete(
 /// Unparseable timestamps are kept (conservative: a single bad row
 /// shouldn't drag the whole sweep down with it).
 fn select_older_than_days(candidates: &[RetentionCandidate], days: u32) -> Vec<String> {
-    let cutoff = Utc::now() - chrono::Duration::days(days as i64);
+    let cutoff = Timestamp::now()
+        .saturating_sub(SignedDuration::from_hours(i64::from(days) * 24))
+        .unwrap_or(Timestamp::MIN);
     candidates
         .iter()
         .filter(|c| parse_timestamp(&c.created_at).is_some_and(|ts| ts < cutoff))
@@ -118,27 +120,30 @@ fn select_excess_by_size(candidates: &[RetentionCandidate], limit_mb: u64) -> Ve
     to_drop
 }
 
-fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+fn parse_timestamp(s: &str) -> Option<Timestamp> {
+    DateTime::strptime("%Y-%m-%d %H:%M:%S", s)
         .ok()
-        .map(|ndt| ndt.and_utc())
+        .and_then(|dt| Offset::UTC.to_timestamp(dt).ok())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
 
-    fn candidate_at(id: &str, offset_from_now: Duration) -> RetentionCandidate {
-        let ts = Utc::now() + offset_from_now;
+    fn days(n: i64) -> SignedDuration {
+        SignedDuration::from_hours(n * 24)
+    }
+
+    fn candidate_at(id: &str, offset_from_now: SignedDuration) -> RetentionCandidate {
+        let ts = Timestamp::now() + offset_from_now;
         RetentionCandidate {
             id: id.into(),
-            created_at: ts.format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_at: ts.strftime("%Y-%m-%d %H:%M:%S").to_string(),
             size_bytes: None,
         }
     }
 
-    fn sized_candidate_at(id: &str, offset: Duration, size: u64) -> RetentionCandidate {
+    fn sized_candidate_at(id: &str, offset: SignedDuration, size: u64) -> RetentionCandidate {
         let mut c = candidate_at(id, offset);
         c.size_bytes = Some(size);
         c
@@ -146,21 +151,21 @@ mod tests {
 
     #[test]
     fn unlimited_drops_nothing() {
-        let candidates = vec![candidate_at("a", Duration::days(-100))];
+        let candidates = vec![candidate_at("a", days(-100))];
         assert!(select_to_delete(&candidates, &RetentionPolicy::Unlimited).is_empty());
     }
 
     #[test]
     fn days_zero_is_noop() {
-        let candidates = vec![candidate_at("a", Duration::days(-100))];
+        let candidates = vec![candidate_at("a", days(-100))];
         assert!(select_to_delete(&candidates, &RetentionPolicy::Days(0)).is_empty());
     }
 
     #[test]
     fn days_drops_older_keeps_newer() {
         let candidates = vec![
-            candidate_at("old", Duration::days(-10)),
-            candidate_at("recent", Duration::days(-1)),
+            candidate_at("old", days(-10)),
+            candidate_at("recent", days(-1)),
         ];
         let dropped = select_to_delete(&candidates, &RetentionPolicy::Days(7));
         assert_eq!(dropped, vec!["old".to_string()]);
@@ -170,7 +175,7 @@ mod tests {
     fn days_keeps_unparseable_rows() {
         // A row with a bogus timestamp should NOT be dropped — better to
         // leave a single bad row in place than to silently sweep it.
-        let mut bad = candidate_at("ok", Duration::days(-100));
+        let mut bad = candidate_at("ok", days(-100));
         bad.created_at = "not a timestamp".into();
         let dropped = select_to_delete(&[bad], &RetentionPolicy::Days(7));
         assert!(dropped.is_empty());
@@ -178,19 +183,16 @@ mod tests {
 
     #[test]
     fn count_under_limit_is_noop() {
-        let candidates = vec![
-            candidate_at("a", Duration::days(-2)),
-            candidate_at("b", Duration::days(-1)),
-        ];
+        let candidates = vec![candidate_at("a", days(-2)), candidate_at("b", days(-1))];
         assert!(select_to_delete(&candidates, &RetentionPolicy::Count(10)).is_empty());
     }
 
     #[test]
     fn count_drops_oldest_first() {
         let candidates = vec![
-            candidate_at("oldest", Duration::days(-3)),
-            candidate_at("middle", Duration::days(-2)),
-            candidate_at("newest", Duration::days(-1)),
+            candidate_at("oldest", days(-3)),
+            candidate_at("middle", days(-2)),
+            candidate_at("newest", days(-1)),
         ];
         let dropped = select_to_delete(&candidates, &RetentionPolicy::Count(1));
         // Keep 1 newest, drop 2 oldest.
@@ -203,8 +205,8 @@ mod tests {
     fn disk_limit_under_is_noop() {
         let mb = 1024 * 1024;
         let candidates = vec![
-            sized_candidate_at("a", Duration::days(-2), 100 * mb),
-            sized_candidate_at("b", Duration::days(-1), 100 * mb),
+            sized_candidate_at("a", days(-2), 100 * mb),
+            sized_candidate_at("b", days(-1), 100 * mb),
         ];
         // 200 MB total, 500 MB limit → nothing dropped.
         assert!(select_to_delete(&candidates, &RetentionPolicy::DiskLimitMb(500)).is_empty());
@@ -214,9 +216,9 @@ mod tests {
     fn disk_limit_drops_oldest_until_under_cap() {
         let mb = 1024 * 1024;
         let candidates = vec![
-            sized_candidate_at("oldest", Duration::days(-3), 300 * mb),
-            sized_candidate_at("middle", Duration::days(-2), 300 * mb),
-            sized_candidate_at("newest", Duration::days(-1), 300 * mb),
+            sized_candidate_at("oldest", days(-3), 300 * mb),
+            sized_candidate_at("middle", days(-2), 300 * mb),
+            sized_candidate_at("newest", days(-1), 300 * mb),
         ];
         // 900 MB total, 500 MB limit → must drop ≥400 MB → drop oldest
         // (300 MB → 600 remaining, still over) then middle (300 MB →
@@ -230,9 +232,9 @@ mod tests {
         let mb = 1024 * 1024;
         let candidates = vec![
             // No size — invisible to disk-limit retention.
-            candidate_at("unsized-old", Duration::days(-10)),
-            sized_candidate_at("sized-old", Duration::days(-5), 200 * mb),
-            sized_candidate_at("sized-new", Duration::days(-1), 200 * mb),
+            candidate_at("unsized-old", days(-10)),
+            sized_candidate_at("sized-old", days(-5), 200 * mb),
+            sized_candidate_at("sized-new", days(-1), 200 * mb),
         ];
         // Sized total = 400 MB; limit 300 MB → drop oldest sized
         // (sized-old). Unsized one is never touched.

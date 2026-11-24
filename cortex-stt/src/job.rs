@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jiff::{SignedDuration, Timestamp};
 use tokio::sync::RwLock;
 
 /// Default maximum number of jobs (any status) retained in memory.
@@ -62,9 +62,9 @@ pub struct AsyncJob {
     pub model: String,
     #[serde(flatten)]
     pub status: AsyncJobStatus,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<Timestamp>,
 }
 
 /// In-memory store for async transcription jobs.
@@ -161,7 +161,7 @@ impl JobStore {
         if let Some(job) = jobs.get_mut(id) {
             if matches!(job.status, AsyncJobStatus::Processing) {
                 job.status = terminal;
-                job.completed_at = Some(Utc::now());
+                job.completed_at = Some(Timestamp::now());
             }
         }
     }
@@ -176,7 +176,7 @@ impl JobStore {
             None => CancelOutcome::NotFound,
             Some(job) if matches!(job.status, AsyncJobStatus::Processing) => {
                 job.status = AsyncJobStatus::Cancelled;
-                job.completed_at = Some(Utc::now());
+                job.completed_at = Some(Timestamp::now());
                 CancelOutcome::MarkedCancelled
             }
             Some(_) => {
@@ -198,8 +198,10 @@ impl JobStore {
     /// Takes a read lock first to short-circuit when nothing needs cleaning
     /// — the periodic sweeper on an idle system pays only one atomic read.
     pub async fn sweep(&self) {
-        let cutoff =
-            Utc::now() - chrono::Duration::from_std(self.completed_ttl).unwrap_or_default();
+        let ttl = SignedDuration::try_from(self.completed_ttl).unwrap_or_default();
+        let cutoff = Timestamp::now()
+            .saturating_sub(ttl)
+            .unwrap_or(Timestamp::MIN);
         let needs_work = {
             let jobs = self.jobs.read().await;
             jobs.len() > self.max_jobs
@@ -226,7 +228,10 @@ impl JobStore {
         target_size: usize,
         completed_ttl: Duration,
     ) {
-        let cutoff = Utc::now() - chrono::Duration::from_std(completed_ttl).unwrap_or_default();
+        let ttl = SignedDuration::try_from(completed_ttl).unwrap_or_default();
+        let cutoff = Timestamp::now()
+            .saturating_sub(ttl)
+            .unwrap_or(Timestamp::MIN);
 
         // TTL pass: drop terminal jobs whose completed_at is past the cutoff.
         // Terminal jobs without a completed_at timestamp are kept and will
@@ -237,7 +242,7 @@ impl JobStore {
 
         // Capacity pass: evict oldest terminal jobs until at or below target.
         if jobs.len() > target_size {
-            let mut terminal: Vec<(String, DateTime<Utc>)> = jobs
+            let mut terminal: Vec<(String, Timestamp)> = jobs
                 .iter()
                 .filter(|(_, j)| j.status.is_terminal())
                 .map(|(id, j)| (id.clone(), j.created_at))

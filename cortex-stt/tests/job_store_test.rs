@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
 use cortex_stt::job::{AsyncJob, AsyncJobStatus, CancelOutcome, JobStore};
 use cortex_stt::transcriber::TranscribeResponse;
+use jiff::{SignedDuration, Timestamp};
 
 fn response(text: &str) -> TranscribeResponse {
     TranscribeResponse {
@@ -30,12 +30,12 @@ fn make_processing(id: &str) -> AsyncJob {
         id: id.to_string(),
         model: "mock".to_string(),
         status: AsyncJobStatus::Processing,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         completed_at: None,
     }
 }
 
-fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
+fn make_completed(id: &str, completed_at: Timestamp) -> AsyncJob {
     AsyncJob {
         id: id.to_string(),
         model: "mock".to_string(),
@@ -57,7 +57,7 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
                 applied_transforms: Vec::new(),
             }),
         },
-        created_at: completed_at - chrono::Duration::milliseconds(1),
+        created_at: completed_at - SignedDuration::from_millis(1),
         completed_at: Some(completed_at),
     }
 }
@@ -65,7 +65,7 @@ fn make_completed(id: &str, completed_at: chrono::DateTime<Utc>) -> AsyncJob {
 #[tokio::test]
 async fn sweep_removes_completed_past_ttl() {
     let store = JobStore::new(100, Duration::from_secs(60));
-    let stale = Utc::now() - chrono::Duration::seconds(120);
+    let stale = Timestamp::now() - SignedDuration::from_secs(120);
     for i in 0..5 {
         store
             .insert(make_completed(&format!("old-{i}"), stale))
@@ -80,7 +80,7 @@ async fn sweep_removes_completed_past_ttl() {
 #[tokio::test]
 async fn sweep_keeps_fresh_completed_and_processing() {
     let store = JobStore::new(100, Duration::from_secs(60));
-    let fresh = Utc::now();
+    let fresh = Timestamp::now();
     store.insert(make_completed("fresh", fresh)).await;
     store.insert(make_processing("running")).await;
 
@@ -96,11 +96,11 @@ async fn insert_enforces_cap_without_explicit_sweep() {
     // capacity must make room synchronously — no off-by-one that would
     // leave the store at `max_jobs + 1` until the next periodic sweep.
     let store = JobStore::new(3, Duration::from_secs(3600));
-    let base = Utc::now() - chrono::Duration::seconds(10);
+    let base = Timestamp::now() - SignedDuration::from_secs(10);
 
     for (id, offset) in [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)] {
         store
-            .insert(make_completed(id, base + chrono::Duration::seconds(offset)))
+            .insert(make_completed(id, base + SignedDuration::from_secs(offset)))
             .await;
         assert!(
             store.len().await <= 3,
@@ -163,7 +163,7 @@ async fn complete_only_transitions_a_processing_job() {
 #[tokio::test]
 async fn cancel_removes_an_already_terminal_job_and_reports_unknown() {
     let store = JobStore::new(100, Duration::from_secs(3600));
-    store.insert(make_completed("done", Utc::now())).await;
+    store.insert(make_completed("done", Timestamp::now())).await;
 
     // Cancelling a terminal job removes it.
     assert_eq!(store.cancel("done").await, CancelOutcome::AlreadyTerminal);
@@ -176,7 +176,7 @@ async fn cancel_removes_an_already_terminal_job_and_reports_unknown() {
 #[tokio::test]
 async fn sweep_never_evicts_processing_even_over_cap() {
     let store = JobStore::new(2, Duration::from_secs(3600));
-    let stale = Utc::now() - chrono::Duration::seconds(10);
+    let stale = Timestamp::now() - SignedDuration::from_secs(10);
 
     store.insert(make_processing("running-1")).await;
     store.insert(make_processing("running-2")).await;

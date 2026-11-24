@@ -5,7 +5,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use rusqlite::{params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
@@ -646,9 +646,9 @@ pub(super) async fn list_audio_rows(
 /// [`MetricsSnapshot`](crate::history::analytics::MetricsSnapshot).
 pub(super) async fn metrics_snapshot(
     db: &Arc<Database>,
-    today_start: DateTime<Utc>,
+    today_start: Timestamp,
 ) -> Result<super::analytics::MetricsSnapshot, AsrError> {
-    let today_start = today_start.format(COLUMN_TIMESTAMP_FORMAT).to_string();
+    let today_start = today_start.strftime(COLUMN_TIMESTAMP_FORMAT).to_string();
     db.connection()
         .call(move |conn| {
             conn.query_row(

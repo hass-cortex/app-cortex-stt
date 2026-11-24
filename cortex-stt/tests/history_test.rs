@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 use cortex_stt::db::database::Database;
 use cortex_stt::history::{CreateRecord, History, ListRecordsFilter, TranscriptionSource};
@@ -298,7 +298,7 @@ async fn database_init_creates_tables() {
     // snapshot is the simplest probe.
     let (history, _tmp) = setup().await;
     let snapshot = history
-        .metrics_snapshot(Utc::now() - Duration::hours(1))
+        .metrics_snapshot(Timestamp::now() - SignedDuration::from_hours(1))
         .await
         .unwrap();
     assert_eq!(snapshot.total_transcriptions, 0);
@@ -323,7 +323,7 @@ async fn metrics_snapshot_aggregates_by_source_and_error() {
     history.create(err, None).await.unwrap();
 
     let s = history
-        .metrics_snapshot(Utc::now() - Duration::hours(1))
+        .metrics_snapshot(Timestamp::now() - SignedDuration::from_hours(1))
         .await
         .unwrap();
     assert_eq!(s.total_transcriptions, 3);

@@ -206,7 +206,7 @@ async fn transcribe_async(
         id: job_id.clone(),
         model: req.model.clone(),
         status: AsyncJobStatus::Processing,
-        created_at: chrono::Utc::now(),
+        created_at: jiff::Timestamp::now(),
         completed_at: None,
     };
     state.job_store.insert(job).await;
